@@ -197,6 +197,7 @@ void projectrtpchannel::doclose( void )
 
     JSON::Object v;
     v[ "action" ] = "close";
+    v[ "id" ] = this->id;
     v[ "uuid" ] = this->uuid;
     v[ "stats" ] = s;
 
