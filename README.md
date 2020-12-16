@@ -29,7 +29,7 @@ ProjectRTP supports transcoding for the following CODECs
 
 The server is managed via a control socket. I am designing it so that multiple RTP servers can connect to a call control server to create a flexible voice switch.
 
-project-rtp --fg --pa 192.168.0.141 --connect 127.0.0.1
+projectrtp --fg --pa 192.168.0.141 --connect 127.0.0.1
 
 See projectrtpmain.cpp for all options. In this example, the --pa is the IP address to instruct the control server which IP to include in SDP. --connect is the address of the control server. Node library coming soon.
 
@@ -177,7 +177,7 @@ In order to make the RTP as scalable as possible, we will not support on the fly
 
 What we need to provide is a utility to generate wav files which will generate tones for use in telecoms (i.e. ringing, DTMF etc).
 
-project-rtp --tone 350+440*0.75:1000 dialtone.wav
+projectrtp --tone 350+440*0.75:1000 dialtone.wav
 
 The format attempts to closely follow the format in https://www.itu.int/dms_pub/itu-t/opb/sp/T-SP-E.180-2010-PDF-E.pdf - although that standard is not the clearest in some respects.
 
@@ -191,10 +191,10 @@ We currently support
 Examples
 
 #### UK Dial tone:
-project-rtp --tone 350+440*0.5:1000 dialtone.wav
+projectrtp --tone 350+440*0.5:1000 dialtone.wav
 
 #### UK Ringing
-project-rtp --tone 400+450*0.5/0/400+450*0.5/0:400/200/400/2000 ringing.wav
+projectrtp --tone 400+450*0.5/0/400+450*0.5/0:400/200/400/2000 ringing.wav
 
 #### DTMF
 
@@ -207,9 +207,9 @@ project-rtp --tone 400+450*0.5/0/400+450*0.5/0:400/200/400/2000 ringing.wav
 
 Example, 1 would mix 1209Hz and 697Hz
 
-project-rtp --tone 697+1209*0.5:400 dtmf1.wav
+projectrtp --tone 697+1209*0.5:400 dtmf1.wav
 
-project-rtp --tone 697+1209*0.5/0/697+1336*0.5/0/697+1477*0.5/0:400/100 dtmf1-3.wav
+projectrtp --tone 697+1209*0.5/0/697+1336*0.5/0/697+1477*0.5/0:400/100 dtmf1-3.wav
 
 ### TODO
 
