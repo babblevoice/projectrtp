@@ -53,6 +53,7 @@ outdir:
 # 13.75S - 15.25S Congestion tone
 # 15.25S - 15.5S Pay tone
 ../out/uksounds.wav: outdir ../out/projectrtp
+	rm -f ../out/uksounds.wav || true
 	../out/projectrtp --tone 350+440*0.5:1000 ../out/uksounds.wav
 	../out/projectrtp --tone 400+450*0.5/0/400+450*0.5/0:400/200/400/2000 ../out/uksounds.wav
 	../out/projectrtp --tone 697+1209*0.5/0/697+1336*0.5/0/697+1477*0.5/0/697+1633*0.5/0:400/100 ../out/uksounds.wav
