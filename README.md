@@ -108,6 +108,7 @@ Play a sound 'soup'. This is a list of files to play, potentially including star
 
 ```json
 {
+  "channel": "play",
   "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
   "soup": {
     "loop": true,
