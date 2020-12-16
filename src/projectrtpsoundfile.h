@@ -68,6 +68,7 @@ public:
   void setposition( long seconds );
   long getposition( void );
   bool complete( void );
+  inline bool isopen( void ) { return this->file != -1; }
 
 private:
   long offtomsecs( void );

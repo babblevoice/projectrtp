@@ -205,6 +205,10 @@ void soundsoup::config( JSON::Object &json, int format )
         if( newfilename )
         {
           ref.sf = soundfile::create( *newfilename );
+          if( !ref.sf->isopen() )
+          {
+            std::cerr << "Problem with file: " << JSON::to_string( inref ) << std::endl;
+          }
         }
         else
         {

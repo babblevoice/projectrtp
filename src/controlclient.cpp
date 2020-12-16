@@ -119,7 +119,7 @@ void controlclient::parserequest( void )
       else if( "play" == action )
       {
         std::string channel = JSON::as_string( body[ "uuid" ] );
-        std::string soup = JSON::as_string( body[ "soup" ] );
+        std::string soup = JSON::to_string( body[ "soup" ] );
         activertpchannels::iterator chan = activechannels.find( channel );
         if ( activechannels.end() != chan )
         {
