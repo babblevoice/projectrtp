@@ -8,6 +8,7 @@ This is currently work in progress.
 
 * ilbc-devel
 * spandsp-devel
+* boost
 
 # Build
 
