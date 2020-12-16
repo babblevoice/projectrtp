@@ -138,7 +138,7 @@ void startserver()
 
   try
   {
-    controlclient c( iocontext, controlhost );
+    controlclient::pointer c = controlclient::create( iocontext, controlhost );
 
     cpu_set_t cpuset;
     CPU_ZERO( &cpuset );
@@ -212,7 +212,7 @@ void initchannels( unsigned short startport, unsigned short endport )
       projectrtpchannel::pointer p = projectrtpchannel::create( workercontext, i );
 
       std::string id, uuid;
-      p->open( id, uuid );
+      p->open( id, uuid, controlclient::pointer( nullptr ) );
       dormantchannels.push_back( p );
     }
   }

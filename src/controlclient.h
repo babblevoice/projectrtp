@@ -9,8 +9,11 @@
 #include <deque>
 
 #include "json.hpp"
+
 typedef std::shared_ptr< std::string > stringptr;
 typedef std::deque< stringptr > waitingmessages;
+
+typedef std::shared_ptr< JSON::Object > jsonptr;
 
 class controlheader
 {
@@ -28,8 +31,13 @@ public:
   controlclient( boost::asio::io_context& io_context, std::string &host );
   ~controlclient();
 
+  typedef std::shared_ptr< controlclient > pointer;
+  static pointer create( boost::asio::io_context &iocontext, std::string &host );
+
   void write( const stringptr msg );
+  void sendmessage( JSON::Object &v );
   void close();
+
 private:
 
   void handleconnect( const boost::system::error_code& error );
@@ -42,7 +50,6 @@ private:
   void tryreconnect( void );
   void doclose();
   void parserequest( void );
-  void sendmessage( JSON::Object &v );
 
 private:
 

@@ -58,7 +58,7 @@ void controlclient::parserequest( void )
           id = JSON::as_string( body[ "id" ] );
         }
 
-        p->open( id, u );
+        p->open( id, u, shared_from_this() );
 
         if( body.has_key( "target" ) )
         {
@@ -110,11 +110,7 @@ void controlclient::parserequest( void )
           dormantchannels.push_back( chan->second );
           activechannels.erase( chan );
         }
-
-        JSON::Object v;
-        v[ "action" ] = "close";
-        v[ "uuid" ] = channel;
-        this->sendmessage( v );
+        /* our channel will send close on completion */
       }
       else if( "play" == action )
       {
@@ -128,6 +124,20 @@ void controlclient::parserequest( void )
 
         JSON::Object v;
         v[ "action" ] = "play";
+        v[ "uuid" ] = channel;
+        this->sendmessage( v );
+      }
+      else if( "echo" == action )
+      {
+        std::string channel = JSON::as_string( body[ "uuid" ] );
+        activertpchannels::iterator chan = activechannels.find( channel );
+        if ( activechannels.end() != chan )
+        {
+          chan->second->echo();
+        }
+
+        JSON::Object v;
+        v[ "action" ] = "echo";
         v[ "uuid" ] = channel;
         this->sendmessage( v );
       }
@@ -192,16 +202,17 @@ void controlclient::parserequest( void )
 
 void controlclient::sendmessage( JSON::Object &v )
 {
-  JSON::Object s;
-  JSON::Object c;
-  c[ "active" ] = ( JSON::Integer ) activechannels.size();
-  c[ "available" ] = ( JSON::Integer ) dormantchannels.size();
-  s[ "channels" ] = c;
-
-  v[ "status" ] = s;
-
   stringptr t = stringptr( new std::string( JSON::to_string( v ) ) );
   this->dowrite( t );
+}
+
+/*!md
+# create
+
+*/
+controlclient::pointer controlclient::create( boost::asio::io_context &iocontext, std::string &host )
+{
+  return pointer( new controlclient( iocontext, host ) );
 }
 
 controlclient::controlclient( boost::asio::io_context& io_context, std::string &host )
@@ -334,10 +345,22 @@ void controlclient::handlereadbody(const boost::system::error_code& error)
 /* First write a header */
 void controlclient::dowrite( stringptr msg )
 {
-  std::cout << "Sent: " << *msg << std::endl;
+  /* add other stats */
+  JSON::Object msgbody = JSON::as_object( JSON::parse( *msg ) );
+  JSON::Object s;
+  JSON::Object c;
+  c[ "active" ] = ( JSON::Integer ) activechannels.size();
+  c[ "available" ] = ( JSON::Integer ) dormantchannels.size();
+  s[ "channels" ] = c;
+
+  msgbody[ "status" ] = s;
+
+  stringptr togo = stringptr( new std::string( JSON::to_string( msgbody ) ) );
+  std::cout << "Sent: " << *togo << std::endl;
+
   bool writeinprogress = !this->outboundmessages.empty();
 
-  this->outboundmessages.push_back( stringptr( msg ) );
+  this->outboundmessages.push_back( togo );
   if ( !writeinprogress )
   {
     char *outheaderbufptr = &this->outheaderbuf[ 0 ];
@@ -345,7 +368,7 @@ void controlclient::dowrite( stringptr msg )
     outheaderbufptr++;
     *( ( uint16_t * ) outheaderbufptr ) = 0;
     outheaderbufptr += 2;
-    *( ( uint16_t * ) outheaderbufptr ) = htons( msg->size() );
+    *( ( uint16_t * ) outheaderbufptr ) = htons( togo->size() );
 
     boost::asio::async_write( this->socket,
         boost::asio::buffer( this->outheaderbuf, CONTROLHEADERLENGTH ),

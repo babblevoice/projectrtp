@@ -26,6 +26,7 @@
 #include "projectrtpcodecx.h"
 #include "projectrtppacket.h"
 #include "projectrtpsoundsoup.h"
+#include "controlclient.h"
 
 /* The number of packets we will keep in a buffer */
 #define BUFFERPACKETCOUNT 20
@@ -55,14 +56,15 @@ public:
   typedef std::shared_ptr< projectrtpchannel > pointer;
   static pointer create( boost::asio::io_context &iocontext, unsigned short port );
 
-  void open( std::string &id, std::string &uuid );
+  void open( std::string &id, std::string &uuid, controlclient::pointer );
   void close( void );
   void doclose( void );
 
   unsigned short getport( void );
 
   void target( std::string &address, unsigned short port );
-  void play( stringptr newdef ) { std::atomic_store( &this->newplaydef, newdef ); };
+  void play( stringptr newdef ) { std::atomic_store( &this->newplaydef, newdef ); }
+  inline void echo( void ) { this->doecho = true; }
 
   typedef std::vector< int > codeclist;
   void audio( codeclist codecs );
@@ -145,6 +147,7 @@ private:
 
   void checkfornewmixes( void );
   uint64_t receivedpkcount;
+  uint64_t receivedpkskip;
 
   typedef std::list< projectrtpchannel::pointer > projectrtpchannellist;
   typedef boost::shared_ptr< projectrtpchannellist > projectrtpchannellistptr;
@@ -156,9 +159,12 @@ private:
   soundsoup::pointer player;
   stringptr newplaydef;
 
+  std::atomic_bool doecho;
+
   boost::lockfree::stack< projectrtpchannel::pointer > mixqueue;
   boost::asio::steady_timer tick;
 
+  controlclient::pointer control;
 };
 
 typedef std::deque<projectrtpchannel::pointer> rtpchannels;

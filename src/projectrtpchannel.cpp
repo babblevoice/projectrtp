@@ -8,6 +8,7 @@
 
 
 #include "projectrtpchannel.h"
+#include "controlclient.h"
 
 using namespace boost::placeholders;
 
@@ -53,6 +54,7 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsign
   receivedpkcount( 0 ),
   others( nullptr ),
   player( nullptr ),
+  doecho( false ),
   mixqueue( MIXQUEUESIZE ),
   tick( iocontext )
 {
@@ -82,10 +84,11 @@ projectrtpchannel::pointer projectrtpchannel::create( boost::asio::io_context &i
 ## open
 Open the channel to read network data. Setup memory and pointers.
 */
-void projectrtpchannel::open( std::string &id, std::string &uuid )
+void projectrtpchannel::open( std::string &id, std::string &uuid, controlclient::pointer c )
 {
   this->id = id;
   this->uuid = uuid;
+  this->control = c;
 
   /* indexes into our circular rtp array */
   this->rtpindexin = 0;
@@ -93,6 +96,7 @@ void projectrtpchannel::open( std::string &id, std::string &uuid )
 
 
   this->receivedpkcount = 0;
+  this->receivedpkskip = 0;
 
   this->rtpoutindex = 0;
 
@@ -175,6 +179,29 @@ void projectrtpchannel::doclose( void )
 
   this->rtpsocket.close();
   this->rtcpsocket.close();
+
+  if( this->control )
+  {
+    /* calculate mos - calc borrowed from FS - thankyou. */
+    double r = ( ( this->receivedpkcount - this->receivedpkskip ) / this->receivedpkcount ) * 100.0;
+    if ( r < 0 || r > 100 ) r = 100;
+    double mos = 1 + ( 0.035 * r ) + (.000007 * r * ( r - 60 ) * ( 100 - r ) );
+
+    JSON::Object i;
+    i[ "mos" ] = ( JSON::Double ) mos;
+    i[ "count" ] = ( JSON::Integer ) this->receivedpkcount;
+    i[ "skip" ] = ( JSON::Integer ) this->receivedpkskip;
+
+    JSON::Object s;
+    s[ "in" ] = i;
+
+    JSON::Object v;
+    v[ "action" ] = "close";
+    v[ "uuid" ] = this->uuid;
+    v[ "stats" ] = s;
+
+    this->control->sendmessage( v );
+  }
 }
 
 /*!md
@@ -190,35 +217,44 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
     /* only us */
     if( !this->others || 0 == this->others->size() )
     {
-      rtppacket *out = this->gettempoutbuf( 0 );
-      stringptr newplaydef = std::atomic_exchange( &this->newplaydef, stringptr( NULL ) );
-      if( newplaydef )
+      if( this->doecho )
       {
-        try
-        {
-          if( !this->player )
-          {
-            this->player = soundsoup::create();
-          }
-
-          JSON::Value ob = JSON::parse( *newplaydef );
-          this->player->config( JSON::as_object( ob ), out->getpayloadtype() );
-        }
-        catch(...)
-        {
-          std::cerr << "Bad sound soup: " << *newplaydef << std::endl;
-        }
+        /* this could be done much more efficiently - but as it is only a test is not likely to get
+        use that much and this way we test more of our software */
+        while( this->handlertpdata() );
       }
-
-      if( this->player )
+      else
       {
-        rawsound r = player->read();
-        if( 0 != r.size() )
+        rtppacket *out = this->gettempoutbuf( 0 );
+        stringptr newplaydef = std::atomic_exchange( &this->newplaydef, stringptr( NULL ) );
+        if( newplaydef )
         {
-          this->codecworker << codecx::next;
-          this->codecworker << r;
-          *out << this->codecworker;
-          this->writepacket( out );
+          try
+          {
+            if( !this->player )
+            {
+              this->player = soundsoup::create();
+            }
+
+            JSON::Value ob = JSON::parse( *newplaydef );
+            this->player->config( JSON::as_object( ob ), out->getpayloadtype() );
+          }
+          catch(...)
+          {
+            std::cerr << "Bad sound soup: " << *newplaydef << std::endl;
+          }
+        }
+
+        if( this->player )
+        {
+          rawsound r = player->read();
+          if( 0 != r.size() )
+          {
+            this->codecworker << codecx::next;
+            this->codecworker << r;
+            *out << this->codecworker;
+            this->writepacket( out );
+          }
         }
       }
     }
@@ -345,8 +381,10 @@ Mix and send the data somewhere.
 */
 void projectrtpchannel::processrtpdata( rtppacket *src, uint32_t skipcount )
 {
+  this->receivedpkskip += skipcount;
+
   /* The next section is sending to our recipient(s) */
-  if( 2 == this->others->size() )
+  if( this->others && 2 == this->others->size() )
   {
     /* one should be us */
     projectrtpchannellist::iterator it = this->others->begin();
@@ -361,6 +399,14 @@ void projectrtpchannel::processrtpdata( rtppacket *src, uint32_t skipcount )
     rtppacket *dst = chan->gettempoutbuf( skipcount );
     *dst << this->codecworker;
     chan->writepacket( dst );
+  }
+  else if( this->doecho && ( !this->others || 1 == this->others->size() ) )
+  {
+    this->codecworker << codecx::next;
+    this->codecworker << *src;
+    rtppacket *dst = this->gettempoutbuf( skipcount );
+    *dst << this->codecworker;
+    this->writepacket( dst );
   }
 
   return;
