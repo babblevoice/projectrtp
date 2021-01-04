@@ -67,7 +67,7 @@ public:
   inline void echo( void ) { this->doecho = true; }
 
   typedef std::vector< int > codeclist;
-  void audio( codeclist codecs );
+  bool audio( codeclist codecs );
 
   void writepacket( rtppacket * );
   void handlesend(
