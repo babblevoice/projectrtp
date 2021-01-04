@@ -17,10 +17,15 @@
 #define PCMAPAYLOADTYPE 8
 #define G722PAYLOADTYPE 9
 #define ILBCPAYLOADTYPE 97
-/* RFC says this is 44k sampling, however it also seems a little ambiguous on this - so we generally are going to be using this internally so lets see where it goes! So warning - only use for internal work*/
+/* RFC says this is 44k sampling, however it also seems a little
+ambiguous on this - so we generally are going to be using this
+internally so lets see where it goes! So warning - only use for
+internal work*/
 #define L16PAYLOADTYPE 11
 
-/* Need to double check max RTP length with variable length header - there could be a larger length with our CODECs */
+/* Need to double check max RTP length with variable length header - there
+could be a larger length with our CODECs */
+
 /* this maybe breached if a stupid number of csrc count is high */
 #define RTPMAXLENGTH 200
 #define L16MAXLENGTH ( RTPMAXLENGTH * 2 )
