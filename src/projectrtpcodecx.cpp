@@ -160,6 +160,9 @@ void codecx::xlaw2ylaw( void )
     outbufptr = this->pcmuref.c_str();
     this->pcmuref.size( insize );
     convert = alaw_to_ulaw_table;
+
+    if( nullptr == outbufptr ) return;
+    if( nullptr == inbufptr ) return;
   }
   else
   {
@@ -168,8 +171,11 @@ void codecx::xlaw2ylaw( void )
     outbufptr = this->pcmaref.c_str();
     this->pcmaref.size( insize );
     convert = ulaw_to_alaw_table;
+
+    if( nullptr == outbufptr ) return;
+    if( nullptr == inbufptr ) return;
   }
-  
+
   for( size_t i = 0; i < insize; i++ )
   {
     *outbufptr = convert[ *inbufptr ];
@@ -207,9 +213,9 @@ bool codecx::g711tol16( void )
   }
 
   this->l168kref.malloc( insize * 2 );
-  
+
   int16_t *out = ( int16_t * ) this->l168kref.c_str();
-  
+
   for( size_t i = 0; i < insize; i++ )
   {
     *out = convert[ *in ];
@@ -231,7 +237,7 @@ void codecx::l16topcma( void )
   int16_t *in;
   size_t l168klength = this->l168kref.size() / 2;
   in = ( int16_t * ) this->l168kref.c_str();
-  
+
 
   for( size_t i = 0; i < l168klength; i++ )
   {
@@ -480,7 +486,7 @@ void codecx::requirenarrowband( void )
   if( 0 != this->l168kref.size() ) return;
   if( this->g711tol16() ) return;
   if( this->ilbctol16() ) return;
-  
+
   this->g722tol16();
   this->l16widetonarrowband();
 }
