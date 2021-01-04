@@ -20,11 +20,51 @@ extern std::string publicaddress;
 
 activertpchannels activechannels;
 
+
+static void parsetarget( projectrtpchannel::pointer p, JSON::Object &target )
+{
+  /* Set the target */
+  short port = JSON::as_int64( target[ "port" ] );
+  p->target( JSON::as_string( target[ "ip" ] ), port );
+
+  if( target.has_key( "audio" ) )
+  {
+    JSON::Object audio = JSON::as_object( target[ "audio" ] );
+    if( audio.has_key( "payloads" ) )
+    {
+      JSON::Array payloads = JSON::as_array( audio[ "payloads" ] );
+
+      /* this is the CODECs we have been asked to send to the remote endpoint */
+      projectrtpchannel::codeclist ourcodeclist;
+
+      for( JSON::Array::values_t::iterator it = payloads.values.begin();
+            it != payloads.values.end();
+            it++ )
+      {
+        ourcodeclist.push_back( JSON::as_int64( *it ) );
+      }
+
+      if( !p->audio( ourcodeclist ) )
+      {
+        std::cerr << "No suitable audio CODEC provided" << std::endl;
+      }
+    }
+    else
+    {
+      std::cerr << "No audio.payloads provided" << std::endl;
+    }
+  }
+  else
+  {
+    std::cerr << "No audio provided" << std::endl;
+  }
+}
+
 /*!md
 # parserequest
 As it says...
 
-Leave this function at the top of the file as this is the definition of the json structure we receive (and send).
+Leave this function near the top of the file as this is the definition of the json structure we receive (and send).
 */
 void controlclient::parserequest( void )
 {
@@ -62,31 +102,8 @@ void controlclient::parserequest( void )
 
         if( body.has_key( "target" ) )
         {
-          /* Set the target */
           JSON::Object target = JSON::as_object( body[ "target" ] );
-          short port = JSON::as_int64( target[ "port" ] );
-          p->target( JSON::as_string( target[ "ip" ] ), port );
-        }
-
-        if( body.has_key( "audio" ) )
-        {
-          JSON::Object audio = JSON::as_object( body[ "audio" ] );
-          if( audio.has_key( "payloads" ) )
-          {
-            JSON::Array payloads = JSON::as_array( audio[ "payloads" ] );
-
-            /* this is the CODECs we have been asked to send to the remote endpoint */
-            projectrtpchannel::codeclist ourcodeclist;
-
-            for( JSON::Array::values_t::iterator it = payloads.values.begin();
-                  it != payloads.values.end();
-                  it++ )
-            {
-              ourcodeclist.push_back( JSON::as_int64( *it ) );
-            }
-
-            p->audio( ourcodeclist );
-          }
+          parsetarget( p, target );
         }
 
         JSON::Object v;
@@ -99,6 +116,17 @@ void controlclient::parserequest( void )
 
         v[ "channel" ] = c;
         this->sendmessage( v );
+      }
+      else if( "target" == action )
+      {
+
+        std::string channel = JSON::as_string( body[ "uuid" ] );
+        activertpchannels::iterator chan = activechannels.find( channel );
+        if ( activechannels.end() != chan )
+        {
+          JSON::Object target = JSON::as_object( body[ "target" ] );
+          parsetarget( chan->second, target );
+        }
       }
       else if( "close" == action )
       {
