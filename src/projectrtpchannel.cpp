@@ -180,7 +180,7 @@ void projectrtpchannel::doclose( void )
   this->rtpsocket.close();
   this->rtcpsocket.close();
 
-  if( this->control )
+  if( this->control && this->receivedpkcount > 0 )
   {
     /* calculate mos - calc borrowed from FS - thankyou. */
     double r = ( ( this->receivedpkcount - this->receivedpkskip ) / this->receivedpkcount ) * 100.0;
@@ -598,7 +598,7 @@ void projectrtpchannel::checkfornewmixes( void )
 ## audio
 The CODECs on the other end which are acceptable. The first one should be the preferred. For now we keep hold of the list of codecs as we may be using them in the future. Filter out non-RTP streams (such as DTMF).
 */
-void projectrtpchannel::audio( codeclist codecs )
+bool projectrtpchannel::audio( codeclist codecs )
 {
   this->codecs = codecs;
   codeclist::iterator it;
@@ -612,10 +612,11 @@ void projectrtpchannel::audio( codeclist codecs )
       case ILBCPAYLOADTYPE:
       {
         this->selectedcodec = *it;
-        return;
+        return true;
       }
     }
   }
+  return false;
 }
 
 /*!md
