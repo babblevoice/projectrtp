@@ -141,47 +141,53 @@ void codecx::restart( void )
 }
 
 /*!md
-## xlaw2ylaw
+## ulaw2alaw, alaw2ulaw
 
 From whichever PCM encoding (u or a) encode to the other without having to do intermediate l16.
 
 TODO - check that using a lookup table instead of a funcion call uses SSE functions in the CPU.
 */
-void codecx::xlaw2ylaw( void )
+void codecx::ulaw2alaw( void )
 {
-  const uint8_t *convert;
   uint8_t *inbufptr, *outbufptr;
   size_t insize;
 
-  if( this->pcmaref.size() > 0 )
-  {
-    insize = this->pcmaref.size();
-    inbufptr = this->pcmaref.c_str();
-    outbufptr = this->pcmuref.c_str();
-    this->pcmuref.size( insize );
-    convert = alaw_to_ulaw_table;
+  insize = this->pcmaref.size();
+  inbufptr = this->pcmaref.c_str();
+  outbufptr = this->pcmuref.c_str();
+  this->pcmuref.size( insize );
 
-    if( nullptr == outbufptr ) return;
-    if( nullptr == inbufptr ) return;
-  }
-  else
+  if( nullptr == outbufptr || nullptr == inbufptr )
   {
-    insize = this->pcmuref.size();
-    inbufptr = this->pcmuref.c_str();
-    outbufptr = this->pcmaref.c_str();
-    this->pcmaref.size( insize );
-    convert = ulaw_to_alaw_table;
-
-    if( nullptr == outbufptr ) return;
-    if( nullptr == inbufptr ) return;
+    std::cerr << "PCMA NULLPTR shouldn't happen (" << (void*)outbufptr << ", " << (void*)inbufptr << ")" << std::endl;
+    return;
   }
 
   for( size_t i = 0; i < insize; i++ )
   {
-    *outbufptr = convert[ *inbufptr ];
+    *outbufptr++ = alaw_to_ulaw_table[ *inbufptr++ ];
+  }
+}
 
-    outbufptr++;
-    inbufptr++;
+void codecx::alaw2ulaw( void )
+{
+  uint8_t *inbufptr, *outbufptr;
+  size_t insize;
+
+  insize = this->pcmuref.size();
+  inbufptr = this->pcmuref.c_str();
+  outbufptr = this->pcmaref.c_str();
+  this->pcmaref.size( insize );
+
+  if( nullptr == outbufptr || nullptr == inbufptr )
+  {
+    std::cerr << "PCMU NULLPTR shouldn't happen(" << (void*)outbufptr << ", " << (void*)inbufptr << ")" << std::endl;
+    return;
+  }
+
+  for( size_t i = 0; i < insize; i++ )
+  {
+    *outbufptr++ = ulaw_to_alaw_table[ *inbufptr++ ];
   }
 }
 
@@ -596,29 +602,6 @@ rtppacket& operator << ( rtppacket& pk, codecx& c )
     return pk;
   }
 
-  /* Check some special cases */
-  switch( outpayloadtype )
-  {
-    case PCMAPAYLOADTYPE:
-    {
-      if( c.pcmuref.size() > 0 )
-      {
-        c.xlaw2ylaw();
-        pk.copy( c.pcmaref.c_str(), c.pcmaref.size() );
-        return pk;
-      }
-    }
-    case PCMUPAYLOADTYPE:
-    {
-      if( c.pcmaref.size() > 0 )
-      {
-        c.xlaw2ylaw();
-        pk.copy( c.pcmuref.c_str(), c.pcmuref.size() );
-        return pk;
-      }
-    }
-  }
-
   /* If we get here we may have L16 but at the wrong sample rate so check and resample - then convert */
   /* narrowband targets */
   switch( outpayloadtype )
@@ -641,17 +624,33 @@ rtppacket& operator << ( rtppacket& pk, codecx& c )
     }
     case PCMAPAYLOADTYPE:
     {
-      c.requirenarrowband();
       c.pcmaref = rawsound( pk );
-      c.l16topcma();
+      if( c.pcmuref.size() > 0 )
+      {
+        c.alaw2ulaw();
+      }
+      else
+      {
+        c.requirenarrowband();
+        c.l16topcma();
+      }
       pk.setpayloadlength( c.pcmaref.size() );
+
       break;
     }
     case PCMUPAYLOADTYPE:
     {
-      c.requirenarrowband();
       c.pcmuref = rawsound( pk );
-      c.l16topcmu();
+      if( c.pcmaref.size() > 0 )
+      {
+        c.ulaw2alaw();
+      }
+      else
+      {
+        c.requirenarrowband();
+        c.l16topcmu();
+      }
+
       pk.setpayloadlength( c.pcmuref.size() );
       break;
     }

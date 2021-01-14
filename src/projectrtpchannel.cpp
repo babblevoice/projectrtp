@@ -480,7 +480,11 @@ Send a [RTP] packet to our endpoint.
 */
 void projectrtpchannel::writepacket( rtppacket *pk )
 {
-  if( 0 == pk->length ) return;
+  if( 0 == pk->length )
+  {
+    std::cerr << "We have been given an RTP packet of zero length??" << std::endl;
+    return;
+  }
 
   if( this->receivedrtp || this->targetconfirmed )
   {

@@ -36,7 +36,7 @@ private:
   /* length of buffer in bytes */
   size_t length;
   size_t allocatedlength;
-  
+
   int format;
   uint16_t samplerate;
 };
@@ -58,7 +58,8 @@ public:
   static const char next;
 
 private:
-  void xlaw2ylaw( void );
+  void alaw2ulaw( void );
+  void ulaw2alaw( void );
   bool g711tol16( void );
   bool ilbctol16( void );
   bool g722tol16( void );
