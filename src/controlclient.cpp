@@ -231,7 +231,7 @@ void controlclient::parserequest( void )
 void controlclient::sendmessage( JSON::Object &v )
 {
   stringptr t = stringptr( new std::string( JSON::to_string( v ) ) );
-  this->dowrite( t );
+  this->write( t );
 }
 
 /*!md
@@ -441,7 +441,7 @@ void controlclient::handlewritebody( const boost::system::error_code& error )
       *( ( uint16_t * ) outheaderbuf ) = htons( this->outboundmessages.front()->size() );
 
       boost::asio::async_write( this->socket,
-          boost::asio::buffer( outheaderbuf, CONTROLHEADERLENGTH ),
+          boost::asio::buffer( this->outheaderbuf, CONTROLHEADERLENGTH ),
           boost::bind( &controlclient::handlewriteheader, this,
                         boost::asio::placeholders::error ) );
     }
