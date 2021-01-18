@@ -63,6 +63,7 @@ public:
   unsigned short getport( void );
 
   void target( std::string &address, unsigned short port );
+  void rfc2833( unsigned short pt );
   void play( stringptr newdef ) { std::atomic_store( &this->newplaydef, newdef ); }
   inline void echo( void ) { this->doecho = true; }
 
@@ -111,6 +112,8 @@ public:
 private:
   std::atomic_bool active;
   unsigned short port;
+  unsigned short rfc2833pt;
+  uint32_t lasttelephoneevent;
 
   /* id provided to us */
   std::string id;

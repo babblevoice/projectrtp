@@ -43,6 +43,8 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsign
   rtpoutindex( 0 ),
   active( false ),
   port( port ),
+  rfc2833pt( 0 ),
+  lasttelephoneevent( 0 ),
   iocontext( iocontext ),
   resolver( iocontext ),
   rtpsocket( iocontext ),
@@ -52,6 +54,7 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsign
   reader( true ),
   writer( true ),
   receivedpkcount( 0 ),
+  receivedpkskip( 0 ),
   others( nullptr ),
   player( nullptr ),
   doecho( false ),
@@ -113,6 +116,9 @@ void projectrtpchannel::open( std::string &id, std::string &uuid, controlclient:
 
   this->codecs.clear();
   this->selectedcodec = 0;
+
+  this->rfc2833pt = 0;
+  this->lasttelephoneevent = 0;
 
   this->readsomertp();
   this->readsomertcp();
@@ -395,14 +401,74 @@ void projectrtpchannel::processrtpdata( rtppacket *src, uint32_t skipcount )
       chan = *( ++it );
     }
 
-    this->codecworker << codecx::next;
-    this->codecworker << *src;
     rtppacket *dst = chan->gettempoutbuf( skipcount );
-    *dst << this->codecworker;
+
+    /* This needs testing */
+    if( src->getpayloadtype() == this->rfc2833pt )
+    {
+      dst->setpayloadtype( this->rfc2833pt );
+      dst->copy( src );
+    }
+    else
+    {
+      this->codecworker << codecx::next;
+      this->codecworker << *src;
+      *dst << this->codecworker;
+    }
+
     chan->writepacket( dst );
   }
   else if( this->doecho && ( !this->others || 1 == this->others->size() ) )
   {
+
+    if( src->getpayloadtype() == this->rfc2833pt )
+    {
+      /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
+      uint16_t sn = src->getsequencenumber();
+      uint8_t event = 0;
+      uint8_t endbit = 0;
+
+      /*
+      there really should be a packet - we should cater for multiple?
+      endbits can appear to be sent multiple times.
+      */
+      if( src->getpayloadlength() >= 4 )
+      {
+        uint8_t * pl = src->getpayload();
+        endbit = pl[ 1 ] >> 7;
+        event = pl[ 0 ];
+      }
+
+      uint8_t pm = src->getpacketmarker();
+      if( !pm && 0 != this->lasttelephoneevent && abs( static_cast< long long int >( sn - this->lasttelephoneevent ) ) > 20 )
+      {
+        pm = 1;
+      }
+
+      if( pm )
+      {
+        if( this->control )
+        {
+          JSON::Object v;
+          v[ "action" ] = "telephone-event";
+          v[ "id" ] = this->id;
+          v[ "uuid" ] = this->uuid;
+          v[ "event" ] = ( JSON::Integer )event;
+
+          this->control->sendmessage( v );
+        }
+      }
+
+      if( endbit )
+      {
+        this->lasttelephoneevent = 0;
+        return;
+      }
+
+      this->lasttelephoneevent = sn;
+      return;
+    }
+
     this->codecworker << codecx::next;
     this->codecworker << *src;
     rtppacket *dst = this->gettempoutbuf( skipcount );
@@ -514,6 +580,11 @@ void projectrtpchannel::target( std::string &address, unsigned short port )
         shared_from_this(),
         boost::asio::placeholders::error,
         boost::asio::placeholders::iterator ) );
+}
+
+void projectrtpchannel::rfc2833( unsigned short pt )
+{
+  this->rfc2833pt = pt;
 }
 
 /*!md

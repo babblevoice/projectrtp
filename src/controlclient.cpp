@@ -119,13 +119,33 @@ void controlclient::parserequest( void )
       }
       else if( "target" == action )
       {
-
         std::string channel = JSON::as_string( body[ "uuid" ] );
         activertpchannels::iterator chan = activechannels.find( channel );
         if ( activechannels.end() != chan )
         {
           JSON::Object target = JSON::as_object( body[ "target" ] );
           parsetarget( chan->second, target );
+        }
+      }
+      else if( "rfc2833" == action )
+      {
+        std::string channel = JSON::as_string( body[ "uuid" ] );
+        activertpchannels::iterator chan = activechannels.find( channel );
+        if ( activechannels.end() != chan )
+        {
+          unsigned short pt = JSON::as_int64( body[ "pt" ] );
+          chan->second->rfc2833( pt );
+
+          JSON::Object v;
+          v[ "action" ] = "rfc2833";
+          v[ "uuid" ] = channel;
+          this->sendmessage( v );
+        }
+        else
+        {
+          JSON::Object v;
+          v[ "error" ] = "No such channel";
+          this->sendmessage( v );
         }
       }
       else if( "close" == action )
