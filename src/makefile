@@ -1,4 +1,4 @@
-CCOPTS:=-Wall -g -O0 -fstack-protector-all -std=c++17
+CCOPTS:=-Wall -g -O0 -fstack-protector-all -std=c++17 -O3 #-fopt-info-vec -fopt-info-vec-missed
 LL:=-lboost_system -lpthread -lrt -L../Debug/ -lspandsp -lilbc
 
 COMPILER:=g++
