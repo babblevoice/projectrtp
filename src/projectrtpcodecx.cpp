@@ -144,8 +144,6 @@ void codecx::restart( void )
 ## ulaw2alaw, alaw2ulaw
 
 From whichever PCM encoding (u or a) encode to the other without having to do intermediate l16.
-
-TODO - check that using a lookup table instead of a funcion call uses SSE functions in the CPU.
 */
 void codecx::ulaw2alaw( void )
 {
@@ -218,15 +216,13 @@ bool codecx::g711tol16( void )
     return false;
   }
 
-  this->l168kref.malloc( insize * 2 );
+  this->l168kref.malloc( insize, sizeof( int16_t ), L168KPAYLOADTYPE );
 
   int16_t *out = ( int16_t * ) this->l168kref.c_str();
 
   for( size_t i = 0; i < insize; i++ )
   {
-    *out = convert[ *in ];
-    in++;
-    out++;
+    *out++ = convert[ *in++ ];
   }
 
   return true;
@@ -241,16 +237,12 @@ void codecx::l16topcma( void )
   uint8_t *out = this->pcmaref.c_str();
 
   int16_t *in;
-  size_t l168klength = this->l168kref.size() / 2;
+  size_t l168klength = this->l168kref.size();
   in = ( int16_t * ) this->l168kref.c_str();
-
 
   for( size_t i = 0; i < l168klength; i++ )
   {
-    *out = _l16topcma[ ( *in ) + 32768 ];
-
-    in++;
-    out++;
+    *out++ = _l16topcma[ ( *in++ ) + 32768 ];
   }
 }
 
@@ -262,15 +254,12 @@ void codecx::l16topcmu( void )
   uint8_t *out = this->pcmuref.c_str();;
 
   int16_t *in;
-  size_t l168klength = this->l168kref.size() / 2;
+  size_t l168klength = this->l168kref.size();
   in = ( int16_t * ) this->l168kref.c_str();
 
   for( size_t i = 0; i < l168klength; i++ )
   {
-    *out = _l16topcmu[ ( *in ) + 32768 ];
-
-    in++;
-    out++;
+    *out++ = _l16topcmu[ ( *in++ ) + 32768 ];
   }
 }
 
@@ -283,7 +272,7 @@ bool codecx::ilbctol16( void )
   if( 0 == this->ilbcref.size() ) return false;
 
   /* roughly compression size with some leg room. */
-  this->l168kref.malloc( this->ilbcref.size() * 5 );
+  this->l168kref.malloc( this->ilbcref.size(), sizeof( int16_t ), L168KPAYLOADTYPE );
 
   WebRtc_Word16 speechType;
 
@@ -363,7 +352,7 @@ void codecx::l16toilbc( void )
 
   WebRtc_Word16 len = WebRtcIlbcfix_Encode( this->ilbcencoder,
                             ( WebRtc_Word16 * ) this->l168kref.c_str(),
-                            this->l168kref.size() / 2,
+                            this->l168kref.size(),
                             ( WebRtc_Word16* ) this->ilbcref.c_str()
                           );
   if ( len > 0 )
@@ -388,16 +377,24 @@ bool codecx::g722tol16( void )
     return false;
   }
 
-  this->l168kref.malloc( this->g722ref.size() * 2 );
+  /* x 2 for 16 bit instead of 8 and then x 2 sample rate */
+  this->l1616kref.malloc( this->g722ref.size(), sizeof( int16_t ), L1616KPAYLOADTYPE );
 
   if( nullptr == this->g722decoder )
   {
     this->g722decoder = g722_decode_init( NULL, 64000, G722_PACKED );
+    if( nullptr ==  this->g722decoder )
+    {
+      std::cerr << "Failed to init G722 decoder" << std::endl;
+    }
   }
 
-  size_t l1616klength = g722_decode( g722decoder, ( int16_t * ) this->l1616kref.c_str(), this->g722ref.c_str(), this->g722ref.size() );
-  this->l1616kref.size( l1616klength );
+  size_t l1616klength = g722_decode( this->g722decoder,
+                                ( int16_t * ) this->l1616kref.c_str(),
+                                this->g722ref.c_str(),
+                                this->g722ref.size() );
 
+  this->l1616kref.size( l1616klength );
   return true;
 }
 
@@ -413,12 +410,12 @@ void codecx::l16lowtowideband( void )
     return;
   }
 
-  this->l1616kref.malloc( l168klength * 2 );
+  this->l1616kref.malloc( l168klength, sizeof( int16_t ), L1616KPAYLOADTYPE );
 
   int16_t *in = ( int16_t * ) this->l168kref.c_str();
   int16_t *out = ( int16_t * ) this->l1616kref.c_str();
 
-  for( size_t i = 0; i < l168klength/2; i++ )
+  for( size_t i = 0; i < l168klength; i++ )
   {
     *out = ( ( *in - this->resamplelastsample ) / 2 ) + this->resamplelastsample;
     this->resamplelastsample = *in;
@@ -432,7 +429,7 @@ void codecx::l16lowtowideband( void )
 }
 
 /*!md
-## requirenarrowband
+## requirewideband
 Search for the relevent data and convert as necessary.
 */
 void codecx::requirewideband( void )
@@ -462,24 +459,15 @@ void codecx::l16widetonarrowband( void )
     return;
   }
 
-  /* if odd need ceil instead of floor (the + 1 bit) */
-  size_t l168klength = ( l1616klength + 1 ) / 2;
-  this->l168kref.malloc( l168klength );
+  this->l168kref.malloc( l1616klength / 2, sizeof( int16_t ), L168KPAYLOADTYPE );
 
   int16_t *out = ( int16_t * ) this->l168kref.c_str();
   int16_t *in = ( int16_t * ) this->l1616kref.c_str();
 
-  int16_t filteredval;
-  for( size_t i = 0; i < l1616klength; i++ )
+  for( size_t i = 0; i < l1616klength / 2; i++ )
   {
-    filteredval = lpfilter.execute( *in );
-    in++;
-
-    if( 0x01 == ( i & 0x01 ) )
-    {
-      *out = filteredval;
-      out++;
-    }
+    lpfilter.execute( *in++ );
+    *out++ = lpfilter.execute( *in++ );
   }
 }
 
@@ -492,7 +480,6 @@ void codecx::requirenarrowband( void )
   if( 0 != this->l168kref.size() ) return;
   if( this->g711tol16() ) return;
   if( this->ilbctol16() ) return;
-
   this->g722tol16();
   this->l16widetonarrowband();
 }
@@ -541,16 +528,14 @@ codecx& operator << ( codecx& c, rawsound& raw )
       c.g722ref = raw;
       break;
     }
-    case L16PAYLOADTYPE:
+    case L168KPAYLOADTYPE:
     {
-      if( 8000 == raw.getsamplerate() )
-      {
-        c.l168kref = raw;
-      }
-      else if( 16000 == raw.getsamplerate() )
-      {
-        c.l1616kref = raw;
-      }
+      c.l168kref = raw;
+      break;
+    }
+    case L1616KPAYLOADTYPE:
+    {
+      c.l1616kref = raw;
       break;
     }
   }
@@ -624,30 +609,35 @@ rtppacket& operator << ( rtppacket& pk, codecx& c )
     }
     case PCMAPAYLOADTYPE:
     {
-      c.pcmaref = rawsound( pk );
       if( c.pcmuref.size() > 0 )
       {
+        c.pcmaref = rawsound( pk );
         c.alaw2ulaw();
       }
       else
       {
         c.requirenarrowband();
+        c.pcmaref = rawsound( pk );
+
         c.l16topcma();
       }
+
       pk.setpayloadlength( c.pcmaref.size() );
 
       break;
     }
     case PCMUPAYLOADTYPE:
     {
-      c.pcmuref = rawsound( pk );
       if( c.pcmaref.size() > 0 )
       {
+        c.pcmuref = rawsound( pk );
         c.ulaw2alaw();
       }
       else
       {
         c.requirenarrowband();
+
+        c.pcmuref = rawsound( pk );
         c.l16topcmu();
       }
 
@@ -670,7 +660,7 @@ An object representing raw data for sound - which can be in any format (supporte
 */
 rawsound::rawsound() :
   data( nullptr ),
-  length( 0 ),
+  samples( 0 ),
   allocatedlength( 0 ),
   format( 0 ),
   samplerate( 0 )
@@ -680,9 +670,9 @@ rawsound::rawsound() :
 /*!md
 # rawsound
 */
-rawsound::rawsound( uint8_t *ptr, std::size_t length, int format, uint16_t samplerate ) :
+rawsound::rawsound( uint8_t *ptr, std::size_t samples, int format, uint16_t samplerate ) :
   data( ptr ),
-  length( length ),
+  samples( samples ),
   allocatedlength( 0 ),
   format( format ),
   samplerate( samplerate )
@@ -695,7 +685,7 @@ Construct from an rtp packet
 */
 rawsound::rawsound( rtppacket& pk ) :
   data( pk.getpayload() ),
-  length( pk.getpayloadlength() ),
+  samples( pk.getpayloadlength() ),
   allocatedlength( 0 ),
   format( pk.getpayloadtype() )
 {
@@ -726,7 +716,7 @@ Original maintains ownership of any allocated memory.
 */
 rawsound::rawsound( rawsound &o ) :
   data( o.data ),
-  length( o.length ),
+  samples( o.samples ),
   allocatedlength( 0 ),
   format( o.format ),
   samplerate( o.samplerate )
@@ -749,19 +739,96 @@ rawsound::~rawsound()
 ## malloc
 Allocate our own memory.
 */
-void rawsound::malloc( size_t len )
+void rawsound::malloc( size_t samplecount, size_t bytespersample, int format )
 {
-  this->length = len;
+  this->samples = samplecount;
+  size_t requiredsize = samplecount * bytespersample;
+  if( L1616KPAYLOADTYPE == format )
+  {
+    requiredsize = requiredsize * 2;
+  }
 
   if( this->allocatedlength > 0 )
   {
-    if( this->allocatedlength > len )
+    if( this->allocatedlength >= requiredsize )
     {
       return;
     }
 
     delete[] this->data;
   }
-  this->data = new uint8_t[ len ];
-  this->allocatedlength = len;
+  this->data = new uint8_t[ requiredsize ];
+  this->allocatedlength = requiredsize;
+}
+
+
+void codectests( void )
+{
+  /* init transcoding stuff */
+  gen711convertdata();
+
+  /* Test a G722 packet to L16 using the underlying functions. */
+  uint8_t g722samplepk[] = {
+    218, 123, 22, 247, 110, 123, 54, 249, 26, 252, 115, 178, 222, 190, 217, 179, 239, 116, 238, 249,
+    60, 222, 116, 249, 218, 189, 220, 121, 113, 47, 220, 92, 182, 221, 186, 223, 124, 245, 179, 218,
+    53, 212, 123, 172, 181, 250, 87, 221, 215, 213, 124, 116, 126, 218, 123, 239, 252, 246, 116, 159,
+    54, 122, 124, 29, 181, 215, 237, 119, 87, 121, 159, 247, 243, 252, 223, 127, 245, 255, 147, 190,
+    21, 218, 247, 248, 116, 174, 88, 113, 90, 45, 243, 157, 125, 215, 109, 178, 116, 108, 213, 92, 217,
+    216, 87, 120, 108, 218, 184, 185, 60, 57, 87, 244, 211, 190, 244, 53, 252, 255, 252, 156, 82, 251,
+    210, 83, 217, 155, 52, 154, 88, 211, 121, 250, 94, 223, 127, 89, 29, 81, 118, 174, 90, 175, 178,
+    247, 248, 113, 127, 121, 254, 215, 118, 238, 186, 119, 179, 50, 124, 251, 126, 254 };
+
+
+  g722_decode_state_t *g722decoder = g722_decode_init( NULL, 64000, G722_PACKED );
+  if( nullptr == g722decoder )
+  {
+    std::cerr << "Failed to init G722 decoder" << std::endl;
+  }
+
+
+  int16_t outbuf[ 320 ];
+  size_t l1616klength = g722_decode( g722decoder,
+                                outbuf,
+                                g722samplepk,
+                                160 );
+  std::cout << "g722_decode returned " << l1616klength << " for an in packet of 160 bytes" << std::endl;
+  if( 320 != l1616klength )
+  {
+    std::cerr << "ERROR - decoded length is not 320 bytes" << std::endl;
+  }
+  g722_decode_free( g722decoder );
+
+  std::cout << "L16 OUT (g722_decode) =" << std::endl;
+  for( int i = 0; i < 160; i ++ )
+  {
+    std::cout << unsigned( outbuf[ i ] ) << " ";
+  }
+  std::cout << std::endl;
+
+
+  /*
+  Move onto test our interface.
+  */
+  rawsound r( g722samplepk, sizeof( g722samplepk ), G722PAYLOADTYPE, 16000 );
+  std::cout << "G722 raw packet size " << r.size() << " with a format of " << r.getformat() << " and sample rate " << r.getsamplerate() << std::endl;
+
+  codecx ourcodec;
+
+  ourcodec << codecx::next;
+  ourcodec << r;
+
+  rtppacket outpk;
+  outpk.setpayloadtype( PCMAPAYLOADTYPE );
+  outpk.setpayloadlength( 160 );
+  outpk.setsequencenumber( 0 );
+  outpk.settimestamp( 0 );
+  outpk << ourcodec;
+
+  std::cout << "PCMA OUT =" << std::endl;
+  for( int i = 0; i < 160; i ++ )
+  {
+    std::cout << unsigned( outpk.getpayload()[ i ] ) << " ";
+  }
+  std::cout << std::endl;
+
 }

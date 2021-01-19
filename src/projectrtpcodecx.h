@@ -12,6 +12,13 @@
 #include "globals.h"
 #include "firfilter.h"
 
+
+/*
+ This class is not tracking enough information. We store the number of bytes - but not
+ what, always what is stored in the object - so we lose the sample rate. If we have length of 160
+ we don't know if this is 160 sample or 320 samples. We do keep track of samplerate which is
+ helpful but converting l1616K to l168k gets a bit tricky
+*/
 class rawsound
 {
 public:
@@ -22,21 +29,26 @@ public:
   ~rawsound();
 
   uint8_t *c_str( void ){ return this->data; };
-  size_t size( void ){ return this->length; };
-  void size( size_t len ){ this->length = len; };
+  size_t size( void ){ return this->samples; };
+  void size( size_t samplecount ){ this->samples = samplecount; };
   int getformat( void ){ return this->format; };
   uint16_t getsamplerate( void ) { return this->samplerate; };
-  void malloc( size_t len );
+  void malloc( size_t samplecount, size_t bytespersample, int format );
 
 private:
 
   /* ptr to our buffer */
   uint8_t *data;
 
-  /* length of buffer in bytes */
-  size_t length;
+  /* sample count of buffer in bytes */
+  size_t samples;
+
+  /* The amount we requested from the system malloc */
   size_t allocatedlength;
 
+  size_t bytespersample;
+
+  /* see globals.h */
   int format;
   uint16_t samplerate;
 };
@@ -55,6 +67,7 @@ public:
   friend codecx& operator << ( codecx&, rawsound& );
   friend rawsound& operator << ( rawsound&, codecx& );
   friend codecx& operator << ( codecx&, const char& );
+  //friend void codectests( void );
   static const char next;
 
 private:
@@ -84,17 +97,7 @@ private:
   lowpass3_4k16k lpfilter;
   /* When we up sample we need to interpolate so need last sample */
   int16_t resamplelastsample;
-#if 0
-  int16_t *l168k; /* narrow band */
-  int16_t *l1616k; /* wideband */
 
-  uint16_t l168kallocatedlength;
-  uint16_t l1616kallocatedlength;
-  int16_t l168klength;
-  int16_t l1616klength;
-
-  rawsound in;
-#endif
   rawsound l168kref;
   rawsound l1616kref;
   rawsound pcmaref;
@@ -115,6 +118,7 @@ codecx& operator << ( codecx&, const char& );
 
 /* Functions */
 void gen711convertdata( void );
+void codectests( void );
 
 
 #endif /* PROJECTRTPCODECX_H */
