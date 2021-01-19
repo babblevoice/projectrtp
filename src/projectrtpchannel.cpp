@@ -103,6 +103,8 @@ void projectrtpchannel::open( std::string &id, std::string &uuid, controlclient:
 
   this->rtpoutindex = 0;
 
+  this->codecworker.reset();
+
   this->rtpsocket.open( boost::asio::ip::udp::v4() );
   this->rtpsocket.bind( boost::asio::ip::udp::endpoint(
       boost::asio::ip::udp::v4(), this->port ) );
@@ -232,7 +234,7 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
       }
       else
       {
-        rtppacket *out = this->gettempoutbuf( 0 );
+        rtppacket *out = this->gettempoutbuf();
         stringptr newplaydef = std::atomic_exchange( &this->newplaydef, stringptr( NULL ) );
         if( newplaydef )
         {
@@ -404,7 +406,7 @@ void projectrtpchannel::processrtpdata( rtppacket *src, uint32_t skipcount )
     rtppacket *dst = chan->gettempoutbuf( skipcount );
 
     /* This needs testing */
-    if( src->getpayloadtype() == this->rfc2833pt )
+    if( 0 != this->rfc2833pt && src->getpayloadtype() == this->rfc2833pt )
     {
       dst->setpayloadtype( this->rfc2833pt );
       dst->copy( src );
@@ -421,7 +423,7 @@ void projectrtpchannel::processrtpdata( rtppacket *src, uint32_t skipcount )
   else if( this->doecho && ( !this->others || 1 == this->others->size() ) )
   {
 
-    if( src->getpayloadtype() == this->rfc2833pt )
+    if( 0 != this->rfc2833pt && src->getpayloadtype() == this->rfc2833pt )
     {
       /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
       uint16_t sn = src->getsequencenumber();

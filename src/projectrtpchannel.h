@@ -83,7 +83,7 @@ public:
   bool isactive( void );
 
   bool mix( projectrtpchannel::pointer other );
-  rtppacket *gettempoutbuf( uint32_t skipcount );
+  rtppacket *gettempoutbuf( uint32_t skipcount = 0 );
 
   void unmix( void );
 
