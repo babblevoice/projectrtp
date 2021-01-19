@@ -357,6 +357,12 @@ int main( int argc, const char* argv[] )
         gentone( argv[ i + 1 ], argv[ i + 2 ] );
         return 0;
       }
+      else if( "--test" == argvstr )
+      {
+        /* run tests */
+        codectests();
+        return 0;
+      }
     }
   }
 
