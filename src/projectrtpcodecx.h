@@ -23,7 +23,7 @@ class rawsound
 {
 public:
   rawsound();
-  rawsound( uint8_t *ptr, std::size_t length, int format, uint16_t samplerate = 8000 );
+  rawsound( uint8_t *ptr, std::size_t samples, int format, uint16_t samplerate );
   rawsound( rtppacket& pk );
   rawsound( rawsound & );
   ~rawsound();
@@ -31,11 +31,12 @@ public:
   uint8_t *c_str( void ){ return this->data; };
   size_t size( void ){ return this->samples; };
   void size( size_t samplecount ){ this->samples = samplecount; };
-  int getformat( void ){ return this->format; };
+  int getformat( void ){ return this->format; }; /* aka payload type */
   uint16_t getsamplerate( void ) { return this->samplerate; };
   void malloc( size_t samplecount, size_t bytespersample, int format );
 
 private:
+  void frompt( int payloadtype );
 
   /* ptr to our buffer */
   uint8_t *data;

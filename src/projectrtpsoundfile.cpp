@@ -24,7 +24,6 @@ soundfile::soundfile( std::string &url ) :
   readbuffer( nullptr ),
   readbuffercount( 2 ),
   currentindex( 0 ),
-  blocksize( L16WIDEBANDBYTES ),
   opened (false ),
   badheader( false ),
   newposition( -1 ),
@@ -118,6 +117,12 @@ We only support 1 channel. Anything else we need to look at.
 */
 rawsound soundfile::read( void )
 {
+  /* check */
+  if ( -1 == this->file )
+  {
+    return rawsound();
+  }
+
   if( false == this->headerread &&
       aio_error( &this->cbwavheader ) == EINPROGRESS )
   {
@@ -146,61 +151,75 @@ rawsound soundfile::read( void )
   }
   this->badheader = false;
 
-
   int ploadtype = L168KPAYLOADTYPE;
+  int blocksize = L16NARROWBANDBYTES;
   switch( this->wavheader.audio_format )
   {
     case WAVE_FORMAT_PCM:
     {
       if( 8000 == this->wavheader.sample_rate )
       {
-        this->blocksize = L16NARROWBANDBYTES;
+        ploadtype = L168KPAYLOADTYPE;
+        blocksize = L16NARROWBANDBYTES;
+      }
+      else if( 16000 == this->wavheader.sample_rate )
+      {
+        ploadtype = L1616KPAYLOADTYPE;
+        blocksize = L16WIDEBANDBYTES;
+      }
+      else
+      {
+        return rawsound();
       }
       break;
     }
     case WAVE_FORMAT_ALAW:
     {
       ploadtype = PCMAPAYLOADTYPE;
-      this->blocksize = G711PAYLOADBYTES;
+      blocksize = G711PAYLOADBYTES;
       break;
     }
     case WAVE_FORMAT_MULAW:
     {
       ploadtype = PCMUPAYLOADTYPE;
-      this->blocksize = G711PAYLOADBYTES;
+      blocksize = G711PAYLOADBYTES;
       break;
     }
     case WAVE_FORMAT_POLYCOM_G722:
     {
       ploadtype = G722PAYLOADTYPE;
-      this->blocksize = G722PAYLOADBYTES;
+      blocksize = G722PAYLOADBYTES;
       break;
     }
     case WAVE_FORMAT_GLOBAL_IP_ILBC:
     {
       ploadtype = ILBCPAYLOADTYPE;
-      this->blocksize = ILBC20PAYLOADBYTES;
+      blocksize = ILBC20PAYLOADBYTES;
       break;
+    }
+    default:
+    {
+      return rawsound();
     }
   }
 
   uint8_t *current = ( uint8_t * ) this->cbwavblock.aio_buf;
 
   this->currentindex = ( this->currentindex + 1 ) % this->readbuffercount;
-  this->cbwavblock.aio_buf = this->readbuffer + ( this->blocksize * this->currentindex );
+  this->cbwavblock.aio_buf = this->readbuffer + ( blocksize * this->currentindex );
 
   if( -1 == this->newposition )
   {
-    this->cbwavblock.aio_offset += this->blocksize;
+    this->cbwavblock.aio_offset += blocksize;
   }
   else
   {
     this->cbwavblock.aio_offset = ( this->wavheader.bit_depth / 8 ) * ( this->wavheader.sample_rate / 1000 ) * this->newposition; /* bytes per sample */
-    this->cbwavblock.aio_offset = ( this->cbwavblock.aio_offset / this->blocksize ) * this->blocksize; /* realign to the nearest block */
+    this->cbwavblock.aio_offset = ( this->cbwavblock.aio_offset / blocksize ) * blocksize; /* realign to the nearest block */
     this->cbwavblock.aio_offset += sizeof( wav_header );
   }
 
-  this->cbwavblock.aio_nbytes = this->blocksize;
+  this->cbwavblock.aio_nbytes = blocksize;
 
   if( this->cbwavblock.aio_offset > ( __off_t ) ( this->wavheader.wav_size + sizeof( wav_header ) ) )
   {
@@ -227,7 +246,7 @@ rawsound soundfile::read( void )
     return rawsound();
   }
 
-  return rawsound( current, this->blocksize, ploadtype, this->wavheader.sample_rate );
+  return rawsound( current, blocksize, ploadtype, this->wavheader.sample_rate );
 }
 
 /*!md

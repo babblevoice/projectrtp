@@ -253,8 +253,7 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
             std::cerr << "Bad sound soup: " << *newplaydef << std::endl;
           }
         }
-
-        if( this->player )
+        else if( this->player )
         {
           rawsound r = player->read();
           if( 0 != r.size() )

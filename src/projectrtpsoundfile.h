@@ -80,7 +80,6 @@ private:
   aiocb cbwavheader;
   wav_header wavheader;
   aiocb cbwavblock;
-  int blocksize;
 
   bool opened;
   bool badheader;

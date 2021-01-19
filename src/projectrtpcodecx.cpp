@@ -662,6 +662,7 @@ rawsound::rawsound() :
   data( nullptr ),
   samples( 0 ),
   allocatedlength( 0 ),
+  bytespersample( 1 ),
   format( 0 ),
   samplerate( 0 )
 {
@@ -674,9 +675,62 @@ rawsound::rawsound( uint8_t *ptr, std::size_t samples, int format, uint16_t samp
   data( ptr ),
   samples( samples ),
   allocatedlength( 0 ),
+  bytespersample( 1 ),
   format( format ),
   samplerate( samplerate )
 {
+  this->frompt( format );
+}
+
+/*!md
+## frompt
+From payload Type. Configure samplerate and bytes per sample etc.
+*/
+void rawsound::frompt( int payloadtype )
+{
+  switch( payloadtype )
+  {
+    case PCMUPAYLOADTYPE:
+    case PCMAPAYLOADTYPE:
+    {
+      this->samplerate = 8000;
+      this->bytespersample = 1;
+      break;
+    }
+    case G722PAYLOADTYPE:
+    {
+      this->samplerate = 16000;
+      this->bytespersample = 1;
+      break;
+    }
+    case ILBCPAYLOADTYPE:
+    {
+      this->samplerate = 8000;
+      this->bytespersample = 1;
+      break;
+    }
+    /* The next 2 can only come from a sound file */
+    case L168KPAYLOADTYPE:
+    {
+      this->samplerate = 8000;
+      if( 1 == this->bytespersample )
+      {
+        this->bytespersample = 2;
+        this->samples = this->samples / 2;
+      }
+      break;
+    }
+    case L1616KPAYLOADTYPE:
+    {
+      this->samplerate = 16000;
+      if( 1 == this->bytespersample )
+      {
+        this->bytespersample = 2;
+        this->samples = this->samples / 2;
+      }
+      break;
+    }
+  }
 }
 
 /*!md
@@ -687,27 +741,10 @@ rawsound::rawsound( rtppacket& pk ) :
   data( pk.getpayload() ),
   samples( pk.getpayloadlength() ),
   allocatedlength( 0 ),
+  bytespersample( 1 ),
   format( pk.getpayloadtype() )
 {
-  switch( pk.getpayloadtype() )
-  {
-    case PCMUPAYLOADTYPE:
-    case PCMAPAYLOADTYPE:
-    {
-      this->samplerate = 8000;
-      break;
-    }
-    case G722PAYLOADTYPE:
-    {
-      this->samplerate = 16000;
-      break;
-    }
-    case ILBCPAYLOADTYPE:
-    {
-      this->samplerate = 8000;
-      break;
-    }
-  }
+  this->frompt( this->format );
 }
 
 /*!md
@@ -718,6 +755,7 @@ rawsound::rawsound( rawsound &o ) :
   data( o.data ),
   samples( o.samples ),
   allocatedlength( 0 ),
+  bytespersample( o.bytespersample ),
   format( o.format ),
   samplerate( o.samplerate )
 {
