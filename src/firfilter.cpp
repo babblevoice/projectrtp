@@ -21,7 +21,7 @@ void lowpass3_4k16k::reset( void )
   this->round = 0;
 }
 
-/*!md 
+/*!md
 # lowpass3_4k16k::execute
 Implements a 3.4Khz low pass filter on 16k sampling rate (used for downsampln 16K to 8K data).
 
@@ -50,22 +50,22 @@ Works nicely in a spreadsheet:
 */
 
 static float lp3_4k16kcoeffs[ lowpass3_4k16kfl ] = {
-                  -0.002102, 
-                  0.000519, 
+                  -0.002102,
+                  0.000519,
                   0.014189,
                   0.010317,
-                  -0.037919, 
-                  -0.060378, 
-                  0.063665, 
-                  0.299972, 
-                  0.425000, 
-                  0.299972, 
-                  0.063665, 
-                  -0.060378, 
-                  -0.037919, 
-                  0.010317, 
-                  0.014189, 
-                  0.000519, 
+                  -0.037919,
+                  -0.060378,
+                  0.063665,
+                  0.299972,
+                  0.425000,
+                  0.299972,
+                  0.063665,
+                  -0.060378,
+                  -0.037919,
+                  0.010317,
+                  0.014189,
+                  0.000519,
                   -0.002102 };
 
 int16_t lowpass3_4k16k::execute( int16_t val )
@@ -83,13 +83,13 @@ int16_t lowpass3_4k16k::execute( int16_t val )
   }
 
   j = 0;
-    
+
   for ( ;  i < lowpass3_4k16kfl;  i++ )
   {
     runtot += lp3_4k16kcoeffs[ i ] * this->history[ j ];
     j++;
   }
-  
+
   this->round = ( this->round + 1 ) % lowpass3_4k16kfl;
   return ( int16_t ) runtot;
 }
