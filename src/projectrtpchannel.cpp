@@ -226,50 +226,40 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
     /* only us */
     if( !this->others || 0 == this->others->size() )
     {
-      if( this->doecho )
+      stringptr newplaydef = std::atomic_exchange( &this->newplaydef, stringptr( NULL ) );
+      if( newplaydef )
       {
-        /* this could be done much more efficiently - but as it is only a test is not likely to get
-        use that much and this way we test more of our software */
-        while( this->handlertpdata() );
+        try
+        {
+          if( !this->player )
+          {
+            this->player = soundsoup::create();
+          }
+
+          JSON::Value ob = JSON::parse( *newplaydef );
+          this->player->config( JSON::as_object( ob ), selectedcodec );
+        }
+        catch(...)
+        {
+          std::cerr << "Bad sound soup: " << *newplaydef << std::endl;
+        }
       }
-      else
+      else if( this->player )
       {
         rtppacket *out = this->gettempoutbuf();
-        stringptr newplaydef = std::atomic_exchange( &this->newplaydef, stringptr( NULL ) );
-        if( newplaydef )
+        rawsound r = player->read();
+        if( 0 != r.size() )
         {
-          try
-          {
-            if( !this->player )
-            {
-              this->player = soundsoup::create();
-            }
-
-            JSON::Value ob = JSON::parse( *newplaydef );
-            this->player->config( JSON::as_object( ob ), out->getpayloadtype() );
-          }
-          catch(...)
-          {
-            std::cerr << "Bad sound soup: " << *newplaydef << std::endl;
-          }
-        }
-        else if( this->player )
-        {
-          rawsound r = player->read();
-          if( 0 != r.size() )
-          {
-            this->codecworker << codecx::next;
-            this->codecworker << r;
-            *out << this->codecworker;
-            this->writepacket( out );
-          }
+          this->codecworker << codecx::next;
+          this->codecworker << r;
+          *out << this->codecworker;
+          this->writepacket( out );
         }
       }
     }
-    else
-    {
-      while( this->handlertpdata() );
-    }
+
+    while( this->handlertpdata() );
+
 
     /* The last thing we do */
     this->tick.expires_at( this->tick.expiry() + boost::asio::chrono::milliseconds( 20 ) );
@@ -392,6 +382,54 @@ void projectrtpchannel::processrtpdata( rtppacket *src, uint32_t skipcount )
   this->receivedpkskip += skipcount;
 
   /* The next section is sending to our recipient(s) */
+  if( 0 != this->rfc2833pt && src->getpayloadtype() == this->rfc2833pt )
+  {
+    /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
+    uint16_t sn = src->getsequencenumber();
+    uint8_t event = 0;
+    uint8_t endbit = 0;
+
+    /*
+    there really should be a packet - we should cater for multiple?
+    endbits can appear to be sent multiple times.
+    */
+    if( src->getpayloadlength() >= 4 )
+    {
+      uint8_t * pl = src->getpayload();
+      endbit = pl[ 1 ] >> 7;
+      event = pl[ 0 ];
+    }
+
+    uint8_t pm = src->getpacketmarker();
+    if( !pm && 0 != this->lasttelephoneevent && abs( static_cast< long long int >( sn - this->lasttelephoneevent ) ) > 20 )
+    {
+      pm = 1;
+    }
+
+    if( pm )
+    {
+      if( this->control )
+      {
+        JSON::Object v;
+        v[ "action" ] = "telephone-event";
+        v[ "id" ] = this->id;
+        v[ "uuid" ] = this->uuid;
+        v[ "event" ] = ( JSON::Integer )event;
+
+        this->control->sendmessage( v );
+      }
+    }
+
+    if( endbit )
+    {
+      this->lasttelephoneevent = 0;
+    }
+    else
+    {
+      this->lasttelephoneevent = sn;
+    }
+  }
+
   if( this->others && 2 == this->others->size() )
   {
     /* one should be us */
@@ -421,55 +459,6 @@ void projectrtpchannel::processrtpdata( rtppacket *src, uint32_t skipcount )
   }
   else if( this->doecho && ( !this->others || 1 == this->others->size() ) )
   {
-
-    if( 0 != this->rfc2833pt && src->getpayloadtype() == this->rfc2833pt )
-    {
-      /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
-      uint16_t sn = src->getsequencenumber();
-      uint8_t event = 0;
-      uint8_t endbit = 0;
-
-      /*
-      there really should be a packet - we should cater for multiple?
-      endbits can appear to be sent multiple times.
-      */
-      if( src->getpayloadlength() >= 4 )
-      {
-        uint8_t * pl = src->getpayload();
-        endbit = pl[ 1 ] >> 7;
-        event = pl[ 0 ];
-      }
-
-      uint8_t pm = src->getpacketmarker();
-      if( !pm && 0 != this->lasttelephoneevent && abs( static_cast< long long int >( sn - this->lasttelephoneevent ) ) > 20 )
-      {
-        pm = 1;
-      }
-
-      if( pm )
-      {
-        if( this->control )
-        {
-          JSON::Object v;
-          v[ "action" ] = "telephone-event";
-          v[ "id" ] = this->id;
-          v[ "uuid" ] = this->uuid;
-          v[ "event" ] = ( JSON::Integer )event;
-
-          this->control->sendmessage( v );
-        }
-      }
-
-      if( endbit )
-      {
-        this->lasttelephoneevent = 0;
-        return;
-      }
-
-      this->lasttelephoneevent = sn;
-      return;
-    }
-
     this->codecworker << codecx::next;
     this->codecworker << *src;
     rtppacket *dst = this->gettempoutbuf( skipcount );
