@@ -147,7 +147,7 @@ rawsound soundfile::read( void )
   this->badheader = false;
 
 
-  int ploadtype = L16PAYLOADTYPE;
+  int ploadtype = L168KPAYLOADTYPE;
   switch( this->wavheader.audio_format )
   {
     case WAVE_FORMAT_PCM:
