@@ -188,26 +188,30 @@ void projectrtpchannel::doclose( void )
   this->rtpsocket.close();
   this->rtcpsocket.close();
 
-  if( this->control && this->receivedpkcount > 0 )
+  if( this->control )
   {
-    /* calculate mos - calc borrowed from FS - thankyou. */
-    double r = ( ( this->receivedpkcount - this->receivedpkskip ) / this->receivedpkcount ) * 100.0;
-    if ( r < 0 || r > 100 ) r = 100;
-    double mos = 1 + ( 0.035 * r ) + (.000007 * r * ( r - 60 ) * ( 100 - r ) );
-
-    JSON::Object i;
-    i[ "mos" ] = ( JSON::Double ) mos;
-    i[ "count" ] = ( JSON::Integer ) this->receivedpkcount;
-    i[ "skip" ] = ( JSON::Integer ) this->receivedpkskip;
-
-    JSON::Object s;
-    s[ "in" ] = i;
-
     JSON::Object v;
     v[ "action" ] = "close";
     v[ "id" ] = this->id;
     v[ "uuid" ] = this->uuid;
-    v[ "stats" ] = s;
+
+    /* calculate mos - calc borrowed from FS - thankyou. */
+    if( this->receivedpkcount > 0 )
+    {
+      double r = ( ( this->receivedpkcount - this->receivedpkskip ) / this->receivedpkcount ) * 100.0;
+      if ( r < 0 || r > 100 ) r = 100;
+      double mos = 1 + ( 0.035 * r ) + (.000007 * r * ( r - 60 ) * ( 100 - r ) );
+
+      JSON::Object i;
+      i[ "mos" ] = ( JSON::Double ) mos;
+      i[ "count" ] = ( JSON::Integer ) this->receivedpkcount;
+      i[ "skip" ] = ( JSON::Integer ) this->receivedpkskip;
+
+      JSON::Object s;
+      s[ "in" ] = i;
+
+      v[ "stats" ] = s;
+    }
 
     this->control->sendmessage( v );
   }
