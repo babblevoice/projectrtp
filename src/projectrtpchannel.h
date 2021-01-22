@@ -168,6 +168,8 @@ private:
   boost::asio::steady_timer tick;
 
   controlclient::pointer control;
+
+  std::atomic_uint16_t tickswithnortpcount;
 };
 
 typedef std::deque<projectrtpchannel::pointer> rtpchannels;

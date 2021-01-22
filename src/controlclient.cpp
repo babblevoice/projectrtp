@@ -20,6 +20,23 @@ extern std::string publicaddress;
 
 activertpchannels activechannels;
 
+/* Called by other threads to clean up a channel that has closed */
+void controlclient::channelclosed( std::string &uuid )
+{
+  boost::asio::post( this->iocontext,
+        boost::bind( &controlclient::dochannelclosed, this, stringptr( new std::string( uuid ) ) ) );
+}
+
+/* Called by the single threaded ioconext after channelclosed has been called */
+void controlclient::dochannelclosed( stringptr uuid )
+{
+  activertpchannels::iterator chan = activechannels.find( *uuid );
+  if ( activechannels.end() != chan )
+  {
+    dormantchannels.push_back( chan->second );
+    activechannels.erase( chan );
+  }
+}
 
 static void parsetarget( projectrtpchannel::pointer p, JSON::Object &target )
 {
@@ -155,8 +172,6 @@ void controlclient::parserequest( void )
         if ( activechannels.end() != chan )
         {
           chan->second->close();
-          dormantchannels.push_back( chan->second );
-          activechannels.erase( chan );
         }
         /* our channel will send close on completion */
       }

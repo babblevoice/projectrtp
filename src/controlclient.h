@@ -38,6 +38,8 @@ public:
   void sendmessage( JSON::Object &v );
   void close();
 
+  void channelclosed( std::string &uuid );
+
 private:
 
   void handleconnect( const boost::system::error_code& error );
@@ -49,9 +51,8 @@ private:
   void reconnect( const boost::system::error_code& error );
   void tryreconnect( void );
   void doclose();
+  void dochannelclosed( stringptr uuid );
   void parserequest( void );
-
-private:
 
   /* inbound */
   char headerbuff[ CONTROLHEADERLENGTH ];

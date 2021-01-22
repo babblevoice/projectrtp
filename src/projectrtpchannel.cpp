@@ -59,7 +59,8 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsign
   player( nullptr ),
   doecho( false ),
   mixqueue( MIXQUEUESIZE ),
-  tick( iocontext )
+  tick( iocontext ),
+  tickswithnortpcount( 0 )
 {
   memset( this->orderedrtpdata, 0, sizeof( this->orderedrtpdata ) );
 }
@@ -141,6 +142,8 @@ void projectrtpchannel::open( std::string &id, std::string &uuid, controlclient:
   this->orderedinbottom = 0;
   this->lastworkedonsn = 0;
 
+  this->tickswithnortpcount = 0;
+
   this->tick.expires_after( std::chrono::milliseconds( 20 ) );
   this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
                                         shared_from_this(),
@@ -190,6 +193,8 @@ void projectrtpchannel::doclose( void )
 
   if( this->control )
   {
+    this->control->channelclosed( this->uuid );
+    
     JSON::Object v;
     v[ "action" ] = "close";
     v[ "id" ] = this->id;
@@ -225,6 +230,12 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
 {
   if ( error != boost::asio::error::operation_aborted )
   {
+    this->tickswithnortpcount++;
+    if( this->tickswithnortpcount > 400 )
+    {
+      this->close();
+    }
+
     this->checkfornewmixes();
 
     /* only us */
@@ -297,7 +308,7 @@ void projectrtpchannel::readsomertp( void )
             return;
           }
 #endif
-
+          this->tickswithnortpcount = 0;
           this->receivedpkcount++;
           if( !this->receivedrtp )
           {
