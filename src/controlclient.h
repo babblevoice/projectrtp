@@ -67,6 +67,7 @@ private:
 
 
   std::string controlhost;
+  std::string uuid; /* instance uuid - this is generated when starting the server so a client can identify us */
   boost::asio::io_context& iocontext;
   boost::asio::ip::tcp::socket socket;
   boost::asio::ip::tcp::resolver resolver;

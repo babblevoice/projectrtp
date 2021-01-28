@@ -294,6 +294,9 @@ controlclient::controlclient( boost::asio::io_context& io_context, std::string &
   this->json = NULL;
   this->jsonreservedlengthed = 0;
   this->jsonamountread = 0;
+
+  boost::uuids::uuid uuid = boost::uuids::random_generator()();
+  this->uuid = boost::lexical_cast<std::string>( uuid );
 }
 
 controlclient::~controlclient()
@@ -336,6 +339,12 @@ void controlclient::handleconnect(const boost::system::error_code& error)
 {
   if (!error)
   {
+    /* Send an empty object so stats get added */
+    JSON::Object v;
+    v[ "action" ] = "connected";
+    v[ "uuid" ] = this->uuid;
+    this->sendmessage( v );
+
     boost::asio::async_read( this->socket,
         boost::asio::buffer( this->headerbuff, CONTROLHEADERLENGTH ),
         boost::bind(&controlclient::handlereadheader, this,
