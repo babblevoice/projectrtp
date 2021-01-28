@@ -342,7 +342,6 @@ void controlclient::handleconnect(const boost::system::error_code& error)
     /* Send an empty object so stats get added */
     JSON::Object v;
     v[ "action" ] = "connected";
-    v[ "uuid" ] = this->uuid;
     this->sendmessage( v );
 
     boost::asio::async_read( this->socket,
@@ -421,6 +420,7 @@ void controlclient::dowrite( stringptr msg )
   JSON::Object msgbody = JSON::as_object( JSON::parse( *msg ) );
   JSON::Object s;
   JSON::Object c;
+  msgbody[ "instance" ] = this->uuid;
   c[ "active" ] = ( JSON::Integer ) activechannels.size();
   c[ "available" ] = ( JSON::Integer ) dormantchannels.size();
   s[ "channels" ] = c;
