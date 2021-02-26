@@ -60,7 +60,9 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsign
   doecho( false ),
   mixqueue( MIXQUEUESIZE ),
   tick( iocontext ),
-  tickswithnortpcount( 0 )
+  tickswithnortpcount( 0 ),
+  send( true ),
+  recv( true )
 {
   memset( this->orderedrtpdata, 0, sizeof( this->orderedrtpdata ) );
 }
@@ -116,6 +118,8 @@ void projectrtpchannel::open( std::string &id, std::string &uuid, controlclient:
 
   this->receivedrtp = false;
   this->active = true;
+  this->send = true;
+  this->recv = true;
 
   this->codecs.clear();
   this->selectedcodec = 0;
@@ -194,7 +198,7 @@ void projectrtpchannel::doclose( void )
   if( this->control )
   {
     this->control->channelclosed( this->uuid );
-    
+
     JSON::Object v;
     v[ "action" ] = "close";
     v[ "id" ] = this->id;
@@ -230,10 +234,13 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
 {
   if ( error != boost::asio::error::operation_aborted )
   {
-    this->tickswithnortpcount++;
-    if( this->tickswithnortpcount > 400 )
+    if( this->recv )
     {
-      this->close();
+      this->tickswithnortpcount++;
+      if( this->tickswithnortpcount > 400 )
+      {
+        this->close();
+      }
     }
 
     this->checkfornewmixes();
@@ -297,6 +304,16 @@ void projectrtpchannel::readsomertp( void )
       {
         if ( !ec && bytes_recvd > 0 && bytes_recvd <= RTPMAXLENGTH )
         {
+          if( !this->recv )
+          {
+            /* silently drop */
+            if( !ec && bytes_recvd && this->active )
+            {
+              this->readsomertp();
+            }
+            return;
+          }
+
 #ifdef SIMULATEDPACKETLOSSRATE
           /* simulate packet loss */
           if( 0 == rand() % SIMULATEDPACKETLOSSRATE )
@@ -557,6 +574,12 @@ void projectrtpchannel::writepacket( rtppacket *pk )
     return;
   }
 
+  if( !this->send )
+  {
+    /* silently drop - could we do this sooner to use less CPU? */
+    return;
+  }
+
   if( this->receivedrtp || this->targetconfirmed )
   {
     this->tsout = pk->getnexttimestamp();
@@ -577,6 +600,7 @@ Our control can set the target of the RTP stream. This can be important in order
 */
 void projectrtpchannel::target( std::string &address, unsigned short port )
 {
+  this->receivedrtp = false;
   boost::asio::ip::udp::resolver::query query( boost::asio::ip::udp::v4(), address, std::to_string( port ) );
 
   /* Resolve the address */
@@ -707,12 +731,6 @@ void projectrtpchannel::handletargetresolve (
             boost::system::error_code e,
             boost::asio::ip::udp::resolver::iterator it )
 {
-  /* Don't override the symmetric port we send back to */
-  if( this->receivedrtp )
-  {
-    return;
-  }
-
   boost::asio::ip::udp::resolver::iterator end;
 
   if( it == end )

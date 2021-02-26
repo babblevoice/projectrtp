@@ -70,6 +70,8 @@ public:
   typedef std::vector< int > codeclist;
   bool audio( codeclist codecs );
 
+  inline void direction( bool send, bool recv ) { this->send = send; this->recv = recv; }
+
   void writepacket( rtppacket * );
   void handlesend(
         const boost::system::error_code& error,
@@ -170,6 +172,9 @@ private:
   controlclient::pointer control;
 
   std::atomic_uint16_t tickswithnortpcount;
+
+  std::atomic_bool send;
+  std::atomic_bool recv;
 };
 
 typedef std::deque<projectrtpchannel::pointer> rtpchannels;
