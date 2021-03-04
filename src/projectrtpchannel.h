@@ -15,8 +15,11 @@
 #include <string>
 #include <list>
 #include <vector>
+#include <unordered_map>
 
+#include <boost/enable_shared_from_this.hpp>
 #include <boost/lockfree/stack.hpp>
+#include <boost/smart_ptr/atomic_shared_ptr.hpp>
 
 /* CODECs */
 #include <ilbc.h>
@@ -36,6 +39,43 @@
 /* 1 in ... packet loss */
 //#define SIMULATEDPACKETLOSSRATE 10
 
+/*
+# projectchannelmux
+
+Generate our own tick. If we get up to multiple channels we don't want all to have a timer
+firing - we want only one to mix all. A channel will maintain its own timer (when needed)
+for things like playing a sound file (on single channels) or echo.
+*/
+class projectrtpchannel;
+class projectchannelmux:
+  public boost::enable_shared_from_this< projectchannelmux >
+{
+public:
+  projectchannelmux( boost::asio::io_context &iocontext );
+  ~projectchannelmux();
+  typedef boost::shared_ptr< projectchannelmux > pointer;
+  static pointer create( boost::asio::io_context &iocontext );
+
+  void handletick( const boost::system::error_code& error );
+  void checkfordtmf( std::shared_ptr< projectrtpchannel > chan, rtppacket *src );
+  void postrtpdata( std::shared_ptr< projectrtpchannel > srcchan,  std::shared_ptr< projectrtpchannel > dstchan, rtppacket *src, uint32_t skipcount );
+  inline size_t size() { return this->channels.size(); }
+  void addchannel( std::shared_ptr< projectrtpchannel > chan );
+  void go( void );
+
+  std::list< std::shared_ptr< projectrtpchannel > > channels;
+
+private:
+
+  void checkfornewmixes( void );
+
+  boost::asio::io_context &iocontext;
+  boost::asio::steady_timer tick;
+
+  boost::lockfree::stack< std::shared_ptr< projectrtpchannel > > newchannels;
+};
+
+typedef boost::atomic_shared_ptr< projectchannelmux > atomicmuxptr;
 
 /*!md
 # projectrtpchannel
@@ -50,6 +90,7 @@ class projectrtpchannel :
 {
 
 public:
+  friend projectchannelmux;
   projectrtpchannel( boost::asio::io_context &iocontext, unsigned short port );
   ~projectrtpchannel( void );
 
@@ -142,21 +183,19 @@ private:
   void readsomertp( void );
   void readsomertcp( void );
 
-  bool handlertpdata( void );
-  void processrtpdata( rtppacket *src, uint32_t skipcount );
+  /* Generally used as a pair */
+  rtppacket *getrtpbottom( void );
+  void incrrtpbottom( rtppacket *from );
+
   void handlertcpdata( void );
   void handletargetresolve (
               boost::system::error_code e,
               boost::asio::ip::udp::resolver::iterator it );
 
-
-  void checkfornewmixes( void );
   uint64_t receivedpkcount;
   uint64_t receivedpkskip;
 
-  typedef std::list< projectrtpchannel::pointer > projectrtpchannellist;
-  typedef boost::shared_ptr< projectrtpchannellist > projectrtpchannellistptr;
-  projectrtpchannellistptr others;
+  atomicmuxptr others;
 
   /* CODECs  */
   codecx codecworker;
@@ -165,10 +204,7 @@ private:
   stringptr newplaydef;
 
   std::atomic_bool doecho;
-
-  boost::lockfree::stack< projectrtpchannel::pointer > mixqueue;
   boost::asio::steady_timer tick;
-
   controlclient::pointer control;
 
   std::atomic_uint16_t tickswithnortpcount;

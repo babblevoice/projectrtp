@@ -63,7 +63,7 @@ public:
   static pointer create( std::string &url );
   std::string &geturl( void ) { return this->url; };
 
-  rawsound read( void );
+  bool read( rawsound &out );
 
   void setposition( long seconds );
   long getposition( void );

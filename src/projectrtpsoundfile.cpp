@@ -115,25 +115,25 @@ If not ready return -1.
 
 We only support 1 channel. Anything else we need to look at.
 */
-rawsound soundfile::read( void )
+bool soundfile::read( rawsound &out )
 {
   /* check */
   if ( -1 == this->file )
   {
-    return rawsound();
+    return false;
   }
 
   if( false == this->headerread &&
       aio_error( &this->cbwavheader ) == EINPROGRESS )
   {
-    return rawsound();
+    return false;
   }
 
   this->headerread = true;
 
   if( aio_error( &this->cbwavblock ) == EINPROGRESS )
   {
-    return rawsound();
+    return false;
   }
 
   /* success? */
@@ -141,7 +141,7 @@ rawsound soundfile::read( void )
 
   if( -1 == numbytes || 0 == numbytes )
   {
-    return rawsound();
+    return false;
   }
 
   this->opened = true;
@@ -169,7 +169,7 @@ rawsound soundfile::read( void )
       }
       else
       {
-        return rawsound();
+        return false;
       }
       break;
     }
@@ -199,7 +199,7 @@ rawsound soundfile::read( void )
     }
     default:
     {
-      return rawsound();
+      return false;
     }
   }
 
@@ -232,21 +232,22 @@ rawsound soundfile::read( void )
     /* report error somehow. */
     close( this->file );
     this->file = -1;
-    return rawsound();
+    return false;
   }
 
   if ( nullptr == current )
   {
-    return rawsound();
+    return false;
   }
 
   if( -1 != this->newposition )
   {
     this->newposition = -1;
-    return rawsound();
+    return false;
   }
 
-  return rawsound( current, blocksize, ploadtype, this->wavheader.sample_rate );
+  out = rawsound( current, blocksize, ploadtype, this->wavheader.sample_rate );
+  return true;
 }
 
 /*!md

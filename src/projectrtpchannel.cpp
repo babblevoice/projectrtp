@@ -13,6 +13,208 @@
 using namespace boost::placeholders;
 
 /*!md
+## c'stor && create
+
+*/
+projectchannelmux::projectchannelmux( boost::asio::io_context &iocontext ):
+  iocontext( iocontext ),
+  tick( iocontext ),
+  newchannels( MIXQUEUESIZE )
+{
+}
+
+projectchannelmux::~projectchannelmux()
+{
+  this->tick.cancel();
+}
+
+projectchannelmux::pointer projectchannelmux::create( boost::asio::io_context &iocontext )
+{
+  return pointer( new projectchannelmux( iocontext ) );
+}
+
+/*
+Our timer handler.
+*/
+void projectchannelmux::handletick( const boost::system::error_code& error )
+{
+  if ( error != boost::asio::error::operation_aborted )
+  {
+    this->checkfornewmixes();
+
+    repeatremove:
+    for( auto& chan: this->channels )
+    {
+      projectchannelmux::pointer tmp = chan->others;
+      if( nullptr == tmp )
+      {
+        this->channels.remove( chan );
+        goto repeatremove;
+      }
+    }
+
+    if( 2 == this->channels.size() )
+    {
+      auto chans = this->channels.begin();
+      auto chan1 = *chans++;
+      auto chan2 = *chans;
+
+      rtppacket *src;
+      while( ( src = chan1->getrtpbottom() ) != nullptr )
+      {
+        uint16_t workingonaheadby = src->getsequencenumber() - chan1->lastworkedonsn - 1;
+        chan1->receivedpkskip += workingonaheadby;
+        this->checkfordtmf( chan1, src );
+        this->postrtpdata( chan1, chan2, src, workingonaheadby );
+        chan1->incrrtpbottom( src );
+      }
+
+      while( ( src = chan2->getrtpbottom() ) != nullptr )
+      {
+        uint16_t workingonaheadby = src->getsequencenumber() - chan2->lastworkedonsn - 1;
+        chan2->receivedpkskip += workingonaheadby;
+        this->checkfordtmf( chan2, src );
+        this->postrtpdata( chan2, chan1, src, workingonaheadby );
+        chan2->incrrtpbottom( src );
+      }
+    }
+    else if( this->channels.size() >= 2 )
+    {
+      for( auto& chan: this->channels )
+      {
+        rtppacket *src;
+        while( ( src = chan->getrtpbottom() ) != nullptr )
+        {
+          uint16_t workingonaheadby = src->getsequencenumber() - chan->lastworkedonsn - 1;
+          chan->receivedpkskip += workingonaheadby;
+          this->postrtpdata( chan, src, workingonaheadby );
+          chan->incrrtpbottom( src );
+        }
+      }
+    }
+
+    this->tick.expires_at( this->tick.expiry() + boost::asio::chrono::milliseconds( 20 ) );
+    this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
+                                        shared_from_this(),
+                                        boost::asio::placeholders::error ) );
+  }
+}
+
+void projectchannelmux::go( void )
+{
+
+  this->tick.expires_after( std::chrono::milliseconds( 20 ) );
+  this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
+                                        shared_from_this(),
+                                        boost::asio::placeholders::error ) );
+}
+
+/*
+Check for new channels to add to the mix in our own thread.
+*/
+void projectchannelmux::checkfornewmixes( void )
+{
+  std::shared_ptr< projectrtpchannel > chan;
+  while( this->newchannels.pop( chan ) )
+  {
+    for( auto& checkchan: this->channels )
+    {
+      if( checkchan == chan ) goto contin;
+    }
+
+    this->channels.push_back( chan );
+    this->channels.unique();
+    chan->others.exchange( shared_from_this() );
+
+    contin:;
+  }
+}
+
+void projectchannelmux::addchannel( std::shared_ptr< projectrtpchannel > chan )
+{
+  this->newchannels.push( chan );
+}
+
+/*
+## checkfordtmf
+*/
+void projectchannelmux::checkfordtmf( std::shared_ptr< projectrtpchannel > chan, rtppacket *src )
+{
+  /* The next section is sending to our recipient(s) */
+  if( 0 != chan->rfc2833pt && src->getpayloadtype() == chan->rfc2833pt )
+  {
+    /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
+    uint16_t sn = src->getsequencenumber();
+    uint8_t event = 0;
+    uint8_t endbit = 0;
+
+    /*
+    there really should be a packet - we should cater for multiple?
+    endbits can appear to be sent multiple times.
+    */
+    if( src->getpayloadlength() >= 4 )
+    {
+      uint8_t * pl = src->getpayload();
+      endbit = pl[ 1 ] >> 7;
+      event = pl[ 0 ];
+    }
+
+    uint8_t pm = src->getpacketmarker();
+    if( !pm && 0 != chan->lasttelephoneevent && abs( static_cast< long long int >( sn - chan->lasttelephoneevent ) ) > 20 )
+    {
+      pm = 1;
+    }
+
+    if( pm )
+    {
+      if( chan->control )
+      {
+        JSON::Object v;
+        v[ "action" ] = "telephone-event";
+        v[ "id" ] = chan->id;
+        v[ "uuid" ] = chan->uuid;
+        v[ "event" ] = ( JSON::Integer )event;
+
+        chan->control->sendmessage( v );
+      }
+    }
+
+    if( endbit )
+    {
+      chan->lasttelephoneevent = 0;
+    }
+    else
+    {
+      chan->lasttelephoneevent = sn;
+    }
+  }
+}
+
+/*
+## postrtpdata
+Send the data somewhere.
+*/
+void projectchannelmux::postrtpdata( std::shared_ptr< projectrtpchannel > srcchan,  std::shared_ptr< projectrtpchannel > dstchan, rtppacket *src, uint32_t skipcount )
+{
+  rtppacket *dst = dstchan->gettempoutbuf( skipcount );
+
+  /* This needs testing */
+  if( 0 != srcchan->rfc2833pt && src->getpayloadtype() == srcchan->rfc2833pt )
+  {
+    dst->setpayloadtype( srcchan->rfc2833pt );
+    dst->copy( src );
+  }
+  else
+  {
+    srcchan->codecworker << codecx::next;
+    srcchan->codecworker << *src;
+    *dst << srcchan->codecworker;
+  }
+
+  dstchan->writepacket( dst );
+}
+
+/*!md
 # Project RTP Channel
 
 This file (class) represents an RP channel. That is an RTP stream (UDP) with its pair RTCP socket. Basic functions for
@@ -58,7 +260,6 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsign
   others( nullptr ),
   player( nullptr ),
   doecho( false ),
-  mixqueue( MIXQUEUESIZE ),
   tick( iocontext ),
   tickswithnortpcount( 0 ),
   send( true ),
@@ -177,20 +378,7 @@ void projectrtpchannel::doclose( void )
   this->player = nullptr;
 
   /* remove oursevelse from our list of mixers */
-  if( this->others )
-  {
-    projectrtpchannellist::iterator it;
-    for( it = this->others->begin(); it != this->others->end(); it++ )
-    {
-      if( it->get() == this )
-      {
-        this->others->erase( it );
-        break;
-      }
-    }
-    /* release the shared pointer */
-    this->others = nullptr;
-  }
+  this->others = nullptr;
 
   this->rtpsocket.close();
   this->rtcpsocket.close();
@@ -243,10 +431,9 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
       }
     }
 
-    this->checkfornewmixes();
-
     /* only us */
-    if( !this->others || 0 == this->others->size() )
+    projectchannelmux::pointer mux = this->others;
+    if( nullptr == mux || 0 == mux->size() )
     {
       stringptr newplaydef = std::atomic_exchange( &this->newplaydef, stringptr( NULL ) );
       if( newplaydef )
@@ -269,8 +456,8 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
       else if( this->player )
       {
         rtppacket *out = this->gettempoutbuf();
-        rawsound r = player->read();
-        if( 0 != r.size() )
+        rawsound r;
+        if( this->player->read( r ) && r.size() > 0 )
         {
           this->codecworker << codecx::next;
           this->codecworker << r;
@@ -278,10 +465,20 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
           this->writepacket( out );
         }
       }
+      else if( this->doecho )
+      {
+        rtppacket *src = this->getrtpbottom();
+        if( nullptr != src )
+        {
+          this->codecworker << codecx::next;
+          this->codecworker << *src;
+          rtppacket *dst = this->gettempoutbuf();
+          *dst << this->codecworker;
+          this->writepacket( dst );
+          this->incrrtpbottom( src );
+        }
+      }
     }
-
-    while( this->handlertpdata() );
-
 
     /* The last thing we do */
     this->tick.expires_at( this->tick.expiry() + boost::asio::chrono::milliseconds( 20 ) );
@@ -289,6 +486,40 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
                                         shared_from_this(),
                                         boost::asio::placeholders::error ) );
   }
+}
+
+/*
+## getrtpbottom
+Gets our oldest RTP packet required processing.
+*/
+rtppacket *projectrtpchannel::getrtpbottom( void )
+{
+  if( !this->receivedrtp ) return nullptr;
+
+  rtppacket *src = this->orderedrtpdata[ this->orderedinbottom ];
+  if( nullptr == src ) return nullptr;
+
+  uint16_t sn = src->getsequencenumber();
+  uint16_t aheadby = this->orderedinmaxsn - sn;
+
+  /* We allow BUFFERDELAYCOUNT to accumulate in our buffer before we work on them */
+  if( aheadby < BUFFERDELAYCOUNT ) return nullptr;
+
+  if( this->orderedinminsn == sn )
+  {
+    return src;
+  }
+
+  return nullptr;
+
+}
+
+void projectrtpchannel::incrrtpbottom( rtppacket *from )
+{
+  this->lastworkedonsn = from->getsequencenumber();;
+  this->orderedrtpdata[ this->orderedinbottom ] = nullptr;
+  this->orderedinminsn++;
+  this->orderedinbottom = ( this->orderedinbottom + 1 ) % BUFFERPACKETCOUNT;
 }
 
 /*!md
@@ -365,142 +596,6 @@ void projectrtpchannel::readsomertp( void )
         }
       } );
 }
-
-
-/*!md
-## handlertpdata
-
-Buffer up RTP data to reorder and give time for packets to be received then process.
-
-Return false to indicate complete - no further work to do, return true to indicate there may be more work to do.
-*/
-bool projectrtpchannel::handlertpdata( void )
-{
-  if( !this->receivedrtp ) return false;
-
-  rtppacket *src = this->orderedrtpdata[ this->orderedinbottom ];
-  if( nullptr == src ) return false;
-
-  uint16_t sn = src->getsequencenumber();
-  uint16_t aheadby = this->orderedinmaxsn - sn;
-
-  /* We allow BUFFERDELAYCOUNT to accumulate in our buffer before we work on them */
-  if( aheadby < BUFFERDELAYCOUNT ) return false;
-
-  uint16_t workingonaheadby = sn - this->lastworkedonsn;
-
-  /* Only process if it is the expected sn */
-  if( this->orderedinminsn == sn )
-  {
-    this->processrtpdata( src, workingonaheadby - 1 );
-  }
-
-  this->lastworkedonsn = sn;
-  this->orderedrtpdata[ this->orderedinbottom ] = nullptr;
-  this->orderedinminsn++;
-  this->orderedinbottom = ( this->orderedinbottom + 1 ) % BUFFERPACKETCOUNT;
-
-  return true;
-}
-
-
-/*!md
-## processrtpdata
-
-Mix and send the data somewhere.
-*/
-void projectrtpchannel::processrtpdata( rtppacket *src, uint32_t skipcount )
-{
-  this->receivedpkskip += skipcount;
-
-  /* The next section is sending to our recipient(s) */
-  if( 0 != this->rfc2833pt && src->getpayloadtype() == this->rfc2833pt )
-  {
-    /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
-    uint16_t sn = src->getsequencenumber();
-    uint8_t event = 0;
-    uint8_t endbit = 0;
-
-    /*
-    there really should be a packet - we should cater for multiple?
-    endbits can appear to be sent multiple times.
-    */
-    if( src->getpayloadlength() >= 4 )
-    {
-      uint8_t * pl = src->getpayload();
-      endbit = pl[ 1 ] >> 7;
-      event = pl[ 0 ];
-    }
-
-    uint8_t pm = src->getpacketmarker();
-    if( !pm && 0 != this->lasttelephoneevent && abs( static_cast< long long int >( sn - this->lasttelephoneevent ) ) > 20 )
-    {
-      pm = 1;
-    }
-
-    if( pm )
-    {
-      if( this->control )
-      {
-        JSON::Object v;
-        v[ "action" ] = "telephone-event";
-        v[ "id" ] = this->id;
-        v[ "uuid" ] = this->uuid;
-        v[ "event" ] = ( JSON::Integer )event;
-
-        this->control->sendmessage( v );
-      }
-    }
-
-    if( endbit )
-    {
-      this->lasttelephoneevent = 0;
-    }
-    else
-    {
-      this->lasttelephoneevent = sn;
-    }
-  }
-
-  if( this->others && 2 == this->others->size() )
-  {
-    /* one should be us */
-    projectrtpchannellist::iterator it = this->others->begin();
-    projectrtpchannel::pointer chan = *it;
-    if( it->get() == this )
-    {
-      chan = *( ++it );
-    }
-
-    rtppacket *dst = chan->gettempoutbuf( skipcount );
-
-    /* This needs testing */
-    if( 0 != this->rfc2833pt && src->getpayloadtype() == this->rfc2833pt )
-    {
-      dst->setpayloadtype( this->rfc2833pt );
-      dst->copy( src );
-    }
-    else
-    {
-      this->codecworker << codecx::next;
-      this->codecworker << *src;
-      *dst << this->codecworker;
-    }
-
-    chan->writepacket( dst );
-  }
-  else if( this->doecho && ( !this->others || 1 == this->others->size() ) )
-  {
-    this->codecworker << codecx::next;
-    this->codecworker << *src;
-    rtppacket *dst = this->gettempoutbuf( skipcount );
-    *dst << this->codecworker;
-    this->writepacket( dst );
-  }
-
-  return;
-}
-
 
 /*!md
 ## gettempoutbuf
@@ -622,13 +717,24 @@ Add the other to our list of others. n way relationship. Adds to queue for when 
 */
 bool projectrtpchannel::mix( projectrtpchannel::pointer other )
 {
-  /* Create our others list */
-  if( !this->others )
+  projectrtpchannel::pointer tmpother;
+  if( this == other.get() )
   {
-    this->others = projectrtpchannellistptr( new projectrtpchannellist  );
+    return true;
   }
 
-  this->mixqueue.push( other );
+  projectchannelmux::pointer m = this->others;
+  if( nullptr == m )
+  {
+    m = projectchannelmux::create( this->iocontext );
+    m->addchannel( shared_from_this() );
+    m->addchannel( other );
+    m->go();
+  }
+  else
+  {
+    m->addchannel( other );
+  }
 
   return true;
 }
@@ -639,63 +745,7 @@ As it says.
 */
 void projectrtpchannel::unmix( void )
 {
-  this->mix( projectrtpchannel::pointer() );
-}
-
-/*!md
-## checkfornewmixes
-This is the mechanism how we can use multiple threads and not screw u our data structures - without using mutexes.
-*/
-void projectrtpchannel::checkfornewmixes( void )
-{
-  projectrtpchannel::pointer other;
-
-  while( this->mixqueue.pop( other ) )
-  {
-    if( !other )
-    {
-      /* empty indicates unmix */
-
-      /* Allow us to remix with another */
-      this->receivedrtp = false;
-
-      /* Clear others */
-      for( auto it = this->others->begin(); it != this->others->end(); it++ )
-      {
-        ( *it )->unmix();
-      }
-      this->others->clear();
-      return;
-    }
-
-    /* ensure no duplicates */
-    bool usfound = false;
-    bool themfound = false;
-    for( auto it = this->others->begin(); it != this->others->end(); it++ )
-    {
-      if( it->get() == this )
-      {
-        usfound = true;
-      }
-
-      if( *it == other )
-      {
-        themfound = true;
-      }
-    }
-
-    if( !usfound )
-    {
-      this->others->push_back( other );
-    }
-
-    if( !themfound )
-    {
-      this->others->push_back( shared_from_this() );
-    }
-
-    other->others = this->others;
-  }
+  this->others = nullptr;
 }
 
 /*!md

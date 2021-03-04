@@ -12,6 +12,9 @@
 #include <boost/uuid/uuid_io.hpp>
 #include <boost/lexical_cast.hpp>
 
+#include <exception>
+#include <stdexcept>
+
 #include "controlclient.h"
 #include "projectrtpchannel.h"
 
@@ -242,7 +245,7 @@ void controlclient::parserequest( void )
 
         JSON::Object v;
         v[ "action" ] = "unmix";
-        v[ "error" ] = "Unknown channel";
+        v[ "error" ] = "Unknown mix channel";
         this->sendmessage( v );
       }
       else if( "unmix" == action )
@@ -262,7 +265,7 @@ void controlclient::parserequest( void )
         {
           JSON::Object v;
           v[ "action" ] = "unmix";
-          v[ "error" ] = "Unknown channel";
+          v[ "error" ] = "Unknown unmix channel";
           this->sendmessage( v );
         }
       }
@@ -278,6 +281,20 @@ void controlclient::parserequest( void )
   {
     JSON::Object v;
     v[ "error" ] = "Unknown error occured";
+
+    try
+    {
+      auto eptr = std::current_exception();
+      if ( eptr )
+      {
+          std::rethrow_exception( eptr );
+      }
+    }
+    catch( const std::exception& e )
+    {
+        v[ "error" ] = e.what();
+    }
+
     this->sendmessage( v );
   }
 }

@@ -65,7 +65,7 @@ public:
   static pointer create( void );
 
   void config( JSON::Object &json, int format );
-  rawsound read( void );
+  bool read( rawsound &out );
 
 private:
   std::string *getpreferredfilename( JSON::Object &file, int format );

@@ -309,11 +309,11 @@ void soundsoup::plusone( soundsoupfile &playing )
   this->currentfile++;
 }
 
-rawsound soundsoup::read( void )
+bool soundsoup::read( rawsound &out )
 {
   if( 0 == this->files.size() )
   {
-    return rawsound();
+    return false;
   }
 
   soundsoupfile &playing = this->files[ this->currentfile ];
@@ -321,20 +321,21 @@ rawsound soundsoup::read( void )
   if( !playing.sf )
   {
     this->plusone( playing );
-    return rawsound();
+    return false;
   }
   else if ( playing.sf->complete() )
   {
     this->plusone( playing );
-    return rawsound();
+    return false;
   }
   else if ( -1 != playing.stop && playing.sf->getposition() > playing.stop )
   {
     this->plusone( playing );
-    return rawsound();
+    return false;
   }
 
-  return playing.sf->read();
+  playing.sf->read( out );
+  return true;
 }
 
 /*!md
