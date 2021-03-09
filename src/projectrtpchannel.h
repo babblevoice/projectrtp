@@ -33,7 +33,11 @@
 
 /* The number of packets we will keep in a buffer */
 #define BUFFERPACKETCOUNT 20
-#define BUFFERDELAYCOUNT 10
+#define BUFFERLOWDELAYCOUNT 8
+#define BUFFERHIGHDELAYCOUNT 12
+
+/* The size of our message queue where we send info about new channels added
+to the mixr to be added */
 #define MIXQUEUESIZE 50
 
 /* 1 in ... packet loss */
@@ -68,11 +72,14 @@ public:
 private:
 
   void checkfornewmixes( void );
+  void mixall( void );
 
   boost::asio::io_context &iocontext;
   boost::asio::steady_timer tick;
 
   boost::lockfree::stack< std::shared_ptr< projectrtpchannel > > newchannels;
+
+  rawsound added;
 };
 
 typedef boost::atomic_shared_ptr< projectchannelmux > atomicmuxptr;
@@ -138,11 +145,15 @@ public:
   uint16_t seqout;
 
   rtppacket rtpdata[ BUFFERPACKETCOUNT ];
-  rtppacket *orderedrtpdata[ BUFFERPACKETCOUNT ];
+  atomicrtppacketptr availablertpdata[ BUFFERPACKETCOUNT ];
+  atomicrtppacketptr orderedrtpdata[ BUFFERPACKETCOUNT ];
   std::atomic_uint16_t orderedinminsn; /* sn = sequence number, min smallest we hold which is unprocessed - when it is processed we can forget about it */
   std::atomic_uint16_t orderedinmaxsn;
   std::atomic_uint16_t orderedinbottom; /* points to our min sn packet */
   std::atomic_uint16_t lastworkedonsn;
+  uint16_t rtpbuffercount; /* keeps track of availble buffer items in availablertpdata */
+  std::atomic_bool rtpbufferlock; /* spin lock to keep syncronised between reading and processing thread */
+
 
   unsigned char rtcpdata[ RTCPMAXLENGTH ];
   int rtpindexoldest;
@@ -180,11 +191,13 @@ private:
 
   bool reader;
   bool writer;
+  void returnbuffer( rtppacket *buf );
+  rtppacket* getbuffer( void );
   void readsomertp( void );
   void readsomertcp( void );
 
   /* Generally used as a pair */
-  rtppacket *getrtpbottom( void );
+  rtppacket *getrtpbottom( uint16_t highcount = BUFFERHIGHDELAYCOUNT, uint16_t lowcount = BUFFERLOWDELAYCOUNT );
   void incrrtpbottom( rtppacket *from );
 
   void handlertcpdata( void );
@@ -211,6 +224,9 @@ private:
 
   std::atomic_bool send;
   std::atomic_bool recv;
+
+  /* Track hysteresis in our receive window - which allows for timing wiggles between our tick and when we receive */
+  bool havedata;
 };
 
 typedef std::deque<projectrtpchannel::pointer> rtpchannels;

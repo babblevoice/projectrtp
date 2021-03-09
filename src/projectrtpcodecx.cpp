@@ -773,13 +773,23 @@ rawsound::~rawsound()
   }
 }
 
-/*!md
+/*
+## clear
+Reset buffer with zero
+*/
+void rawsound::clear( void )
+{
+  memset( this->data, 0, this->samples * this->bytespersample );
+}
+
+/*
 ## malloc
 Allocate our own memory.
 */
 void rawsound::malloc( size_t samplecount, size_t bytespersample, int format )
 {
   this->samples = samplecount;
+  this->bytespersample = bytespersample;
   size_t requiredsize = samplecount * bytespersample;
   if( L1616KPAYLOADTYPE == format )
   {

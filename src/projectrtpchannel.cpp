@@ -1,11 +1,12 @@
 
 
 #include <iostream>
+#include <cstdlib>
 
 #include <boost/bind/bind.hpp>
 #include <boost/chrono.hpp>
 #include <iomanip>
-
+#include <utility>
 
 #include "projectrtpchannel.h"
 #include "controlclient.h"
@@ -31,6 +32,36 @@ projectchannelmux::~projectchannelmux()
 projectchannelmux::pointer projectchannelmux::create( boost::asio::io_context &iocontext )
 {
   return pointer( new projectchannelmux( iocontext ) );
+}
+
+void projectchannelmux::mixall( void )
+{
+  /* First decide on a common rate (if we only have 8K channels it is pointless
+  upsampling them all and wasting resources) */
+  int l16krequired = L168KPAYLOADTYPE;
+  size_t insize = 0;
+  for( auto& chan: this->channels )
+  {
+#warning TODO
+    //if( chan-> > insize ) insize = chan->;
+    switch( chan->selectedcodec )
+    {
+      case G722PAYLOADTYPE:
+      case L1616KPAYLOADTYPE:
+      {
+        l16krequired = L1616KPAYLOADTYPE;
+        goto endofforloop;
+      }
+    }
+  }
+  endofforloop:
+
+  this->added.malloc( insize, sizeof( int16_t ), l16krequired );
+  this->added.clear();
+
+  for( auto& chan: this->channels )
+  {
+  }
 }
 
 /*
@@ -60,7 +91,7 @@ void projectchannelmux::handletick( const boost::system::error_code& error )
       auto chan2 = *chans;
 
       rtppacket *src;
-      while( ( src = chan1->getrtpbottom() ) != nullptr )
+      while( ( src = chan1->getrtpbottom( BUFFERLOWDELAYCOUNT ) ) != nullptr )
       {
         uint16_t workingonaheadby = src->getsequencenumber() - chan1->lastworkedonsn - 1;
         chan1->receivedpkskip += workingonaheadby;
@@ -69,7 +100,7 @@ void projectchannelmux::handletick( const boost::system::error_code& error )
         chan1->incrrtpbottom( src );
       }
 
-      while( ( src = chan2->getrtpbottom() ) != nullptr )
+      while( ( src = chan2->getrtpbottom( BUFFERLOWDELAYCOUNT ) ) != nullptr )
       {
         uint16_t workingonaheadby = src->getsequencenumber() - chan2->lastworkedonsn - 1;
         chan2->receivedpkskip += workingonaheadby;
@@ -80,6 +111,7 @@ void projectchannelmux::handletick( const boost::system::error_code& error )
     }
     else if( this->channels.size() >= 2 )
     {
+      /* Our strategy here is to add all together then subtract when we send to target */
       for( auto& chan: this->channels )
       {
         rtppacket *src;
@@ -87,7 +119,8 @@ void projectchannelmux::handletick( const boost::system::error_code& error )
         {
           uint16_t workingonaheadby = src->getsequencenumber() - chan->lastworkedonsn - 1;
           chan->receivedpkskip += workingonaheadby;
-          this->postrtpdata( chan, src, workingonaheadby );
+#warning TODO
+          //this->postrtpdata( chan, src, workingonaheadby );
           chan->incrrtpbottom( src );
         }
       }
@@ -240,6 +273,8 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsign
   orderedinmaxsn( 0 ),
   orderedinbottom( 0 ),
   lastworkedonsn( 0 ),
+  rtpbuffercount( BUFFERPACKETCOUNT ),
+  rtpbufferlock( false ),
   rtpindexoldest( 0 ),
   rtpindexin( 0 ),
   rtpoutindex( 0 ),
@@ -263,9 +298,14 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsign
   tick( iocontext ),
   tickswithnortpcount( 0 ),
   send( true ),
-  recv( true )
+  recv( true ),
+  havedata( false )
 {
-  memset( this->orderedrtpdata, 0, sizeof( this->orderedrtpdata ) );
+  for( auto i = 0; i < BUFFERPACKETCOUNT; i ++ )
+  {
+    this->orderedrtpdata[ i ] = nullptr;
+    this->availablertpdata[ i ] = &this->rtpdata[ i ];
+  }
 }
 
 /*!md
@@ -338,16 +378,14 @@ void projectrtpchannel::open( std::string &id, std::string &uuid, controlclient:
 
   this->seqout = 0;
 
-  for( int i = 0; i < BUFFERDELAYCOUNT; i++ )
-  {
-    this->orderedrtpdata[ i ] = nullptr;
-  }
   this->orderedinminsn = 0;
   this->orderedinmaxsn = 0;
   this->orderedinbottom = 0;
   this->lastworkedonsn = 0;
 
   this->tickswithnortpcount = 0;
+
+  this->havedata = false;
 
   this->tick.expires_after( std::chrono::milliseconds( 20 ) );
   this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
@@ -379,6 +417,15 @@ void projectrtpchannel::doclose( void )
 
   /* remove oursevelse from our list of mixers */
   this->others = nullptr;
+
+  for( auto i = 0; i < BUFFERPACKETCOUNT; i ++ )
+  {
+    this->orderedrtpdata[ i ] = nullptr;
+    this->availablertpdata[ i ] = &this->rtpdata[ i ];
+  }
+
+  this->rtpbuffercount = BUFFERPACKETCOUNT;
+  this->rtpbufferlock.store( false, std::memory_order_release );
 
   this->rtpsocket.close();
   this->rtcpsocket.close();
@@ -416,7 +463,7 @@ void projectrtpchannel::doclose( void )
 
 /*!md
 ## handletick
-Our timer to send data
+Our timer to send data - use this for when we are a single channel. Mixing tick is done in mux.
 */
 void projectrtpchannel::handletick( const boost::system::error_code& error )
 {
@@ -490,20 +537,29 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
 
 /*
 ## getrtpbottom
-Gets our oldest RTP packet required processing.
+Gets our oldest RTP packet required processing.highcount and lowcount
+provide some hysteresis so we don't quickly stop and start a channel
+only really needed if we need to mix from multiple sources (i.e. conference).
 */
-rtppacket *projectrtpchannel::getrtpbottom( void )
+rtppacket *projectrtpchannel::getrtpbottom( uint16_t highcount, uint16_t lowcount )
 {
   if( !this->receivedrtp ) return nullptr;
 
   rtppacket *src = this->orderedrtpdata[ this->orderedinbottom ];
   if( nullptr == src ) return nullptr;
 
-  uint16_t sn = src->getsequencenumber();
-  uint16_t aheadby = this->orderedinmaxsn - sn;
+  auto sn = src->getsequencenumber();
+  auto aheadby = this->orderedinmaxsn - sn;
+  auto delaycount = highcount;
+  if( this->havedata ) delaycount = lowcount;
 
-  /* We allow BUFFERDELAYCOUNT to accumulate in our buffer before we work on them */
-  if( aheadby < BUFFERDELAYCOUNT ) return nullptr;
+  /* We allow n to accumulate in our buffer before we work on them */
+  if( aheadby < delaycount )
+  {
+    this->havedata = false;
+    return nullptr;
+  }
+  this->havedata = true;
 
   if( this->orderedinminsn == sn )
   {
@@ -511,27 +567,71 @@ rtppacket *projectrtpchannel::getrtpbottom( void )
   }
 
   return nullptr;
-
 }
 
 void projectrtpchannel::incrrtpbottom( rtppacket *from )
 {
-  this->lastworkedonsn = from->getsequencenumber();;
+  this->lastworkedonsn = from->getsequencenumber();
   this->orderedrtpdata[ this->orderedinbottom ] = nullptr;
   this->orderedinminsn++;
+  this->returnbuffer( from );
   this->orderedinbottom = ( this->orderedinbottom + 1 ) % BUFFERPACKETCOUNT;
+}
+
+/*
+Get and return an avaiable memory buffer for an rtp packet. Use a spin lock for a tiny section.
+*/
+void projectrtpchannel::returnbuffer( rtppacket *buf )
+{
+  while( this->rtpbufferlock.exchange( true, std::memory_order_acquire ) );
+
+  this->availablertpdata[ this->rtpbuffercount ] = buf;
+  this->rtpbuffercount++;
+
+  this->rtpbufferlock.store( false, std::memory_order_release );
+}
+
+
+rtppacket* projectrtpchannel::getbuffer( void )
+{
+  rtppacket* buf = nullptr;
+  while( this->rtpbufferlock.exchange( true, std::memory_order_acquire ) );
+
+  if( this->rtpbuffercount == 0 )
+  {
+    goto getbufferend;
+  }
+
+  {
+    auto currentmax = --this->rtpbuffercount;
+
+    buf = this->availablertpdata[ currentmax ];
+    this->availablertpdata[ currentmax ] = nullptr;
+  }
+
+  getbufferend:
+  this->rtpbufferlock.store( false, std::memory_order_release );
+  return buf;
 }
 
 /*!md
 ## handlereadsomertp
-Wait for RTP data. We have to re-order when required. Look after all of the round robin memory here. We should have enough time to deal with the in data before it gets overwritten.
+Wait for RTP data. We have to re-order when required. Look after all of the round robin memory here.
+We should have enough time to deal with the in data before it gets overwritten.
+
+WARNING WARNING
+Order matters. We have multiple threads reading and writing variables using atomics and normal data.
+Any clashes should be handled by atomics.
 */
 void projectrtpchannel::readsomertp( void )
 {
+  rtppacket *buf = this->getbuffer();
+  if( nullptr == buf ) return;
+
   this->rtpsocket.async_receive_from(
-    boost::asio::buffer( &this->rtpdata[ this->rtpindexin ].pk, RTPMAXLENGTH ),
+    boost::asio::buffer( buf->pk, RTPMAXLENGTH ),
                           this->rtpsenderendpoint,
-      [ this ]( boost::system::error_code ec, std::size_t bytes_recvd )
+      [ this, buf ]( boost::system::error_code ec, std::size_t bytes_recvd )
       {
         if ( !ec && bytes_recvd > 0 && bytes_recvd <= RTPMAXLENGTH )
         {
@@ -545,10 +645,22 @@ void projectrtpchannel::readsomertp( void )
             return;
           }
 
+          /* As we check if there is any buffer left this should stop us ever running out and quitting trying
+          i.e. when we are very low imm return and retry - eventually our tick will process the backlog */
+          if( 0 == this->rtpbuffercount )
+          {
+            /* silently drop this packet and repeat until we have space in our buffer  */
+            std::cerr << "Dropping packet due to low space in buffer" << std::endl;
+            this->returnbuffer( buf );
+            this->readsomertp();
+            return;
+          }
+
 #ifdef SIMULATEDPACKETLOSSRATE
           /* simulate packet loss */
           if( 0 == rand() % SIMULATEDPACKETLOSSRATE )
           {
+            this->returnbuffer( buf );
             if( !ec && bytes_recvd && this->active )
             {
               this->readsomertp();
@@ -560,9 +672,10 @@ void projectrtpchannel::readsomertp( void )
           this->receivedpkcount++;
           if( !this->receivedrtp )
           {
+            std::cout << buf->getsequencenumber() << std::endl;
+            this->lastworkedonsn.exchange( buf->getsequencenumber() - 1 );
             this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
             this->receivedrtp = true;
-            this->lastworkedonsn = this->rtpdata[ this->rtpindexin ].getsequencenumber() - 1;
           }
 
           /* After the first packet - we only accept data from the verified source */
@@ -571,15 +684,14 @@ void projectrtpchannel::readsomertp( void )
             return;
           }
 
-          this->rtpdata[ this->rtpindexin ].length = bytes_recvd;
+          buf->length = bytes_recvd;
 
           /* Now order it */
-          rtppacket *src = &this->rtpdata[ this->rtpindexin ];
-          uint16_t sn = src->getsequencenumber();
-
-          this->orderedrtpdata[ sn % BUFFERPACKETCOUNT ] = src;
+          uint16_t sn = buf->getsequencenumber();
 
           if( sn > this->orderedinmaxsn ) this->orderedinmaxsn = sn;
+
+          this->orderedrtpdata[ sn % BUFFERPACKETCOUNT ] = buf;
 
           /* Indicate where we start */
           if( sn > ( this->orderedinminsn + BUFFERPACKETCOUNT ) )

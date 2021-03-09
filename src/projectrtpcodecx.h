@@ -34,6 +34,7 @@ public:
   int getformat( void ){ return this->format; }; /* aka payload type */
   uint16_t getsamplerate( void ) { return this->samplerate; };
   void malloc( size_t samplecount, size_t bytespersample, int format );
+  void clear( void );
 
 private:
   void frompt( int payloadtype );

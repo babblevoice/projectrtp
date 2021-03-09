@@ -7,6 +7,7 @@
 /* CODECs */
 #include <ilbc.h>
 #include <spandsp.h>
+#include <atomic>
 
 #include "firfilter.h"
 #include "globals.h"
@@ -47,6 +48,8 @@ public:
   void copyheader( rtppacket *src );
 
 };
+
+typedef std::atomic< rtppacket * > atomicrtppacketptr;
 
 
 #endif  /* PROJECTRTPPACKTET_H */
