@@ -327,7 +327,7 @@ controlclient::controlclient( boost::asio::io_context& io_context, std::string &
       boost::bind( &controlclient::handleconnect, this,
                     boost::asio::placeholders::error ) );
 
-  this->json = NULL;
+  this->json = nullptr;
   this->jsonreservedlengthed = 0;
   this->jsonamountread = 0;
 
@@ -337,7 +337,8 @@ controlclient::controlclient( boost::asio::io_context& io_context, std::string &
 
 controlclient::~controlclient()
 {
-  if( NULL != this->json ) delete this->json;
+  if( nullptr != this->json ) delete[] this->json;
+  this->json = nullptr;
 }
 
 void controlclient::write( const stringptr msg )
@@ -414,7 +415,7 @@ void controlclient::handlereadheader( const boost::system::error_code& error )
 
     if( this->jsonreservedlengthed < this->header.length )
     {
-      if( NULL != this->json ) delete this->json;
+      if( nullptr != this->json ) delete[] this->json;
 
       this->json = new char[ this->header.length + 1 ];
       this->jsonreservedlengthed = this->header.length;
