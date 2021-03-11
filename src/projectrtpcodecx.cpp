@@ -670,10 +670,12 @@ Tidy up.
 */
 rawsound::~rawsound()
 {
-  if( this->allocatedlength > 0 )
+  if( this->allocatedlength > 0 && nullptr != this->data )
   {
     delete[] this->data;
+    this->data = nullptr;
   }
+  this->allocatedlength = 0;
 }
 
 /*
