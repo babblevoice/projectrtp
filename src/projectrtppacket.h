@@ -38,6 +38,7 @@ public:
   uint16_t getpayloadlength( void );
 
   void setpayloadlength( size_t length );
+  inline void setlength( size_t length ) { this->length = length; };
   void setpayloadtype( uint8_t payload );
   void setsequencenumber( uint16_t sq );
   void settimestamp( uint32_t tmstp );

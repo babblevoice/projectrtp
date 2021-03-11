@@ -14,11 +14,9 @@
 
 
 /*
- This class is not tracking enough information. We store the number of bytes - but not
- what, always what is stored in the object - so we lose the sample rate. If we have length of 160
- we don't know if this is 160 sample or 320 samples. We do keep track of samplerate which is
- helpful but converting l1616K to l168k gets a bit tricky
+Helper class for sound to manipulate sound - before or after a rtppacket is required.
 */
+class codecx;
 class rawsound
 {
 public:
@@ -31,10 +29,20 @@ public:
   uint8_t *c_str( void ){ return this->data; };
   size_t size( void ){ return this->samples; };
   void size( size_t samplecount ){ this->samples = samplecount; };
-  int getformat( void ){ return this->format; }; /* aka payload type */
+  inline int getformat( void ){ return this->format; }; /* aka payload type */
   uint16_t getsamplerate( void ) { return this->samplerate; };
   void malloc( size_t samplecount, size_t bytespersample, int format );
-  void clear( void );
+  void zero( void );
+
+  /* needed for << operato on codecx */
+  inline int getpayloadtype( void ) { return this->format; }
+  inline void setpayloadlength( size_t length ) { this->samples = length; };
+  inline void setlength( size_t length ) { this->samples = length; };
+  void copy( uint8_t *src, size_t len );
+  void copy( rawsound &other );
+
+  rawsound& operator+=( codecx& rhs );
+  rawsound& operator-=( codecx& rhs );
 
 private:
   void frompt( int payloadtype );
@@ -57,6 +65,7 @@ private:
 
 class codecx
 {
+  friend class rawsound;
 public:
   codecx();
   ~codecx();
@@ -64,12 +73,13 @@ public:
   void reset( void );
   void restart( void );
 
-  friend codecx& operator << ( codecx&, rtppacket& );
-  friend rtppacket& operator << ( rtppacket&, codecx& );
   friend codecx& operator << ( codecx&, rawsound& );
-  friend rawsound& operator << ( rawsound&, codecx& );
+  friend codecx& operator << ( codecx&, rtppacket& );
+
+  friend auto* operator << ( auto*, codecx& );
+  friend auto& operator << ( auto&, codecx& );
+
   friend codecx& operator << ( codecx&, const char& );
-  //friend void codectests( void );
   static const char next;
 
 private:
@@ -109,18 +119,119 @@ private:
 
 };
 
-
-codecx& operator << ( codecx&, rtppacket& );
-rtppacket& operator << ( rtppacket&, codecx& );
-
-codecx& operator << ( codecx&, rawsound& );
-rawsound& operator << ( rawsound&, codecx& );
-
-codecx& operator << ( codecx&, const char& );
-
 /* Functions */
 void gen711convertdata( void );
 void codectests( void );
+
+
+/* Template functions */
+/*
+## rtppacket << codecx
+Take the data out and transcode if necessary. Keep reference to any packet we have transcoded as we may need to use it again.
+
+pk needs to impliment:
+int getpayloadtype()
+copy( *, size_t )
+setpayloadlength( size_t )
+setlength( size_t )
+*/
+auto& operator << ( auto& pk, codecx& c )
+{
+  (&pk) << c;
+  return pk;
+}
+
+auto* operator << ( auto *pk, codecx& c )
+{
+  int outpayloadtype = pk->getpayloadtype();
+
+  /* If we have already have or converted this packet... */
+  if( PCMAPAYLOADTYPE == outpayloadtype &&  0 != c.pcmaref.size() )
+  {
+    pk->copy( c.pcmaref.c_str(), c.pcmaref.size() );
+    return pk;
+  }
+  else if( PCMUPAYLOADTYPE == outpayloadtype && 0 != c.pcmuref.size() )
+  {
+    pk->copy( c.pcmuref.c_str(), c.pcmuref.size() );
+    return pk;
+  }
+  else if( ILBCPAYLOADTYPE == outpayloadtype && 0 != c.ilbcref.size() )
+  {
+    pk->copy( c.ilbcref.c_str(), c.ilbcref.size() );
+    return pk;
+  }
+  else if( G722PAYLOADTYPE == outpayloadtype && 0 != c.g722ref.size() )
+  {
+    pk->copy( c.g722ref.c_str(), c.g722ref.size() );
+    return pk;
+  }
+
+  /* If we get here we may have L16 but at the wrong sample rate so check and resample - then convert */
+  /* narrowband targets */
+  switch( outpayloadtype )
+  {
+    case ILBCPAYLOADTYPE:
+    {
+      c.requirenarrowband();
+      c.ilbcref = rawsound( *pk );
+      c.l16toilbc();
+      pk->setpayloadlength( c.ilbcref.size() );
+      break;
+    }
+    case G722PAYLOADTYPE:
+    {
+      c.requirewideband();
+      c.g722ref = rawsound( *pk );
+      c.l16tog722();
+      pk->setpayloadlength( c.g722ref.size() );
+      break;
+    }
+    case PCMAPAYLOADTYPE:
+    {
+      if( c.pcmuref.size() > 0 )
+      {
+        c.pcmaref = rawsound( *pk );
+        c.alaw2ulaw();
+      }
+      else
+      {
+        c.requirenarrowband();
+        c.pcmaref = rawsound( *pk );
+
+        c.l16topcma();
+      }
+
+      pk->setpayloadlength( c.pcmaref.size() );
+
+      break;
+    }
+    case PCMUPAYLOADTYPE:
+    {
+      if( c.pcmaref.size() > 0 )
+      {
+        c.pcmuref = rawsound( *pk );
+        c.ulaw2alaw();
+      }
+      else
+      {
+        c.requirenarrowband();
+
+        c.pcmuref = rawsound( *pk );
+        c.l16topcmu();
+      }
+
+      pk->setpayloadlength( c.pcmuref.size() );
+      break;
+    }
+    default:
+    {
+      pk->setlength( 0 );
+    }
+  }
+
+  return pk;
+}
 
 
 #endif /* PROJECTRTPCODECX_H */

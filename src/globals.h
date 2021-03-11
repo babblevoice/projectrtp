@@ -8,6 +8,7 @@
 /* The number of bytes in a packet ( these figure are less some overhead G711 = 172*/
 #define G711PAYLOADBYTES 160
 #define G722PAYLOADBYTES 160
+#define L16PAYLOADSAMPLES 160
 #define L16NARROWBANDBYTES 320
 #define L16WIDEBANDBYTES 640
 #define ILBC20PAYLOADBYTES 38

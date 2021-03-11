@@ -32,9 +32,9 @@
 #include "controlclient.h"
 
 /* The number of packets we will keep in a buffer */
-#define BUFFERPACKETCOUNT 20
-#define BUFFERLOWDELAYCOUNT 8
-#define BUFFERHIGHDELAYCOUNT 12
+#define BUFFERPACKETCOUNT 30
+#define BUFFERLOWDELAYCOUNT 12
+#define BUFFERHIGHDELAYCOUNT 25 /* 500mS @ a ptime of 20mS */
 
 /* The size of our message queue where we send info about new channels added
 to the mixr to be added */
@@ -80,6 +80,8 @@ private:
   boost::lockfree::stack< std::shared_ptr< projectrtpchannel > > newchannels;
 
   rawsound added;
+  rawsound subtracted;
+  int failcount;
 };
 
 typedef boost::atomic_shared_ptr< projectchannelmux > atomicmuxptr;
@@ -107,6 +109,7 @@ public:
   void open( std::string &id, std::string &uuid, controlclient::pointer );
   void close( void );
   void doclose( void );
+  void go( void );
 
   unsigned short getport( void );
 
@@ -199,6 +202,7 @@ private:
   /* Generally used as a pair */
   rtppacket *getrtpbottom( uint16_t highcount = BUFFERHIGHDELAYCOUNT, uint16_t lowcount = BUFFERLOWDELAYCOUNT );
   void incrrtpbottom( rtppacket *from );
+  bool checkidlerecv( void );
 
   void handlertcpdata( void );
   void handletargetresolve (
@@ -211,7 +215,8 @@ private:
   atomicmuxptr others;
 
   /* CODECs  */
-  codecx codecworker;
+  codecx outcodec;
+  codecx incodec;
 
   soundsoup::pointer player;
   stringptr newplaydef;

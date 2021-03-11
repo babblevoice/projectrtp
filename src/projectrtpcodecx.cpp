@@ -558,103 +558,6 @@ codecx& operator << ( codecx& c, const char& a )
 }
 
 /*!md
-## rtppacket << codecx
-Take the data out and transcode if necessary. Keep reference to any packet we have transcoded as we may need to use it again.
-*/
-rtppacket& operator << ( rtppacket& pk, codecx& c )
-{
-  int outpayloadtype = pk.getpayloadtype();
-
-  /* If we have already have or converted this packet... */
-  if( PCMAPAYLOADTYPE == outpayloadtype &&  0 != c.pcmaref.size() )
-  {
-    pk.copy( c.pcmaref.c_str(), c.pcmaref.size() );
-    return pk;
-  }
-  else if( PCMUPAYLOADTYPE == outpayloadtype && 0 != c.pcmuref.size() )
-  {
-    pk.copy( c.pcmuref.c_str(), c.pcmuref.size() );
-    return pk;
-  }
-  else if( ILBCPAYLOADTYPE == outpayloadtype && 0 != c.ilbcref.size() )
-  {
-    pk.copy( c.ilbcref.c_str(), c.ilbcref.size() );
-    return pk;
-  }
-  else if( G722PAYLOADTYPE == outpayloadtype && 0 != c.g722ref.size() )
-  {
-    pk.copy( c.g722ref.c_str(), c.g722ref.size() );
-    return pk;
-  }
-
-  /* If we get here we may have L16 but at the wrong sample rate so check and resample - then convert */
-  /* narrowband targets */
-  switch( outpayloadtype )
-  {
-    case ILBCPAYLOADTYPE:
-    {
-      c.requirenarrowband();
-      c.ilbcref = rawsound( pk );
-      c.l16toilbc();
-      pk.setpayloadlength( c.ilbcref.size() );
-      break;
-    }
-    case G722PAYLOADTYPE:
-    {
-      c.requirewideband();
-      c.g722ref = rawsound( pk );
-      c.l16tog722();
-      pk.setpayloadlength( c.g722ref.size() );
-      break;
-    }
-    case PCMAPAYLOADTYPE:
-    {
-      if( c.pcmuref.size() > 0 )
-      {
-        c.pcmaref = rawsound( pk );
-        c.alaw2ulaw();
-      }
-      else
-      {
-        c.requirenarrowband();
-        c.pcmaref = rawsound( pk );
-
-        c.l16topcma();
-      }
-
-      pk.setpayloadlength( c.pcmaref.size() );
-
-      break;
-    }
-    case PCMUPAYLOADTYPE:
-    {
-      if( c.pcmaref.size() > 0 )
-      {
-        c.pcmuref = rawsound( pk );
-        c.ulaw2alaw();
-      }
-      else
-      {
-        c.requirenarrowband();
-
-        c.pcmuref = rawsound( pk );
-        c.l16topcmu();
-      }
-
-      pk.setpayloadlength( c.pcmuref.size() );
-      break;
-    }
-    default:
-    {
-      pk.length = 0;
-    }
-  }
-
-  return pk;
-}
-
-
-/*!md
 # rawsound
 An object representing raw data for sound - which can be in any format (supported). We maintain a pointer to the raw data and will not clean it up.
 */
@@ -774,13 +677,94 @@ rawsound::~rawsound()
 }
 
 /*
-## clear
+## zero
 Reset buffer with zero
 */
-void rawsound::clear( void )
+void rawsound::zero( void )
 {
-  memset( this->data, 0, this->samples * this->bytespersample );
+  if( nullptr != this->data )
+  {
+    size_t zeroamount = this->samples * this->bytespersample;
+    if( L1616KPAYLOADTYPE == format )
+    {
+      zeroamount = zeroamount * 2;
+    }
+
+    if( 0 != this->allocatedlength && zeroamount > this->allocatedlength )
+    {
+      std::cerr << "Trying to zero memory but capped by allocated amount" << std::endl;
+      zeroamount = this->allocatedlength;
+    }
+
+    memset( this->data, 0, zeroamount );
+  }
 }
+
+/*
+## copy
+* Target (this) MUST have memory available.
+* format must be set appropriatly before the call
+*/
+void rawsound::copy( uint8_t *src, size_t len )
+{
+  if( nullptr != this->data )
+  {
+    memcpy( this->data,
+            src,
+            len );
+
+    switch( this->format )
+    {
+      case L168KPAYLOADTYPE:
+      case L1616KPAYLOADTYPE:
+      {
+        this->samples = len / 2;
+        break;
+      }
+      default:
+      {
+        this->samples = len;
+        break;
+      }
+    }
+  }
+}
+
+/*
+## copy (from other)
+* Target (this) MUST have data allocated.
+*/
+void rawsound::copy( rawsound &other )
+{
+  if( nullptr != this->data && this->samples >= other.samples )
+  {
+    this->bytespersample = other.bytespersample;
+    this->samplerate = other.samplerate;
+    this->format = other.format;
+    this->samples = other.samples;
+
+    memcpy( this->data,
+            other.data,
+            other.samples * other.bytespersample );
+
+  }
+}
+
+/*
+## Add and subtract
+
+Used for mixing in channels.
+
+void rawsound::add( void )
+{
+
+}
+
+void rawsound::subtract( void )
+{
+
+}
+*/
 
 /*
 ## malloc
@@ -790,6 +774,7 @@ void rawsound::malloc( size_t samplecount, size_t bytespersample, int format )
 {
   this->samples = samplecount;
   this->bytespersample = bytespersample;
+  this->format = format;
   size_t requiredsize = samplecount * bytespersample;
   if( L1616KPAYLOADTYPE == format )
   {
@@ -807,6 +792,102 @@ void rawsound::malloc( size_t samplecount, size_t bytespersample, int format )
   }
   this->data = new uint8_t[ requiredsize ];
   this->allocatedlength = requiredsize;
+}
+
+/*
+## operator +=
+Used for mixing audio
+*/
+rawsound& rawsound::operator+=( codecx& rhs )
+{
+  size_t length;
+
+  int16_t *in;
+  int16_t *out = ( int16_t * ) this->data;
+
+  switch( this->format )
+  {
+    case L168KPAYLOADTYPE:
+    {
+      rhs.requirenarrowband();
+
+      length = rhs.l168kref.size();
+      in = ( int16_t * ) rhs.l168kref.c_str();
+      break;
+    }
+    case L1616KPAYLOADTYPE:
+    {
+      rhs.requirewideband();
+
+      length = rhs.l1616kref.size();
+      in = ( int16_t * ) rhs.l1616kref.c_str();
+      break;
+    }
+    default:
+    {
+      std::cerr << "Attemping to perform an addition on a none linear format" << std::endl;
+      return *this;
+    }
+  }
+
+  if( length > this->samples )
+  {
+    std::cerr << "We have been asked to add samples but we don't have enough space" << std::endl;
+    length = this->samples;
+  }
+
+  for( size_t i = 0; i < length; i++ )
+  {
+    *out++ += *in++;
+  }
+
+  return *this;
+}
+
+rawsound& rawsound::operator-=( codecx& rhs )
+{
+  size_t length;
+
+  int16_t *in;
+  int16_t *out = ( int16_t * ) this->data;
+
+  switch( this->format )
+  {
+    case L168KPAYLOADTYPE:
+    {
+      rhs.requirenarrowband();
+
+      length = rhs.l168kref.size();
+      in = ( int16_t * ) rhs.l168kref.c_str();
+      break;
+    }
+    case L1616KPAYLOADTYPE:
+    {
+      rhs.requirewideband();
+
+      length = rhs.l1616kref.size();
+      in = ( int16_t * ) rhs.l1616kref.c_str();
+      break;
+    }
+    default:
+    {
+      std::cerr << "Attemping to perform a subtract on a none linear format" << std::endl;
+      return *this;
+    }
+  }
+
+  if( length > this->samples )
+  {
+    std::cerr << "We have been asked to subtract samples but we don't have enough space" << std::endl;
+    length = this->samples;
+  }
+
+  for( size_t i = 0; i < length; i++ )
+  {
+    *out++ -= *in++;
+  }
+
+  return *this;
 }
 
 

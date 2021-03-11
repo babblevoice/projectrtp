@@ -20,7 +20,8 @@ using namespace boost::placeholders;
 projectchannelmux::projectchannelmux( boost::asio::io_context &iocontext ):
   iocontext( iocontext ),
   tick( iocontext ),
-  newchannels( MIXQUEUESIZE )
+  newchannels( MIXQUEUESIZE ),
+  failcount( 0 )
 {
 }
 
@@ -39,11 +40,10 @@ void projectchannelmux::mixall( void )
   /* First decide on a common rate (if we only have 8K channels it is pointless
   upsampling them all and wasting resources) */
   int l16krequired = L168KPAYLOADTYPE;
-  size_t insize = 0;
+  size_t insize = L16PAYLOADSAMPLES;
+
   for( auto& chan: this->channels )
   {
-#warning TODO
-    //if( chan-> > insize ) insize = chan->;
     switch( chan->selectedcodec )
     {
       case G722PAYLOADTYPE:
@@ -57,10 +57,44 @@ void projectchannelmux::mixall( void )
   endofforloop:
 
   this->added.malloc( insize, sizeof( int16_t ), l16krequired );
-  this->added.clear();
+  this->subtracted.malloc( insize, sizeof( int16_t ), l16krequired );
+  this->added.zero();
 
+  /* We first have to add them all up */
   for( auto& chan: this->channels )
   {
+    rtppacket *src = chan->getrtpbottom();
+    if( nullptr != src )
+    {
+      chan->incodec << codecx::next;
+      chan->incodec << *src;
+      this->added += chan->incodec;
+    }
+  }
+
+  /* Now we subtract this channel to send to this channel. */
+  for( auto& chan: this->channels )
+  {
+    /*
+     There is a small chance that rtp bottom may have fipped from nullptr to something.
+     We will get a little noise as a result. We could get rid of this by marking the
+     channel somehow?
+    */
+    rtppacket *src = chan->getrtpbottom();
+    if( nullptr != src )
+    {
+      rtppacket *dst = chan->gettempoutbuf();
+
+      this->subtracted.zero();
+      this->subtracted.copy( this->added );
+      this->subtracted -= chan->incodec;
+
+      chan->outcodec << codecx::next;
+      chan->outcodec << this->subtracted;
+      dst << chan->outcodec;
+      chan->writepacket( dst );
+      chan->incrrtpbottom( src );
+    }
   }
 }
 
@@ -73,14 +107,36 @@ void projectchannelmux::handletick( const boost::system::error_code& error )
   {
     this->checkfornewmixes();
 
-    repeatremove:
-    for( auto& chan: this->channels )
+    /* Check for channels which have request removal */
     {
-      projectchannelmux::pointer tmp = chan->others;
-      if( nullptr == tmp )
+      bool anyremoved = false;
+      repeatremove:
+      for( auto& chan: this->channels )
       {
-        this->channels.remove( chan );
-        goto repeatremove;
+        projectchannelmux::pointer tmp = chan->others;
+        if( nullptr == tmp )
+        {
+          chan->go();
+          this->channels.remove( chan );
+          anyremoved = true;
+          goto repeatremove;
+        }
+      }
+
+      if( anyremoved )
+      {
+        if( this->channels.size() <= 1 )
+        {
+          if( 1 == this->channels.size() )
+          {
+            auto chan = this->channels.begin();
+            (*chan)->go();
+            this->channels.erase( chan );
+          }
+          /* As we use auto pointers returning from this function without
+          readding a new pointer to a timer will clean things up */
+          return;
+        }
       }
     }
 
@@ -111,19 +167,12 @@ void projectchannelmux::handletick( const boost::system::error_code& error )
     }
     else if( this->channels.size() >= 2 )
     {
-      /* Our strategy here is to add all together then subtract when we send to target */
-      for( auto& chan: this->channels )
-      {
-        rtppacket *src;
-        while( ( src = chan->getrtpbottom() ) != nullptr )
-        {
-          uint16_t workingonaheadby = src->getsequencenumber() - chan->lastworkedonsn - 1;
-          chan->receivedpkskip += workingonaheadby;
-#warning TODO
-          //this->postrtpdata( chan, src, workingonaheadby );
-          chan->incrrtpbottom( src );
-        }
-      }
+      this->mixall();
+    }
+
+    for( auto& chan: this->channels )
+    {
+      chan->checkidlerecv();
     }
 
     this->tick.expires_at( this->tick.expiry() + boost::asio::chrono::milliseconds( 20 ) );
@@ -239,9 +288,9 @@ void projectchannelmux::postrtpdata( std::shared_ptr< projectrtpchannel > srccha
   }
   else
   {
-    srcchan->codecworker << codecx::next;
-    srcchan->codecworker << *src;
-    *dst << srcchan->codecworker;
+    srcchan->outcodec << codecx::next;
+    srcchan->outcodec << *src;
+    dst << srcchan->outcodec;
   }
 
   dstchan->writepacket( dst );
@@ -347,7 +396,8 @@ void projectrtpchannel::open( std::string &id, std::string &uuid, controlclient:
 
   this->rtpoutindex = 0;
 
-  this->codecworker.reset();
+  this->outcodec.reset();
+  this->incodec.reset();
 
   this->rtpsocket.open( boost::asio::ip::udp::v4() );
   this->rtpsocket.bind( boost::asio::ip::udp::endpoint(
@@ -387,6 +437,11 @@ void projectrtpchannel::open( std::string &id, std::string &uuid, controlclient:
 
   this->havedata = false;
 
+  this->go();
+}
+
+void projectrtpchannel::go( void )
+{
   this->tick.expires_after( std::chrono::milliseconds( 20 ) );
   this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
                                         shared_from_this(),
@@ -461,6 +516,21 @@ void projectrtpchannel::doclose( void )
   }
 }
 
+bool projectrtpchannel::checkidlerecv( void )
+{
+  if( this->recv && this->active )
+  {
+    this->tickswithnortpcount++;
+    if( this->tickswithnortpcount > 400 )
+    {
+      this->close();
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /*!md
 ## handletick
 Our timer to send data - use this for when we are a single channel. Mixing tick is done in mux.
@@ -469,14 +539,7 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
 {
   if ( error != boost::asio::error::operation_aborted )
   {
-    if( this->recv )
-    {
-      this->tickswithnortpcount++;
-      if( this->tickswithnortpcount > 400 )
-      {
-        this->close();
-      }
-    }
+    if( this->checkidlerecv() ) return;
 
     /* only us */
     projectchannelmux::pointer mux = this->others;
@@ -506,9 +569,9 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
         rawsound r;
         if( this->player->read( r ) && r.size() > 0 )
         {
-          this->codecworker << codecx::next;
-          this->codecworker << r;
-          *out << this->codecworker;
+          this->outcodec << codecx::next;
+          this->outcodec << r;
+          out << this->outcodec;
           this->writepacket( out );
         }
       }
@@ -517,10 +580,10 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
         rtppacket *src = this->getrtpbottom();
         if( nullptr != src )
         {
-          this->codecworker << codecx::next;
-          this->codecworker << *src;
+          this->outcodec << codecx::next;
+          this->outcodec << *src;
           rtppacket *dst = this->gettempoutbuf();
-          *dst << this->codecworker;
+          dst << this->outcodec;
           this->writepacket( dst );
           this->incrrtpbottom( src );
         }
@@ -842,6 +905,9 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other )
     m->addchannel( shared_from_this() );
     m->addchannel( other );
     m->go();
+
+    /* We don't need out channel timer */
+    this->tick.cancel();
   }
   else
   {
