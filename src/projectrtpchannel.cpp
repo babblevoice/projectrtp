@@ -165,7 +165,7 @@ void projectchannelmux::handletick( const boost::system::error_code& error )
         chan2->incrrtpbottom( src );
       }
     }
-    else if( this->channels.size() >= 2 )
+    else if( this->channels.size() > 2 )
     {
       this->mixall();
     }
@@ -735,7 +735,6 @@ void projectrtpchannel::readsomertp( void )
           this->receivedpkcount++;
           if( !this->receivedrtp )
           {
-            std::cout << buf->getsequencenumber() << std::endl;
             this->lastworkedonsn.exchange( buf->getsequencenumber() - 1 );
             this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
             this->receivedrtp = true;
