@@ -76,7 +76,7 @@ void projectchannelmux::mixall( void )
   for( auto& chan: this->channels )
   {
     /*
-     There is a small chance that rtp bottom may have fipped from nullptr to something.
+     There is a small chance that rtp bottom may have flipped from nullptr to something.
      We will get a little noise as a result. We could get rid of this by marking the
      channel somehow?
     */
