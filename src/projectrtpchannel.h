@@ -72,6 +72,7 @@ public:
 private:
 
   void checkfornewmixes( void );
+  void mix2( void );
   void mixall( void );
 
   boost::asio::io_context &iocontext;
@@ -147,20 +148,18 @@ public:
   uint32_t tsout;
   uint16_t seqout;
 
+  atomicrtppacketptr toolatertppacket;
   rtppacket rtpdata[ BUFFERPACKETCOUNT ];
   atomicrtppacketptr availablertpdata[ BUFFERPACKETCOUNT ];
   atomicrtppacketptr orderedrtpdata[ BUFFERPACKETCOUNT ];
   std::atomic_uint16_t orderedinminsn; /* sn = sequence number, min smallest we hold which is unprocessed - when it is processed we can forget about it */
   std::atomic_uint16_t orderedinmaxsn;
-  std::atomic_uint16_t orderedinbottom; /* points to our min sn packet */
   std::atomic_uint16_t lastworkedonsn;
   uint16_t rtpbuffercount; /* keeps track of availble buffer items in availablertpdata */
   std::atomic_bool rtpbufferlock; /* spin lock to keep syncronised between reading and processing thread */
 
 
   unsigned char rtcpdata[ RTCPMAXLENGTH ];
-  int rtpindexoldest;
-  int rtpindexin;
 
   /* The out data is intended to be written by other channels (or functions), they can then be sent to other channels as well as our own end point  */
   rtppacket outrtpdata[ BUFFERPACKETCOUNT ];
@@ -203,6 +202,9 @@ private:
   rtppacket *getrtpbottom( uint16_t highcount = BUFFERHIGHDELAYCOUNT, uint16_t lowcount = BUFFERLOWDELAYCOUNT );
   void incrrtpbottom( rtppacket *from );
   bool checkidlerecv( void );
+  bool checkforoverrun( rtppacket *buf );
+  void checkandfixoverrun( void );
+  bool checkforunderrun( rtppacket *buf );
 
   void handlertcpdata( void );
   void handletargetresolve (
