@@ -1,4 +1,8 @@
-CCOPTS:=-Wall -g -O0 -fstack-protector-all -std=c++20 -O3 #-fopt-info-vec -fopt-info-vec-missed
+
+# -O3 includes -fopt-info-vec -fopt-info-vec-missed
+DEBUG:= -DDEBUG -g
+RELEASE:=-O3
+CCOPTS:=-Wall -fstack-protector-all -std=c++20
 LL:=-lboost_system -lpthread -lrt -L../Debug/ -lspandsp -lilbc
 
 COMPILER:=g++
@@ -22,7 +26,13 @@ LINKER:=ccache $(LINKER)
 multi:
 	$(MAKE) -j$(CPUCOUNT) default
 
-default: ../out/projectrtp ../out/uksounds.wav
+debug: CCOPTS += $(DEBUG)
+debug: ../out/projectrtp ../out/uksounds.wav
+
+release: CCOPTS += $(RELEASE)
+release: ../out/projectrtp ../out/uksounds.wav
+
+default: release
 
 # Find all sources
 CPPSOURCES:=$(shell ls *.cpp)
