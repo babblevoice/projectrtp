@@ -618,6 +618,17 @@ rtppacket *projectrtpchannel::getrtpbottom( uint16_t highcount, uint16_t lowcoun
 {
   if( !this->receivedrtp ) return nullptr;
 
+  /* There probably has been a network delay and they are now coming through
+  which has filled up our RTP buffer - help clear out */
+  uint16_t diff = this->orderedinmaxsn - this->orderedinminsn;
+  if( diff > BUFFERPACKETCAP )
+  {
+    for( uint16_t i = 0; i < diff; i++ )
+    {
+      this->incrrtpbottom( this->orderedrtpdata[ this->orderedinminsn % BUFFERPACKETCOUNT ] );
+    }
+  }
+
   rtppacket *src = this->orderedrtpdata[ this->orderedinminsn % BUFFERPACKETCOUNT ];
 
   if( nullptr == src ) return nullptr;
@@ -641,6 +652,7 @@ rtppacket *projectrtpchannel::getrtpbottom( uint16_t highcount, uint16_t lowcoun
 
 void projectrtpchannel::incrrtpbottom( rtppacket *from )
 {
+  if( nullptr == from ) return;
   this->lastworkedonsn = from->getsequencenumber();
   this->returnbuffer( this->orderedrtpdata[ this->lastworkedonsn % BUFFERPACKETCOUNT ] );
   this->orderedrtpdata[ this->lastworkedonsn % BUFFERPACKETCOUNT ] = nullptr;
@@ -786,9 +798,9 @@ existing items in our buffer so we have to hand this off to our tick.
 */
 bool projectrtpchannel::checkforoverrun( rtppacket *buf )
 {
-  uint16_t sn = buf->getsequencenumber();
+  uint16_t diff = buf->getsequencenumber() - this->orderedinminsn;
 
-  if( sn > ( this->orderedinminsn + BUFFERPACKETCOUNT ) )
+  if( diff > BUFFERPACKETCOUNT )
   {
     /* We have to clear the buffer and re-go */
     this->toolatertppacket = buf;
@@ -837,9 +849,14 @@ bool projectrtpchannel::checkforunderrun( rtppacket *buf )
 {
   uint16_t sn = buf->getsequencenumber();
 
-  if( sn < ( this->orderedinmaxsn - BUFFERPACKETCOUNT ) )
+  auto diff = this->orderedinminsn - sn;
+  if( diff > 0 && diff < BUFFERPACKETCOUNT  )
   {
     this->returnbuffer( buf );
+    if( this->active )
+    {
+      this->readsomertp();
+    }
     return true;
   }
   return false;

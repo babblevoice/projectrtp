@@ -32,7 +32,9 @@
 #include "controlclient.h"
 
 /* The number of packets we will keep in a buffer */
-#define BUFFERPACKETCOUNT 30
+#define BUFFERPACKETCOUNT 50
+/* The level we start dropping packets to clear backlog */
+#define BUFFERPACKETCAP 40
 #define BUFFERLOWDELAYCOUNT 12
 #define BUFFERHIGHDELAYCOUNT 25 /* 500mS @ a ptime of 20mS */
 
