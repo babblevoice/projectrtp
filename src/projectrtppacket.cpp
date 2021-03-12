@@ -267,6 +267,12 @@ As it says.
 */
 uint16_t rtppacket::getpayloadlength( void )
 {
+
+  if( this->length < ( 12 - ( (size_t)this->getpacketcsrccount() * 4 ) ) )
+  {
+    std::cerr << "RTP Packet has a nonsense size" << std::endl;
+    return 0;
+  }
   return this->length - 12 - ( this->getpacketcsrccount() * 4 );
 }
 
