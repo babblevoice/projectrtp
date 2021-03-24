@@ -991,9 +991,7 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other )
   projectchannelmux::pointer m = this->others.load( std::memory_order_relaxed );
   if( nullptr == m )
   {
-std::cout << "creating mux" << std::endl << std::flush;
     m = projectchannelmux::create( this->iocontext );
-std::cout << "added mux" << std::endl << std::flush;
     m->addchannel( shared_from_this() );
     m->addchannel( other );
     /* We don't need our channel timer */
