@@ -72,6 +72,7 @@ public:
 
   void reset( void );
   void restart( void );
+  uint16_t power( void );
 
   friend codecx& operator << ( codecx&, rawsound& );
   friend codecx& operator << ( codecx&, rtppacket& );
@@ -97,6 +98,7 @@ private:
   void l16widetonarrowband( void );
   void requirenarrowband( void );
   void requirewideband( void );
+  rawsound& requirel16( void );
 
   /* CODECs  */
   g722_encode_state_t *g722encoder;

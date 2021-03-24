@@ -1,5 +1,6 @@
 
 #include <iostream>
+#include <math.h>
 
 #include "projectrtpcodecx.h"
 
@@ -482,6 +483,43 @@ void codecx::requirenarrowband( void )
   if( this->ilbctol16() ) return;
   this->g722tol16();
   this->l16widetonarrowband();
+}
+
+/*!md
+## requirel16
+Wide or narrow - it doesn't matter - we just need l16
+*/
+rawsound& codecx::requirel16( void )
+{
+  if( 0 != this->l168kref.size() ) return this->l168kref;
+  if( 0 != this->l1616kref.size() ) return this->l1616kref;
+
+  if( this->g711tol16() ) return this->l168kref;
+  if( this->ilbctol16() ) return this->l168kref;
+  if( this->g722tol16() ) return this->l1616kref;
+
+  return this->l168kref;
+}
+
+/*
+## Calculate the power in a packet
+Rely on compiler to use SSE + rsqrtss for sqrt. If this ever gets ported to a different
+processor with limited functions like this then fast inverse sqrt should be implemented.
+*/
+uint16_t codecx::power( void )
+{
+  rawsound &ref = this->requirel16();
+  if ( 0 == ref.size() ) return 0;
+
+  uint32_t stotsq = 0;
+  int16_t *s = ( int16_t* ) ref.c_str();
+  for( size_t i = 0; i < ref.size(); i++ )
+  {
+    stotsq += (*s) * (*s);
+    s++;
+  }
+  stotsq = stotsq * ( 1 / ref.size() );
+  return sqrt( stotsq );
 }
 
 /*!md
