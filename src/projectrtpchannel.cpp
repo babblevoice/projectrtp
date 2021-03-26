@@ -583,6 +583,18 @@ void projectrtpchannel::checkfornewrecorders( void )
         soundfile::getsampleratefrompt( this->selectedcodec ) );
 
     this->recorders.push_back( rec );
+
+    if( this->control )
+    {
+      JSON::Object v;
+      v[ "action" ] = "record";
+      v[ "id" ] = this->id;
+      v[ "uuid" ] = this->uuid;
+      v[ "file" ] = rec->file;
+      v[ "state" ] = "recording";
+
+      this->control->sendmessage( v );
+    }
   }
 }
 
