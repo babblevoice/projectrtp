@@ -171,6 +171,20 @@ We may also have combined some wav files:
 }
 ```
 
+### Record
+
+Record to a file. ProjectRTP currently supports 2 channel PCM.
+
+```json
+{
+  "channel": "record",
+  "uuid":"3f78c0f1-a1e5-4372-87f3-1938f5cb30c4",
+  "file":"testfile.wav"
+}
+
+Record to a filename. UUID is the channel UUID that is returned when you open a file. File is the name - this file will be overwritten if it already exists. 
+```
+
 ## Utils
 
 ### Tone generation
