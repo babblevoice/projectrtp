@@ -213,6 +213,10 @@ projectrtp --tone 697+1209*0.5:400 dtmf1.wav
 
 projectrtp --tone 697+1209*0.5/0/697+1336*0.5/0/697+1477*0.5/0:400/100 dtmf1-3.wav
 
+### --wavinfo
+
+Dump info from wav file header.
+
 ### TODO
 
 Format conversion between wav file types (l16, rate pcmu, pcma etc).
