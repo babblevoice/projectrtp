@@ -45,6 +45,35 @@ to the mixr to be added */
 /* 1 in ... packet loss */
 //#define SIMULATEDPACKETLOSSRATE 10
 
+class channelrecorder
+{
+public:
+  channelrecorder( std::string &file );
+  typedef boost::shared_ptr< channelrecorder > pointer;
+  static pointer create( std::string &file );
+
+  std::string file;
+  uint16_t startabovepower;
+
+  /*
+  what we multiple the last power reading with to create a simple low pass filter
+  The start will need to be more snappy, the end will have to cater for space between words
+  i.e.
+  TODO
+  */
+  float startcoeff;
+  float endcoeff;
+
+  /* must have started for this to kick in */
+  uint16_t finishbelowpower;
+  /* used in conjunction with finishbelowpower */
+  uint32_t minduration;
+
+  uint32_t maxduration; /* seconds */
+
+  soundfile::pointer sfile;
+};
+
 /*
 # projectchannelmux
 
@@ -64,7 +93,7 @@ public:
 
   void handletick( const boost::system::error_code& error );
   void checkfordtmf( std::shared_ptr< projectrtpchannel > chan, rtppacket *src );
-  void postrtpdata( std::shared_ptr< projectrtpchannel > srcchan,  std::shared_ptr< projectrtpchannel > dstchan, rtppacket *src, uint32_t skipcount );
+  void postrtpdata( std::shared_ptr< projectrtpchannel > srcchan, std::shared_ptr< projectrtpchannel > dstchan, rtppacket *src, uint32_t skipcount );
   inline size_t size() { return this->channels.size(); }
   void addchannel( std::shared_ptr< projectrtpchannel > chan );
   void go( void );
@@ -118,8 +147,10 @@ public:
 
   void target( std::string &address, unsigned short port );
   void rfc2833( unsigned short pt );
-  void play( stringptr newdef ) { std::atomic_store( &this->newplaydef, newdef ); }
+  void play( stringptr newdef ) { this->newplaydef = newdef; }
   inline void echo( void ) { this->doecho = true; }
+
+  void record( channelrecorder::pointer rec ) { this->newrecorders.push( rec ); }
 
   typedef std::vector< int > codeclist;
   bool audio( codeclist codecs );
@@ -207,6 +238,8 @@ private:
   bool checkforoverrun( rtppacket *buf );
   void checkandfixoverrun( void );
   bool checkforunderrun( rtppacket *buf );
+  void checkfornewrecorders( void );
+  void writerecordings( void );
 
   void handlertcpdata( void );
   void handletargetresolve (
@@ -223,7 +256,7 @@ private:
   codecx incodec;
 
   soundsoup::pointer player;
-  stringptr newplaydef;
+  atomicstringptr newplaydef;
 
   std::atomic_bool doecho;
   boost::asio::steady_timer tick;
@@ -236,6 +269,9 @@ private:
 
   /* Track hysteresis in our receive window - which allows for timing wiggles between our tick and when we receive */
   bool havedata;
+
+  boost::lockfree::stack< boost::shared_ptr< channelrecorder > > newrecorders;
+  std::list< boost::shared_ptr< channelrecorder > > recorders;
 };
 
 typedef std::deque<projectrtpchannel::pointer> rtpchannels;

@@ -89,7 +89,8 @@ codecx::codecx() :
   g722decoder( nullptr ),
   ilbcencoder( nullptr ),
   ilbcdecoder( nullptr ),
-  resamplelastsample( 0 )
+  resamplelastsample( 0 ),
+  _hasdata( false )
 {
 
 }
@@ -128,7 +129,7 @@ void codecx::reset()
   }
 
   this->restart();
-
+  this->_hasdata = false;
 }
 
 /*!md
@@ -139,6 +140,7 @@ void codecx::restart( void )
 {
   this->lpfilter.reset();
   this->resamplelastsample = 0;
+  this->_hasdata = false;
 }
 
 /*!md
@@ -146,8 +148,11 @@ void codecx::restart( void )
 
 From whichever PCM encoding (u or a) encode to the other without having to do intermediate l16.
 */
-void codecx::ulaw2alaw( void )
+bool codecx::alaw2ulaw( void )
 {
+  if( 0 == this->pcmaref.size() ) return false;
+  if( this->pcmaref.isdirty() ) return false;
+
   uint8_t *inbufptr, *outbufptr;
   size_t insize;
 
@@ -159,17 +164,23 @@ void codecx::ulaw2alaw( void )
   if( nullptr == outbufptr || nullptr == inbufptr )
   {
     std::cerr << "PCMA NULLPTR shouldn't happen (" << (void*)outbufptr << ", " << (void*)inbufptr << ")" << std::endl;
-    return;
+    return false;
   }
 
   for( size_t i = 0; i < insize; i++ )
   {
     *outbufptr++ = alaw_to_ulaw_table[ *inbufptr++ ];
   }
+
+  this->pcmuref.dirty( false );
+  return true;
 }
 
-void codecx::alaw2ulaw( void )
+bool codecx::ulaw2alaw( void )
 {
+  if( 0 == this->pcmuref.size() ) return false;
+  if( this->pcmuref.isdirty() ) return false;
+
   uint8_t *inbufptr, *outbufptr;
   size_t insize;
 
@@ -181,13 +192,16 @@ void codecx::alaw2ulaw( void )
   if( nullptr == outbufptr || nullptr == inbufptr )
   {
     std::cerr << "PCMU NULLPTR shouldn't happen(" << (void*)outbufptr << ", " << (void*)inbufptr << ")" << std::endl;
-    return;
+    return false;
   }
 
   for( size_t i = 0; i < insize; i++ )
   {
     *outbufptr++ = ulaw_to_alaw_table[ *inbufptr++ ];
   }
+
+  this->pcmaref.dirty( false );
+  return true;
 }
 
 /*!md
@@ -200,13 +214,13 @@ bool codecx::g711tol16( void )
   int16_t *convert;
   size_t insize;
 
-  if( this->pcmaref.size() > 0 )
+  if( this->pcmaref.size() > 0 && !this->pcmaref.isdirty() )
   {
     in = this->pcmaref.c_str();
     convert = _pcmatol16;
     insize = this->pcmaref.size();
   }
-  else if ( this->pcmuref.size() > 0 )
+  else if ( this->pcmuref.size() > 0 && !this->pcmuref.isdirty() )
   {
     in = this->pcmuref.c_str();
     convert = _pcmutol16;
@@ -226,6 +240,7 @@ bool codecx::g711tol16( void )
     *out++ = convert[ *in++ ];
   }
 
+  this->l168kref.dirty( false );
   return true;
 }
 
@@ -233,8 +248,11 @@ bool codecx::g711tol16( void )
 /*!md
 ## l16topcma
 */
-void codecx::l16topcma( void )
+bool codecx::l16topcma( void )
 {
+  if( 0 == this->l168kref.size() ) return false;
+  if( this->l168kref.isdirty() ) return false;
+
   uint8_t *out = this->pcmaref.c_str();
 
   int16_t *in;
@@ -245,13 +263,18 @@ void codecx::l16topcma( void )
   {
     *out++ = _l16topcma[ ( *in++ ) + 32768 ];
   }
+  this->pcmaref.dirty( false );
+  return true;
 }
 
 /*!md
 ## l16topcmu
 */
-void codecx::l16topcmu( void )
+bool codecx::l16topcmu( void )
 {
+  if( 0 == this->l168kref.size() ) return false;
+  if( this->l168kref.isdirty() ) return false;
+
   uint8_t *out = this->pcmuref.c_str();;
 
   int16_t *in;
@@ -262,6 +285,8 @@ void codecx::l16topcmu( void )
   {
     *out++ = _l16topcmu[ ( *in++ ) + 32768 ];
   }
+  this->pcmuref.dirty( false );
+  return true;
 }
 
 /*!md
@@ -271,6 +296,7 @@ As it says.
 bool codecx::ilbctol16( void )
 {
   if( 0 == this->ilbcref.size() ) return false;
+  if( this->ilbcref.isdirty() ) return false;
 
   /* roughly compression size with some leg room. */
   this->l168kref.malloc( this->ilbcref.size(), sizeof( int16_t ), L168KPAYLOADTYPE );
@@ -294,6 +320,7 @@ bool codecx::ilbctol16( void )
   if( -1 == l168klength )
   {
     this->l168kref.size( 0 );
+    this->l168kref.dirty( false );
     return false;
   }
 
@@ -305,12 +332,10 @@ bool codecx::ilbctol16( void )
 ## l16tog722
 As it says.
 */
-void codecx::l16tog722( void )
+bool codecx::l16tog722( void )
 {
-  if( 0 == this->l1616kref.size() )
-  {
-    return;
-  }
+  if( 0 == this->l1616kref.size() ) return false;
+  if( this->l1616kref.isdirty() ) return false;
 
   if( nullptr == this->g722encoder )
   {
@@ -322,11 +347,15 @@ void codecx::l16tog722( void )
   if( len > 0 )
   {
     this->g722ref.size( len );
+    this->g722ref.dirty( false );
   }
   else
   {
+    std::cerr << "g722_encode didn't encode any data" << std::endl;
     this->g722ref.size( 0 );
   }
+
+  return true;
 }
 
 /*!md
@@ -337,12 +366,10 @@ According to RFC 3952 you determin how many frames are in the packet by the fram
 
 As we only support G722, G711 and iLBC (20/30) then we should be able simply encode and send as the matched size.
 */
-void codecx::l16toilbc( void )
+bool codecx::l16toilbc( void )
 {
-  if( 0 == this->l168kref.size() )
-  {
-    return;
-  }
+  if( 0 == this->l168kref.size() ) return false;
+  if( this->l168kref.isdirty() ) return false;
 
   if( nullptr == this->ilbcencoder )
   {
@@ -359,11 +386,13 @@ void codecx::l16toilbc( void )
   if ( len > 0 )
   {
     this->ilbcref.size( len );
+    this->ilbcref.dirty( false );
+    return true;
   }
-  else
-  {
-    this->ilbcref.size( 0 );
-  }
+
+  this->ilbcref.size( 0 );
+  return false;
+
 }
 
 
@@ -373,10 +402,8 @@ As it says.
 */
 bool codecx::g722tol16( void )
 {
-  if( 0 == this->g722ref.size() )
-  {
-    return false;
-  }
+  if( 0 == this->g722ref.size() ) return false;
+  if( this->g722ref.isdirty() ) return false;
 
   /* x 2 for 16 bit instead of 8 and then x 2 sample rate */
   this->l1616kref.malloc( this->g722ref.size(), sizeof( int16_t ), L1616KPAYLOADTYPE );
@@ -396,6 +423,7 @@ bool codecx::g722tol16( void )
                                 this->g722ref.size() );
 
   this->l1616kref.size( l1616klength );
+  this->l1616kref.dirty( false );
   return true;
 }
 
@@ -403,13 +431,12 @@ bool codecx::g722tol16( void )
 ## l16lowtowideband
 Upsample from narrow to wideband. Take each point and interpolate between them. We require the final sample from the last packet to continue the interpolating.
 */
-void codecx::l16lowtowideband( void )
+bool codecx::l16lowtowideband( void )
 {
   size_t l168klength = this->l168kref.size();
-  if( 0 == l168klength )
-  {
-    return;
-  }
+
+  if( 0 == l168klength ) return false;
+  if( this->l168kref.isdirty() ) return false;
 
   this->l1616kref.malloc( l168klength, sizeof( int16_t ), L1616KPAYLOADTYPE );
 
@@ -427,38 +454,37 @@ void codecx::l16lowtowideband( void )
     out++;
     in++;
   }
+
+  this->l1616kref.dirty( false );
+  return true;
 }
 
 /*!md
 ## requirewideband
 Search for the relevent data and convert as necessary.
 */
-void codecx::requirewideband( void )
+bool codecx::requirewideband( void )
 {
-  if( 0 != this->l1616kref.size() ) return;
-  if( this->g722tol16() ) return;
+  if( 0 != this->l1616kref.size() && !this->l1616kref.isdirty() ) return true;
+  if( this->g722tol16() ) return true;
   if( !this->g711tol16() )
   {
-    if( this->ilbctol16() )
-    {
-      return;
-    }
+    if( this->ilbctol16() ) return true;
   }
 
-  this->l16lowtowideband();
+  return this->l16lowtowideband();
 }
 
 /*!md
 ##  l16widetolowband
 Downsample our L16 wideband samples to 8K. Pass through filter then grab every other sample.
 */
-void codecx::l16widetonarrowband( void )
+bool codecx::l16widetonarrowband( void )
 {
   size_t l1616klength = this->l1616kref.size();
-  if( 0 == l1616klength )
-  {
-    return;
-  }
+
+  if( 0 == l1616klength ) return false;
+  if( this->l1616kref.isdirty() ) return false;
 
   this->l168kref.malloc( l1616klength / 2, sizeof( int16_t ), L168KPAYLOADTYPE );
 
@@ -470,19 +496,22 @@ void codecx::l16widetonarrowband( void )
     lpfilter.execute( *in++ );
     *out++ = lpfilter.execute( *in++ );
   }
+
+  this->l168kref.dirty( false );
+  return true;
 }
 
 /*!md
 ## requirenarrowband
 Search for the relevent data and convert as necessary.
 */
-void codecx::requirenarrowband( void )
+bool codecx::requirenarrowband( void )
 {
-  if( 0 != this->l168kref.size() ) return;
-  if( this->g711tol16() ) return;
-  if( this->ilbctol16() ) return;
+  if( 0 != this->l168kref.size() && !this->l168kref.isdirty() ) return true;
+  if( this->g711tol16() ) return true;
+  if( this->ilbctol16() ) return true;
   this->g722tol16();
-  this->l16widetonarrowband();
+  return this->l16widetonarrowband();
 }
 
 /*!md
@@ -499,6 +528,98 @@ rawsound& codecx::requirel16( void )
   if( this->g722tol16() ) return this->l1616kref;
 
   return this->l168kref;
+}
+
+/*
+# getref
+returns a reference to the relavent rawsound and ensures it is transcoded if required.
+*/
+rawsound& codecx::getref( int pt )
+{
+  /* If we have already have or converted this packet... */
+  if( PCMAPAYLOADTYPE == pt &&  0 != this->pcmaref.size() && !this->pcmaref.isdirty() )
+  {
+    return this->pcmaref;
+  }
+  else if( PCMUPAYLOADTYPE == pt && 0 != this->pcmuref.size() && !this->pcmuref.isdirty() )
+  {
+    return this->pcmuref;
+  }
+  else if( ILBCPAYLOADTYPE == pt && 0 != this->ilbcref.size() && !this->ilbcref.isdirty() )
+  {
+    return this->ilbcref;
+  }
+  else if( G722PAYLOADTYPE == pt && 0 != this->g722ref.size() && !this->g722ref.isdirty() )
+  {
+    return this->g722ref;
+  }
+  else if( L168KPAYLOADTYPE == pt && 0 != this->l168kref.size() && !this->l168kref.isdirty() )
+  {
+    return this->l168kref;
+  }
+  else if( L1616KPAYLOADTYPE == pt && 0 != this->l1616kref.size() && !this->l1616kref.isdirty() )
+  {
+    return this->l1616kref;
+  }
+
+  /* If we get here we may have L16 but at the wrong sample rate so check and resample - then convert */
+  /* narrowband targets */
+  switch( pt )
+  {
+    case ILBCPAYLOADTYPE:
+    {
+      this->requirenarrowband();
+      this->l16toilbc();
+      return this->ilbcref;
+    }
+    case G722PAYLOADTYPE:
+    {
+      this->requirewideband();
+      this->l16tog722();
+
+      return this->g722ref;
+    }
+    case PCMAPAYLOADTYPE:
+    {
+      if( this->pcmuref.size() > 0 )
+      {
+        this->alaw2ulaw();
+      }
+      else
+      {
+        this->requirenarrowband();
+        this->l16topcma();
+      }
+      return this->pcmaref;
+    }
+    case PCMUPAYLOADTYPE:
+    {
+      if( this->pcmaref.size() > 0 )
+      {
+        this->ulaw2alaw();
+      }
+      else
+      {
+        this->requirenarrowband();
+        this->l16topcmu();
+      }
+      return this->pcmuref;
+    }
+    case L168KPAYLOADTYPE:
+    {
+      this->requirenarrowband();
+      return this->l168kref;
+    }
+    case L1616KPAYLOADTYPE:
+    {
+      this->requirewideband();
+      return this->l1616kref;
+    }
+  }
+
+  /* We should ever get here unless an invalid param has been passed in */
+  std::cerr << "codecx::getref call with bad pt" << std::endl;
+  return this->pcmuref;
 }
 
 /*
@@ -549,31 +670,37 @@ codecx& operator << ( codecx& c, rawsound& raw )
     case PCMAPAYLOADTYPE:
     {
       c.pcmaref = raw;
+      c._hasdata = true;
       break;
     }
     case PCMUPAYLOADTYPE:
     {
       c.pcmuref = raw;
+      c._hasdata = true;
       break;
     }
     case ILBCPAYLOADTYPE:
     {
       c.ilbcref = raw;
+      c._hasdata = true;
       break;
     }
     case G722PAYLOADTYPE:
     {
       c.g722ref = raw;
+      c._hasdata = true;
       break;
     }
     case L168KPAYLOADTYPE:
     {
       c.l168kref = raw;
+      c._hasdata = true;
       break;
     }
     case L1616KPAYLOADTYPE:
     {
       c.l1616kref = raw;
+      c._hasdata = true;
       break;
     }
   }
@@ -585,12 +712,13 @@ codecx& operator << ( codecx& c, const char& a )
 {
   if( 0 == a )
   {
-    c.pcmaref.size( 0 );
-    c.pcmuref.size( 0 );
-    c.g722ref.size( 0 );
-    c.ilbcref.size( 0 );
-    c.l168kref.size( 0 );
-    c.l1616kref.size( 0 );
+    c.pcmaref.dirty();
+    c.pcmuref.dirty();
+    c.g722ref.dirty();
+    c.ilbcref.dirty();
+    c.l168kref.dirty();
+    c.l1616kref.dirty();
+    c._hasdata = false;
   }
   return c;
 }
@@ -618,7 +746,8 @@ rawsound::rawsound( uint8_t *ptr, std::size_t samples, int format, uint16_t samp
   allocatedlength( 0 ),
   bytespersample( 1 ),
   format( format ),
-  samplerate( samplerate )
+  samplerate( samplerate ),
+  dirtydata( false )
 {
   this->frompt( format );
 }
@@ -678,12 +807,13 @@ void rawsound::frompt( int payloadtype )
 ## rawsound
 Construct from an rtp packet
 */
-rawsound::rawsound( rtppacket& pk ) :
+rawsound::rawsound( rtppacket& pk, bool dirty ) :
   data( pk.getpayload() ),
   samples( pk.getpayloadlength() ),
   allocatedlength( 0 ),
   bytespersample( 1 ),
-  format( pk.getpayloadtype() )
+  format( pk.getpayloadtype() ),
+  dirtydata( dirty )
 {
   this->frompt( this->format );
 }
@@ -698,7 +828,8 @@ rawsound::rawsound( rawsound &o ) :
   allocatedlength( 0 ),
   bytespersample( o.bytespersample ),
   format( o.format ),
-  samplerate( o.samplerate )
+  samplerate( o.samplerate ),
+  dirtydata( o.dirtydata )
 {
 }
 
@@ -994,10 +1125,50 @@ void codectests( void )
   outpk << ourcodec;
 
   std::cout << "PCMA OUT =" << std::endl;
+  uint8_t *pl = outpk.getpayload();
+
   for( int i = 0; i < 160; i ++ )
   {
-    std::cout << unsigned( outpk.getpayload()[ i ] ) << " ";
+    std::cout << unsigned( pl[ i ] ) << " ";
   }
   std::cout << std::endl;
+
+  if( 213 != pl[ 0 ] ) std::cout << "ERROR ERROR First byte should be 213???" << std::endl;
+  if( 85 != pl[ 9 ] ) std::cout << "ERROR ERROR 9th byte should be 85???" << std::endl;
+
+  rawsound &ref8k = ourcodec.getref( L168KPAYLOADTYPE );
+
+  if( ref8k.isdirty() ) std::cout << "ERROR our 8k out ref should not be dirty" << std::endl;
+
+  /* Repeat as this will use a different bit of code getting cached bit */
+  ref8k = ourcodec.getref( L168KPAYLOADTYPE );
+  if( ref8k.isdirty() ) std::cout << "ERROR our 8k out ref should not be dirty" << std::endl;
+
+  std::cout << "8k is dirty: " << std::boolalpha << ref8k.isdirty() << std::endl;
+  std::cout << "8k size: " << ref8k.size() << std::endl;
+  std::cout << "8k bytes per sample (should be 2): " << ref8k.getbytespersample() << std::endl;
+
+  /* 2 bytes per sample */
+  int16_t *pl16 = ( int16_t * ) ref8k.c_str();
+  for( size_t i = 0; i < ref8k.size(); i ++ )
+  {
+    std::cout << static_cast<int16_t>( pl16[ i ] ) << " ";
+  }
+  std::cout << std::endl;
+
+
+  rawsound &ref16k = ourcodec.getref( L1616KPAYLOADTYPE );
+  if( ref16k.isdirty() ) std::cout << "ERROR our 16k out ref should not be dirty" << std::endl;
+  std::cout << "16k is dirty: " << std::boolalpha << ref16k.isdirty() << std::endl;
+  std::cout << "16k size: " << ref16k.size() << std::endl;
+  std::cout << "16k bytes per sample (should be 2): " << ref16k.getbytespersample() << std::endl;
+
+  pl16 = ( int16_t * ) ref16k.c_str();
+  for( size_t i = 0; i < ref16k.size(); i ++ )
+  {
+    std::cout << static_cast<int16_t>( pl16[ i ] ) << " ";
+  }
+  std::cout << std::endl;
+
 
 }

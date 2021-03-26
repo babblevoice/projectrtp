@@ -19,6 +19,9 @@
 #include "projectrtppacket.h"
 #include "projectrtpcodecx.h"
 
+/* min 2 for write buffers on 2 channel audio */
+#define SOUNDFILENUMBUFFERS 2
+
 /*!md
 
 */
@@ -26,12 +29,13 @@
 typedef struct
 {
     /* RIFF Header */
-    char riff_header[ 4 ]; /* Contains "RIFF" */
-    int32_t wav_size; /* Size of the wav portion of the file, which follows the first 8 bytes. File size - 8 */
-    char wave_header[ 4 ]; /* Contains "WAVE" */
+    uint8_t riff_header[ 4 ]; /* Contains "RIFF" */
+    uint32_t chunksize; /* Size of the wav portion of the file, which follows the first 8 bytes. File size - 8 */
+
+    uint8_t wave_header[ 4 ]; /* Contains "WAVE" */
 
     /* Format Header */
-    char fmt_header[ 4 ]; /* Contains "fmt " (includes trailing space) */
+    uint8_t fmt_header[ 4 ]; /* Contains "fmt " (includes trailing space) */
     int32_t fmt_chunk_size; /* Should be 16 for PCM */
     uint16_t audio_format; /* Should be 1 for PCM. 3 for IEEE Float */
     int16_t num_channels;
@@ -41,10 +45,13 @@ typedef struct
     int16_t bit_depth; /* Number of bits per sample */
 
     /* Data */
-    char data_header[ 4 ]; /* Contains "data" */
+    uint8_t data_header[ 4 ]; /* Contains "data" */
     /* int32_t data_bytes;  Number of bytes in data. Number of samples * num_channels * sample byte size */
     /* Remainder of wave file is bytes */
-} wav_header;
+
+    uint32_t subchunksize;
+
+} wavheader;
 
 /* Actual value in the wav header */
 #define  WAVE_FORMAT_PCM 0x0001
@@ -57,18 +64,29 @@ class soundfile
 {
 public:
   soundfile( std::string &url );
+  soundfile( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
   ~soundfile();
 
   typedef std::shared_ptr< soundfile > pointer;
   static pointer create( std::string &url );
+  static pointer create( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
   std::string &geturl( void ) { return this->url; };
 
   bool read( rawsound &out );
+  bool write( codecx &in, codecx &out );
 
   void setposition( long seconds );
   long getposition( void );
   bool complete( void );
   inline bool isopen( void ) { return this->file != -1; }
+
+  inline uint16_t getwavformat( void ) { return this->ourwavheader.audio_format; }
+  /* Gets the current wav file format and converts to equiv RTP payload type */
+  uint8_t getwavformattopt( void );
+
+  /* converts from values like PCMUPAYLOADTYPE to WAVE_FORMAT_MULAW */
+  static uint16_t wavformatfrompt( uint8_t pt );
+  static int getsampleratefrompt( uint8_t pt );
 
 private:
   long offtomsecs( void );
@@ -76,23 +94,28 @@ private:
   std::string url;
   uint8_t *readbuffer;
   int readbuffercount;
-  int currentindex;
+  int currentreadindex;
   aiocb cbwavheader;
-  wav_header wavheader;
-  aiocb cbwavblock;
+  wavheader ourwavheader;
+  aiocb cbwavblock[ SOUNDFILENUMBUFFERS ];
 
   bool opened;
   bool badheader;
 
   long newposition;
   bool headerread;
+
+  /* For writing */
+  uint8_t *writebuffer;
+  int currentwriteindex;
+  int32_t tickcount;
 };
 
 
 
 
 void wavinfo( const char *file );
-void initwav( wav_header *, int samplerate = 8000 );
+void initwav( wavheader *, int samplerate = 8000 );
 
 
 #endif /* PROJECTRTPSOUNDFILE_H */

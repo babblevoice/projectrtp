@@ -8,11 +8,10 @@
 
 #include <deque>
 
+#include "globals.h"
 #include "json.hpp"
 
-typedef std::shared_ptr< std::string > stringptr;
 typedef std::deque< stringptr > waitingmessages;
-
 typedef std::shared_ptr< JSON::Object > jsonptr;
 
 class controlheader

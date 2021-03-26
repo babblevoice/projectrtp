@@ -5,6 +5,8 @@
 #include <string>
 #include <memory>
 
+#include <boost/smart_ptr/atomic_shared_ptr.hpp>
+
 /* The number of bytes in a packet ( these figure are less some overhead G711 = 172*/
 #define G711PAYLOADBYTES 160
 #define G722PAYLOADBYTES 160
@@ -33,6 +35,11 @@ could be a larger length with our CODECs */
 
 extern std::string mediachroot;
 
-typedef std::shared_ptr< std::string > stringptr;
+/* Switch to boost for now as atomic shared pointer in std doesn't compile
+std::atomic_store( stringptr
+ddn't complain about the tagerget object not being atomic also!
+*/
+typedef boost::shared_ptr< std::string > stringptr;
+typedef boost::atomic_shared_ptr< std::string > atomicstringptr;
 
 #endif /* PROJECTRTPGLOBALS_H */

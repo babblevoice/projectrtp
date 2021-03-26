@@ -197,6 +197,18 @@ void controlclient::parserequest( void )
         }
         /* our channel will send close on completion */
       }
+      else if( "record" == action )
+      {
+        std::string channel = JSON::as_string( body[ "uuid" ] );
+        std::string filename = JSON::as_string( body[ "file" ] );
+        channelrecorder::pointer p = channelrecorder::create( filename );
+
+        activertpchannels::iterator chan = activechannels.find( channel );
+        if ( activechannels.end() != chan )
+        {
+          chan->second->record( p );
+        }
+      }
       else if( "play" == action )
       {
         std::string channel = JSON::as_string( body[ "uuid" ] );

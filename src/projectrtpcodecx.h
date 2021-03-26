@@ -22,7 +22,7 @@ class rawsound
 public:
   rawsound();
   rawsound( uint8_t *ptr, std::size_t samples, int format, uint16_t samplerate );
-  rawsound( rtppacket& pk );
+  rawsound( rtppacket& pk, bool dirty = false );
   rawsound( rawsound & );
   ~rawsound();
 
@@ -31,6 +31,7 @@ public:
   void size( size_t samplecount ){ this->samples = samplecount; };
   inline int getformat( void ){ return this->format; }; /* aka payload type */
   uint16_t getsamplerate( void ) { return this->samplerate; };
+  size_t getbytespersample( void ) { return this->bytespersample; };
   void malloc( size_t samplecount, size_t bytespersample, int format );
   void zero( void );
 
@@ -38,6 +39,8 @@ public:
   inline int getpayloadtype( void ) { return this->format; }
   inline void setpayloadlength( size_t length ) { this->samples = length; };
   inline void setlength( size_t length ) { this->samples = length; };
+  inline bool isdirty( void ) { return this->dirtydata; }
+  inline void dirty( bool d = true ) { this->dirtydata = d; }
   void copy( uint8_t *src, size_t len );
   void copy( rawsound &other );
 
@@ -61,6 +64,9 @@ private:
   /* see globals.h */
   int format;
   uint16_t samplerate;
+
+  /* mark the fact that whilst we may have space, we may not have any actual data */
+  bool dirtydata;
 };
 
 class codecx
@@ -73,6 +79,8 @@ public:
   void reset( void );
   void restart( void );
   uint16_t power( void );
+  bool hasdata() { return this->_hasdata; }
+  rawsound& getref( int pt );
 
   friend codecx& operator << ( codecx&, rawsound& );
   friend codecx& operator << ( codecx&, rtppacket& );
@@ -84,20 +92,20 @@ public:
   static const char next;
 
 private:
-  void alaw2ulaw( void );
-  void ulaw2alaw( void );
+  bool alaw2ulaw( void );
+  bool ulaw2alaw( void );
   bool g711tol16( void );
   bool ilbctol16( void );
   bool g722tol16( void );
-  void l16topcma( void );
-  void l16topcmu( void );
-  void l16tog722( void );
-  void l16toilbc( void );
+  bool l16topcma( void );
+  bool l16topcmu( void );
+  bool l16tog722( void );
+  bool l16toilbc( void );
 
-  void l16lowtowideband( void);
-  void l16widetonarrowband( void );
-  void requirenarrowband( void );
-  void requirewideband( void );
+  bool l16lowtowideband( void);
+  bool l16widetonarrowband( void );
+  bool requirenarrowband( void );
+  bool requirewideband( void );
   rawsound& requirel16( void );
 
   /* CODECs  */
@@ -119,6 +127,7 @@ private:
   rawsound g722ref;
   rawsound ilbcref;
 
+  bool _hasdata;
 };
 
 /* Functions */
@@ -147,91 +156,42 @@ auto* operator << ( auto *pk, codecx& c )
 {
   int outpayloadtype = pk->getpayloadtype();
 
-  /* If we have already have or converted this packet... */
-  if( PCMAPAYLOADTYPE == outpayloadtype &&  0 != c.pcmaref.size() )
-  {
-    pk->copy( c.pcmaref.c_str(), c.pcmaref.size() );
-    return pk;
-  }
-  else if( PCMUPAYLOADTYPE == outpayloadtype && 0 != c.pcmuref.size() )
-  {
-    pk->copy( c.pcmuref.c_str(), c.pcmuref.size() );
-    return pk;
-  }
-  else if( ILBCPAYLOADTYPE == outpayloadtype && 0 != c.ilbcref.size() )
-  {
-    pk->copy( c.ilbcref.c_str(), c.ilbcref.size() );
-    return pk;
-  }
-  else if( G722PAYLOADTYPE == outpayloadtype && 0 != c.g722ref.size() )
-  {
-    pk->copy( c.g722ref.c_str(), c.g722ref.size() );
-    return pk;
-  }
-
-  /* If we get here we may have L16 but at the wrong sample rate so check and resample - then convert */
-  /* narrowband targets */
   switch( outpayloadtype )
   {
     case ILBCPAYLOADTYPE:
     {
-      c.requirenarrowband();
-      c.ilbcref = rawsound( *pk );
-      c.l16toilbc();
-      pk->setpayloadlength( c.ilbcref.size() );
+      c.ilbcref = rawsound( *pk, true );
       break;
     }
     case G722PAYLOADTYPE:
     {
-      c.requirewideband();
-      c.g722ref = rawsound( *pk );
-      c.l16tog722();
-      pk->setpayloadlength( c.g722ref.size() );
+      c.g722ref = rawsound( *pk, true );
       break;
     }
     case PCMAPAYLOADTYPE:
     {
-      if( c.pcmuref.size() > 0 )
-      {
-        c.pcmaref = rawsound( *pk );
-        c.alaw2ulaw();
-      }
-      else
-      {
-        c.requirenarrowband();
-        c.pcmaref = rawsound( *pk );
-
-        c.l16topcma();
-      }
-
-      pk->setpayloadlength( c.pcmaref.size() );
-
+      c.pcmaref = rawsound( *pk, true );
       break;
     }
     case PCMUPAYLOADTYPE:
     {
-      if( c.pcmaref.size() > 0 )
-      {
-        c.pcmuref = rawsound( *pk );
-        c.ulaw2alaw();
-      }
-      else
-      {
-        c.requirenarrowband();
-
-        c.pcmuref = rawsound( *pk );
-        c.l16topcmu();
-      }
-
-      pk->setpayloadlength( c.pcmuref.size() );
+      c.pcmuref = rawsound( *pk, true );
       break;
     }
-    default:
+    case L168KPAYLOADTYPE:
     {
-      pk->setlength( 0 );
+      c.l168kref = rawsound( *pk, true );
+      break;
+    }
+
+    case L1616KPAYLOADTYPE:
+    {
+      c.l1616kref = rawsound( *pk, true );
+      break;
     }
   }
 
+  c.getref( outpayloadtype );
   return pk;
 }
 

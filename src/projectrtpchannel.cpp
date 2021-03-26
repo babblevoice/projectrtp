@@ -12,6 +12,23 @@
 #include "controlclient.h"
 
 /*
+# channelrecorder
+c'stor and create
+
+Track files we are recording to.
+*/
+channelrecorder::channelrecorder( std::string &file ) :
+  file( file )
+{
+
+}
+
+channelrecorder::pointer channelrecorder::create( std::string &file )
+{
+  return pointer( new channelrecorder( file ) );
+}
+
+/*
 ## c'stor && create
 */
 projectchannelmux::projectchannelmux( boost::asio::io_context &iocontext ):
@@ -97,8 +114,8 @@ void projectchannelmux::mixall( void )
 
 /*
 ## mix2
-More effient mixer for 2 channels where no recording is required. The caller has to ensure
-there are 2 channels.
+More effient mixer for 2 channels where no recording in mono (i.e. they are added) is required.
+The caller has to ensure there are 2 channels.
 */
 void projectchannelmux::mix2( void )
 {
@@ -138,6 +155,11 @@ void projectchannelmux::handletick( const boost::system::error_code& error )
   if ( error != boost::asio::error::operation_aborted )
   {
     this->checkfornewmixes();
+
+    for( auto& chan: this->channels )
+    {
+      chan->checkfornewrecorders();
+    }
 
     /* Check for channels which have request removal */
     {
@@ -357,12 +379,14 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsign
   receivedpkskip( 0 ),
   others( nullptr ),
   player( nullptr ),
+  newplaydef( nullptr ),
   doecho( false ),
   tick( iocontext ),
   tickswithnortpcount( 0 ),
   send( true ),
   recv( true ),
-  havedata( false )
+  havedata( false ),
+  newrecorders( MIXQUEUESIZE )
 {
   for( auto i = 0; i < BUFFERPACKETCOUNT; i ++ )
   {
@@ -478,6 +502,7 @@ void projectrtpchannel::doclose( void )
   this->active = false;
   this->tick.cancel();
   this->player = nullptr;
+  this->newplaydef = nullptr;
 
   /* remove oursevelse from our list of mixers */
   this->others = nullptr;
@@ -487,6 +512,9 @@ void projectrtpchannel::doclose( void )
     this->orderedrtpdata[ i ] = nullptr;
     this->availablertpdata[ i ] = &this->rtpdata[ i ];
   }
+
+  /* close up any remaining recorders */
+  this->recorders.clear();
 
   this->rtpbuffercount = BUFFERPACKETCOUNT;
   this->rtpbufferlock.store( false, std::memory_order_release );
@@ -540,6 +568,24 @@ bool projectrtpchannel::checkidlerecv( void )
   return false;
 }
 
+/*
+Check for new channels to add to the mix in our own thread.
+*/
+void projectrtpchannel::checkfornewrecorders( void )
+{
+  boost::shared_ptr< channelrecorder > rec;
+  while( this->newrecorders.pop( rec ) )
+  {
+    rec->sfile = soundfile::create(
+        rec->file,
+        soundfile::wavformatfrompt( this->selectedcodec ),
+        2,
+        soundfile::getsampleratefrompt( this->selectedcodec ) );
+
+    this->recorders.push_back( rec );
+  }
+}
+
 /*!md
 ## handletick
 Our timer to send data - use this for when we are a single channel. Mixing tick is done in mux.
@@ -554,8 +600,9 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
     {
       if( this->checkidlerecv() ) return;
       this->checkandfixoverrun();
+      this->checkfornewrecorders();
 
-      stringptr newplaydef = std::atomic_exchange( &this->newplaydef, stringptr( NULL ) );
+      stringptr newplaydef = this->newplaydef.load();
       if( newplaydef )
       {
         try
@@ -572,9 +619,19 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
         {
           std::cerr << "Bad sound soup: " << *newplaydef << std::endl;
         }
+        this->newplaydef = nullptr;
       }
       else if( this->player )
       {
+        /* move on read */
+        rtppacket *src = this->getrtpbottom();
+        if( nullptr != src )
+        {
+          this->incodec << codecx::next;
+          this->incodec << *src;
+          this->incrrtpbottom( src );
+        }
+
         rtppacket *out = this->gettempoutbuf();
         rawsound r;
         if( this->player->read( r ) && r.size() > 0 )
@@ -590,6 +647,9 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
         rtppacket *src = this->getrtpbottom();
         if( nullptr != src )
         {
+          this->incodec << codecx::next;
+          this->incodec << *src;
+
           this->outcodec << codecx::next;
           this->outcodec << *src;
           rtppacket *dst = this->gettempoutbuf();
@@ -598,6 +658,20 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
           this->incrrtpbottom( src );
         }
       }
+      else
+      {
+        /* read in case of recording */
+        if( this->recorders.size() > 0 )
+        {
+          rtppacket *src = this->getrtpbottom();
+          if( nullptr != src )
+          {
+            this->incodec << codecx::next;
+            this->incodec << *src;
+          }
+        }
+      }
+      this->writerecordings();
     }
 
     /* The last thing we do */
@@ -605,6 +679,18 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
     this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
                                         shared_from_this(),
                                         boost::asio::placeholders::error ) );
+  }
+}
+
+/*
+# writerecordings
+If our codecs (in and out) have data then write to recorded files.
+*/
+void projectrtpchannel::writerecordings( void )
+{
+  for( auto& rec: this->recorders )
+  {
+    rec->sfile->write( this->incodec, this->outcodec );
   }
 }
 
