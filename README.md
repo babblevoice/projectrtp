@@ -90,7 +90,24 @@ Response
 }
 ```
 
-All responses include the server status message. I intent to add further information regarding load to enable the control server more information to improve decision making on which Project RTP instance to use.
+All responses include the server status message.
+
+### Mix
+
+Mix does exactly as it says. It mixes multiple channels to a mixer. It handles 2 at the same time but can be called repeatedly to create scenarios like conferences.
+
+```json
+{
+  "channel":"mix",
+  "uuid":
+  [
+    "61efa425-7371-41f2-b968-442c54346ccc",
+    "4b7d9275-5e4c-42cc-9795-1ae881157544"
+  ]
+}
+```
+
+Currently, we only support an array of 2 uuids. The call should be repeated for more channels to be mixed.
 
 ### Close
 
@@ -102,6 +119,47 @@ Close the channel.
   "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152"
 }
 ```
+
+ProjectRTP will respond with a confirmation and some stats.
+
+```json
+{
+  "action":"close",
+  "id":"4daf51beeb229c4a69bc124be35a9a0c",
+  "uuid":"7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+  "stats":
+  {
+    "in":
+    {
+      "mos":4.5,
+      "count":586,
+      "skip":0
+    },
+    "maxticktimeus":239,
+    "meanticktimeus":84
+  },
+  "instance":"a42b1e86-b6c2-4a9b-a839-bc20187663af",
+  "status":
+  {
+    "channels":
+    {
+      "active":0,
+      "available":509
+    }
+  }
+}
+```
+
+#### stats
+
+MOS is only included for our received measurements.
+
+Tick time is the time taken to process RTP data before sending it on its way. We perform a small amount of work when we send and receive
+RTP data but the majority of the work is performed on a tick - which gives an indication of load and capability.
+
+Measurements are in uS (hence the us in the naming convention). In the example above the average ticktime was 84uS. A tick occurs on the ptime of a stream (which we only work with a ptime of 20mS).
+
+If there are multiple channels being mixed they will all receive the same tick time as they are mixed in the same tick and this represents the total time for all channels.
 
 ### Play
 
