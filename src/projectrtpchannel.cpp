@@ -147,7 +147,7 @@ void projectchannelmux::mixall( void )
 
 /*
 ## mix2
-More effient mixer for 2 channels where no recording in mono (i.e. they are added) is required.
+More effient mixer for 2 channels
 The caller has to ensure there are 2 channels.
 */
 void projectchannelmux::mix2( void )
@@ -238,6 +238,7 @@ void projectchannelmux::handletick( const boost::system::error_code& error )
 
     for( auto& chan: this->channels )
     {
+      chan->writerecordings();
       chan->checkidlerecv();
       chan->checkandfixoverrun();
     }
@@ -372,6 +373,9 @@ void projectchannelmux::postrtpdata( std::shared_ptr< projectrtpchannel > srccha
   }
   else
   {
+    srcchan->incodec << codecx::next;
+    srcchan->incodec << *src;
+
     dstchan->outcodec << codecx::next;
     dstchan->outcodec << *src;
     dst << dstchan->outcodec;
