@@ -203,6 +203,38 @@ void controlclient::parserequest( void )
         std::string filename = JSON::as_string( body[ "file" ] );
         channelrecorder::pointer p = channelrecorder::create( filename );
 
+        p->uuid = boost::lexical_cast<std::string>( boost::uuids::random_generator()() );
+
+        if( body.has_key( "maxduration" ) )
+        {
+          p->maxduration = JSON::as_int64( body[ "maxduration" ] );
+        }
+
+        if( body.has_key( "minduration" ) )
+        {
+          p->minduration = JSON::as_int64( body[ "minduration" ] );
+        }
+
+        if( body.has_key( "poweraverageduration" ) )
+        {
+          p->poweraverageduration = JSON::as_int64( body[ "poweraverageduration" ] );
+        }
+
+        if( body.has_key( "poweraverageduration" ) )
+        {
+          p->poweraverageduration = JSON::as_int64( body[ "poweraverageduration" ] );
+        }
+
+        if( body.has_key( "finishbelowpower" ) )
+        {
+          p->finishbelowpower = JSON::as_int64( body[ "finishbelowpower" ] );
+        }
+
+        if( body.has_key( "startabovepower" ) )
+        {
+          p->startabovepower = JSON::as_int64( body[ "startabovepower" ] );
+        }
+
         activertpchannels::iterator chan = activechannels.find( channel );
         if ( activechannels.end() != chan )
         {

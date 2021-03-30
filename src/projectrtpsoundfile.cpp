@@ -211,8 +211,37 @@ We maintain SOUNDFILENUMBUFFERS to ensure previous writes have an oppertunity to
 */
 bool soundfile::write( codecx &in, codecx &out )
 {
-  rawsound &inref = in.getref( this->getwavformattopt() );
-  rawsound &outref = out.getref( this->getwavformattopt() );
+  int16_t *inbuf = nullptr;
+  int16_t *outbuf = nullptr;
+  size_t bufsize = 0;
+  int bytespersample = 1;
+
+  if( in.hasdata() )
+  {
+    rawsound &inref = in.getref( this->getwavformattopt() );
+    if( !inref.isdirty() )
+    {
+      inbuf = ( int16_t * ) inref.c_str();
+      bufsize = inref.size();
+      bytespersample = inref.getbytespersample();
+    }
+  }
+
+  if( out.hasdata() )
+  {
+    rawsound &outref = out.getref( this->getwavformattopt() );
+    if( !outref.isdirty() )
+    {
+      outbuf = ( int16_t * ) outref.c_str();
+      bufsize = outref.size();
+      bytespersample = outref.getbytespersample();
+    }
+  }
+
+  if( ( nullptr == inbuf && nullptr == outbuf ) || 0 == bufsize )
+  {
+    return false;
+  }
 
   if( aio_error( &this->cbwavblock[ this->currentwriteindex ] ) == EINPROGRESS )
   {
@@ -226,24 +255,22 @@ bool soundfile::write( codecx &in, codecx &out )
     return false;
   }
 
-  this->cbwavblock[ this->currentwriteindex ].aio_nbytes = inref.size() * inref.getbytespersample() * this->ourwavheader.num_channels;
+  this->cbwavblock[ this->currentwriteindex ].aio_nbytes = bufsize * bytespersample * this->ourwavheader.num_channels;
   this->cbwavblock[ this->currentwriteindex ].aio_offset = sizeof( wavheader ) +
             ( this->tickcount * this->cbwavblock[ this->currentwriteindex ].aio_nbytes );
 
   int16_t *buf = ( int16_t * ) this->cbwavblock[ this->currentwriteindex ].aio_buf;
-  int16_t *inbuf = ( int16_t * ) inref.c_str();
-  int16_t *outbuf = ( int16_t * ) outref.c_str();
 
-  for( size_t i = 0; i < inref.size(); i++ )
+  for( size_t i = 0; i < bufsize; i++ )
   {
     if( nullptr == inbuf )
     {
       *buf = 0;
     } else {
       *buf = *inbuf;
+      inbuf++;
     }
     buf++;
-    inbuf++;
 
     if( this->ourwavheader.num_channels > 1 )
     {
@@ -252,10 +279,10 @@ bool soundfile::write( codecx &in, codecx &out )
         *buf = 0;
       } else {
         *buf = *outbuf;
+        outbuf++;
       }
 
       buf++;
-      outbuf++;
     }
   }
 
@@ -282,6 +309,11 @@ bool soundfile::write( codecx &in, codecx &out )
   this->currentwriteindex = ( this->currentwriteindex + 1 ) % SOUNDFILENUMBUFFERS;
   this->tickcount++;
   return true;
+}
+
+uint32_t soundfile::getwriteduration( void ) /* mS */
+{
+  return this->ourwavheader.subchunksize / this->ourwavheader.byte_rate;
 }
 
 /*!md

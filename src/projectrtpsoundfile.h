@@ -77,6 +77,7 @@ public:
 
   void setposition( long seconds );
   long getposition( void );
+  uint32_t getwriteduration( void ); /* Return umber of mS since start of recording (recorded data) */
   bool complete( void );
   inline bool isopen( void ) { return this->file != -1; }
 

@@ -175,6 +175,26 @@ We may also have combined some wav files:
 
 Record to a file. ProjectRTP currently supports 2 channel PCM.
 
+Can take options as per projectrtp:
+file = <string> - filename to save as
+
+In seconds up to MA max size (5 seconds?), default is 1 second
+RMS power is calculated from each packet then averaged using a moving average filter.
+poweraverageduration = <int> moving average window to average power over
+
+must have started for this to kick in - if left out will just start
+startabovepower = <int>
+
+When to finish - if it falls below this amount
+finishbelowpower = <int >
+
+used in conjunction with finishbelowpower - used in conjusnction with power thresholds
+i.e. power below finishbelowpower before this number of mS has passed
+minduration = < int > mSeconds
+
+Must be above minduration and sets a limit on the size of recording
+maxduration = < int > mSeconds
+
 ```json
 {
   "channel": "record",
@@ -182,8 +202,48 @@ Record to a file. ProjectRTP currently supports 2 channel PCM.
   "file":"testfile.wav"
 }
 
-Record to a filename. UUID is the channel UUID that is returned when you open a file. File is the name - this file will be overwritten if it already exists. 
+Record to a filename. UUID is the channel UUID that is returned when you open a file. File is the name - this file will be overwritten if it already exists.
+
+ProjectRTP will respond with
+
+```json
+{
+  "action":"record",
+  "id":"a752dc3c0f5671e067e320d4e632f159",
+  "uuid":"ab033164-3a55-4e4d-8f63-dedf71866d29",
+  "chaneluuid":"8134ca03-42db-4a52-adb9-864f8bb01ca3",
+  "file":"testfile.wav",
+  "state":"recording",
+  "instance":"7ca96e59-6cef-454f-b752-333cdb94112e",
+  "status":
+  {
+    "channels":
+    {
+      "active":1,
+      "available":508
+    }
+  }
+}
+
+
+{
+  "action":"record",
+  "uuid":"ab033164-3a55-4e4d-8f63-dedf71866d29",
+  "state":"Finished",
+  "reason":"finishbelowpower",
+  "instance":"7ca96e59-6cef-454f-b752-333cdb94112e",
+  "status":
+  {
+    "channels":
+    {
+      "active":1,
+      "available":508
+    }
+  }
+}
 ```
+
+
 
 ## Utils
 

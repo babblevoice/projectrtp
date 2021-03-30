@@ -94,7 +94,63 @@ int16_t lowpass3_4k16k::execute( int16_t val )
   return ( int16_t ) runtot;
 }
 
-/*!md
+/* Moving Average filter */
+ma_filer::ma_filer():
+  l( ma_length ),
+  rtotal( 0 )
+{
+  this->reset( ma_length );
+}
+
+void ma_filer::reset( int seconds )
+{
+  this->l = seconds * 50;
+  if( this->l >= ma_length ) this->l = ma_length;
+
+  this->rtotal = 0;
+  memset( this->history, 0, sizeof( this->history ) );
+}
+
+int16_t ma_filer::execute( int16_t val )
+{
+  this->rtotal -= this->history[ this->round ];
+  this->rtotal += val;
+  this->history[ this->round ] = val;
+  this->round = ( this->round + 1 ) % this->l;
+
+  return this->rtotal / this->l;
+}
+
+/*
+## testma
+
+*/
+void testma( void )
+{
+  std::cout << "Moving average test" << std::endl;
+  ma_filer ourma;
+
+  for( auto i = 0; i < ma_length; i++ )
+  {
+    ourma.execute( 1 );
+  }
+
+  std::cout << "Latest val after pumping in 1: " << ourma.get() << std::endl;
+
+  for( auto i = 0; i < ( ma_length / 2 ); i++ )
+  {
+    ourma.execute( 100 );
+  }
+  std::cout << "Latest val after half filling with 100: " << ourma.get() << std::endl;
+
+  for( auto i = 0; i < ( ma_length / 2 ); i++ )
+  {
+    ourma.execute( 100 );
+  }
+  std::cout << "Latest val after half filling with 100: " << ourma.get() << std::endl;
+}
+
+/*
 ## testlofir
 Call with frequency to generate a frequency then apply the filter to see the responce.
 */

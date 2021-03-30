@@ -21,6 +21,8 @@
 #include <boost/lockfree/stack.hpp>
 #include <boost/smart_ptr/atomic_shared_ptr.hpp>
 
+#include "boost/date_time/posix_time/posix_time.hpp"
+
 /* CODECs */
 #include <ilbc.h>
 #include <spandsp.h>
@@ -49,29 +51,43 @@ class channelrecorder
 {
 public:
   channelrecorder( std::string &file );
+  ~channelrecorder();
   typedef boost::shared_ptr< channelrecorder > pointer;
   static pointer create( std::string &file );
+  uint16_t poweravg( uint16_t power );
 
   std::string file;
-  uint16_t startabovepower;
+  std::string uuid;
 
-  /*
-  what we multiple the last power reading with to create a simple low pass filter
-  The start will need to be more snappy, the end will have to cater for space between words
-  i.e.
-  TODO
-  */
-  float startcoeff;
-  float endcoeff;
+/* In seconds up to MA max size (5 seconds?) */
+  uint16_t poweraverageduration;
+
+  /* must have started for this to kick in */
+  uint16_t startabovepower;
 
   /* must have started for this to kick in */
   uint16_t finishbelowpower;
   /* used in conjunction with finishbelowpower */
-  uint32_t minduration;
+  uint32_t minduration; /* mSeconds */
 
-  uint32_t maxduration; /* seconds */
+  uint32_t maxduration; /* mSeconds */
 
   soundfile::pointer sfile;
+
+  bool active;
+
+  uint16_t lastpowercalc;
+
+  boost::posix_time::ptime created;
+
+  std::string finishreason;
+  controlclient::pointer control;
+
+private:
+
+  /* Rolling average of power reads */
+  ma_filer powerfilter;
+
 };
 
 /*
@@ -82,6 +98,7 @@ firing - we want only one to mix all. A channel will maintain its own timer (whe
 for things like playing a sound file (on single channels) or echo.
 */
 class projectrtpchannel;
+
 class projectchannelmux:
   public boost::enable_shared_from_this< projectchannelmux >
 {

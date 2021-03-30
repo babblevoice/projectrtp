@@ -333,8 +333,15 @@ int main( int argc, const char* argv[] )
       }
       else if( "--testfir" == argvstr )
       {
+        if( argc <= ( i + 1 ) )
+        {
+          std::cerr << "I need a frequency to generate (in Hz) to pass into our LP filter - quiting " << std::endl;
+          return -1;
+        }
+        std::cout << i << ":" << argc << std::endl;
         int frequency = boost::lexical_cast< int >( argv[ i + 1 ] );
         testlofir( frequency );
+        testma();
         return 0;
       }
       else if( "--chroot" == argvstr )

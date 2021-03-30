@@ -469,7 +469,7 @@ bool codecx::requirewideband( void )
   if( this->g722tol16() ) return true;
   if( !this->g711tol16() )
   {
-    if( this->ilbctol16() ) return true;
+    if( this->ilbctol16() ) return false;
   }
 
   return this->l16lowtowideband();
@@ -520,8 +520,8 @@ Wide or narrow - it doesn't matter - we just need l16
 */
 rawsound& codecx::requirel16( void )
 {
-  if( 0 != this->l168kref.size() ) return this->l168kref;
-  if( 0 != this->l1616kref.size() ) return this->l1616kref;
+  if( 0 != this->l168kref.size() && !this->l168kref.isdirty() ) return this->l168kref;
+  if( 0 != this->l1616kref.size() && !this->l1616kref.isdirty() ) return this->l1616kref;
 
   if( this->g711tol16() ) return this->l168kref;
   if( this->ilbctol16() ) return this->l168kref;
@@ -639,7 +639,8 @@ uint16_t codecx::power( void )
     stotsq += (*s) * (*s);
     s++;
   }
-  stotsq = stotsq * ( 1 / ref.size() );
+
+  stotsq = stotsq * (float)( 1 / (float) ref.size() );
   return sqrt( stotsq );
 }
 

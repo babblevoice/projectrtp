@@ -18,9 +18,43 @@ c'stor and create
 Track files we are recording to.
 */
 channelrecorder::channelrecorder( std::string &file ) :
-  file( file )
+  file( file ),
+  poweraverageduration( 1 ),
+  startabovepower( 0 ),
+  finishbelowpower( 0 ),
+  minduration( 0 ),
+  maxduration( 0 ),
+  active( false ),
+  lastpowercalc( 0 ),
+  created( boost::posix_time::microsec_clock::local_time() ),
+  control( nullptr )
 {
+}
 
+channelrecorder::~channelrecorder()
+{
+  std::cout << "recording finished" << std::endl;
+
+  if( nullptr != this->control )
+  {
+    JSON::Object v;
+    v[ "action" ] = "record";
+    v[ "uuid" ] = this->uuid;
+    v[ "state" ] = "finished";
+    v[ "reason" ] = finishreason;
+
+    this->control->sendmessage( v );
+  }
+}
+
+uint16_t channelrecorder::poweravg( uint16_t power )
+{
+  if( this->poweraverageduration != this->powerfilter.getlength() )
+  {
+    this->powerfilter.reset( this->poweraverageduration );
+  }
+  this->lastpowercalc = this->powerfilter.execute( power );
+  return this->lastpowercalc;
 }
 
 channelrecorder::pointer channelrecorder::create( std::string &file )
@@ -514,6 +548,11 @@ void projectrtpchannel::doclose( void )
   }
 
   /* close up any remaining recorders */
+  for( auto& rec: this->recorders )
+  {
+    rec->finishreason = "channel closed";
+  }
+
   this->recorders.clear();
 
   this->rtpbuffercount = BUFFERPACKETCOUNT;
@@ -582,6 +621,7 @@ void projectrtpchannel::checkfornewrecorders( void )
         2,
         soundfile::getsampleratefrompt( this->selectedcodec ) );
 
+    rec->control = this->control;
     this->recorders.push_back( rec );
 
     if( this->control )
@@ -589,7 +629,8 @@ void projectrtpchannel::checkfornewrecorders( void )
       JSON::Object v;
       v[ "action" ] = "record";
       v[ "id" ] = this->id;
-      v[ "uuid" ] = this->uuid;
+      v[ "uuid" ] = rec->uuid;
+      v[ "chaneluuid" ] = this->uuid;
       v[ "file" ] = rec->file;
       v[ "state" ] = "recording";
 
@@ -606,6 +647,9 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
 {
   if ( error != boost::asio::error::operation_aborted )
   {
+    /* calc a timer */
+    boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
+
     /* only us */
     projectchannelmux::pointer mux = this->others;
     if( nullptr == mux || 0 == mux->size() )
@@ -613,6 +657,14 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
       if( this->checkidlerecv() ) return;
       this->checkandfixoverrun();
       this->checkfornewrecorders();
+
+      rtppacket *src = this->getrtpbottom();
+      if( nullptr != src )
+      {
+        this->incodec << codecx::next;
+        this->incodec << *src;
+        this->incrrtpbottom( src );
+      }
 
       stringptr newplaydef = this->newplaydef.load();
       if( newplaydef )
@@ -635,15 +687,6 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
       }
       else if( this->player )
       {
-        /* move on read */
-        rtppacket *src = this->getrtpbottom();
-        if( nullptr != src )
-        {
-          this->incodec << codecx::next;
-          this->incodec << *src;
-          this->incrrtpbottom( src );
-        }
-
         rtppacket *out = this->gettempoutbuf();
         rawsound r;
         if( this->player->read( r ) && r.size() > 0 )
@@ -656,35 +699,19 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
       }
       else if( this->doecho )
       {
-        rtppacket *src = this->getrtpbottom();
-        if( nullptr != src )
-        {
-          this->incodec << codecx::next;
-          this->incodec << *src;
+        this->outcodec << codecx::next;
+        this->outcodec << *src;
 
-          this->outcodec << codecx::next;
-          this->outcodec << *src;
-          rtppacket *dst = this->gettempoutbuf();
-          dst << this->outcodec;
-          this->writepacket( dst );
-          this->incrrtpbottom( src );
-        }
+        rtppacket *dst = this->gettempoutbuf();
+        dst << this->outcodec;
+        this->writepacket( dst );
       }
-      else
-      {
-        /* read in case of recording */
-        if( this->recorders.size() > 0 )
-        {
-          rtppacket *src = this->getrtpbottom();
-          if( nullptr != src )
-          {
-            this->incodec << codecx::next;
-            this->incodec << *src;
-          }
-        }
-      }
+
       this->writerecordings();
     }
+
+    boost::posix_time::time_duration const diff = ( boost::posix_time::microsec_clock::local_time() - nowtime );
+    std::cout << diff.total_microseconds() << std::endl;
 
     /* The last thing we do */
     this->tick.expires_at( this->tick.expiry() + boost::asio::chrono::milliseconds( 20 ) );
@@ -698,12 +725,71 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
 # writerecordings
 If our codecs (in and out) have data then write to recorded files.
 */
+
+static bool recorderfinished( boost::shared_ptr<channelrecorder> rec )
+{
+  boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
+  boost::posix_time::time_duration const diff = ( nowtime - rec->created );
+
+  if( diff.total_milliseconds() < rec->minduration  )
+  {
+    return false;
+  }
+
+  if( rec->active && rec->lastpowercalc < rec->finishbelowpower )
+  {
+    rec->finishreason = "finishbelowpower";
+    return true;
+  }
+
+  //std::cout << diff.total_milliseconds() << ":" << rec->maxduration << std::endl;
+  if( diff.total_milliseconds() > rec->maxduration )
+  {
+    rec->finishreason = "timeout";
+    return true;
+  }
+
+  return false;
+}
+
 void projectrtpchannel::writerecordings( void )
 {
+  if( 0 == this->recorders.size() ) return;
+
+  uint16_t power = 0;
+
+  /* Decide if we need to calc power as it is expensive */
   for( auto& rec: this->recorders )
   {
-    rec->sfile->write( this->incodec, this->outcodec );
+    if( ( !rec->active && 0 != rec->startabovepower ) || 0 != rec->finishbelowpower )
+    {
+      power = this->incodec.power();
+      break;
+    }
   }
+
+  for( auto& rec: this->recorders )
+  {
+    auto pav = rec->poweravg( power );
+    if( 0 == rec->startabovepower && 0 == rec->finishbelowpower )
+    {
+      rec->active = true;
+    }
+    else
+    {
+      if( !rec->active && pav > rec->startabovepower )
+      {
+        rec->active = true;
+      }
+    }
+
+    if( rec->active )
+    {
+      rec->sfile->write( this->incodec, this->outcodec );
+    }
+  }
+
+  this->recorders.remove_if( recorderfinished );
 }
 
 /*

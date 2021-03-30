@@ -79,6 +79,7 @@ public:
   void reset( void );
   void restart( void );
   uint16_t power( void );
+
   bool hasdata() { return this->_hasdata; }
   rawsound& getref( int pt );
 
