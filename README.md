@@ -195,6 +195,9 @@ minduration = < int > mSeconds
 Must be above minduration and sets a limit on the size of recording
 maxduration = < int > mSeconds
 
+Must be 1 or 2
+numchannels = < int > count
+
 ```json
 {
   "channel": "record",

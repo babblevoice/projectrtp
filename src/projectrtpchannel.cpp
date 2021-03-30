@@ -24,6 +24,7 @@ channelrecorder::channelrecorder( std::string &file ) :
   finishbelowpower( 0 ),
   minduration( 0 ),
   maxduration( 0 ),
+  numchannels( 2 ),
   active( false ),
   lastpowercalc( 0 ),
   created( boost::posix_time::microsec_clock::local_time() ),
@@ -618,7 +619,7 @@ void projectrtpchannel::checkfornewrecorders( void )
     rec->sfile = soundfile::create(
         rec->file,
         soundfile::wavformatfrompt( this->selectedcodec ),
-        2,
+        rec->numchannels,
         soundfile::getsampleratefrompt( this->selectedcodec ) );
 
     rec->control = this->control;

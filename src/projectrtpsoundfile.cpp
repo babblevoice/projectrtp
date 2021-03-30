@@ -260,29 +260,31 @@ bool soundfile::write( codecx &in, codecx &out )
             ( this->tickcount * this->cbwavblock[ this->currentwriteindex ].aio_nbytes );
 
   int16_t *buf = ( int16_t * ) this->cbwavblock[ this->currentwriteindex ].aio_buf;
+  memset( buf, 0, bufsize );
 
-  for( size_t i = 0; i < bufsize; i++ )
+  if( nullptr != inbuf )
   {
-    if( nullptr == inbuf )
+    for( size_t i = 0; i < bufsize; i++ )
     {
-      *buf = 0;
-    } else {
       *buf = *inbuf;
       inbuf++;
+      buf += this->ourwavheader.num_channels;
     }
+  }
+
+  buf = ( int16_t * ) this->cbwavblock[ this->currentwriteindex ].aio_buf;
+  if( this->ourwavheader.num_channels > 1 ) /* only works up to 2 channels - which is all we support */
+  {
     buf++;
+  }
 
-    if( this->ourwavheader.num_channels > 1 )
+  if( nullptr != outbuf )
+  {
+    for( size_t i = 0; i < bufsize; i++ )
     {
-      if( nullptr == outbuf )
-      {
-        *buf = 0;
-      } else {
-        *buf = *outbuf;
-        outbuf++;
-      }
-
-      buf++;
+      *buf += *outbuf;
+      outbuf ++;
+      buf += this->ourwavheader.num_channels;
     }
   }
 

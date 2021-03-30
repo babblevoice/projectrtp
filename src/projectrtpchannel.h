@@ -72,6 +72,8 @@ public:
 
   uint32_t maxduration; /* mSeconds */
 
+  int numchannels;
+
   soundfile::pointer sfile;
 
   bool active;

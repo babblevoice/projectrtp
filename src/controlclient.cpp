@@ -235,6 +235,19 @@ void controlclient::parserequest( void )
           p->startabovepower = JSON::as_int64( body[ "startabovepower" ] );
         }
 
+        /* without this the default is 2 */
+        if( body.has_key( "numchannels" ) )
+        {
+          switch( JSON::as_int64( body[ "numchannels" ] ) )
+          {
+            case 1:
+              p->numchannels = 1;
+              break;
+            default:
+              p->numchannels = 2;
+          }
+        }
+
         activertpchannels::iterator chan = activechannels.find( channel );
         if ( activechannels.end() != chan )
         {
