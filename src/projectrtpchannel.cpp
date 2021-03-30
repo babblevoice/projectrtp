@@ -712,7 +712,7 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
     }
 
     boost::posix_time::time_duration const diff = ( boost::posix_time::microsec_clock::local_time() - nowtime );
-    std::cout << diff.total_microseconds() << std::endl;
+    //std::cout << diff.total_microseconds() << std::endl;
 
     /* The last thing we do */
     this->tick.expires_at( this->tick.expiry() + boost::asio::chrono::milliseconds( 20 ) );
