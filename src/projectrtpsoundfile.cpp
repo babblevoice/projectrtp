@@ -260,7 +260,7 @@ bool soundfile::write( codecx &in, codecx &out )
             ( this->tickcount * this->cbwavblock[ this->currentwriteindex ].aio_nbytes );
 
   int16_t *buf = ( int16_t * ) this->cbwavblock[ this->currentwriteindex ].aio_buf;
-  memset( buf, 0, bufsize );
+  memset( buf, 0, this->cbwavblock[ this->currentwriteindex ].aio_nbytes );
 
   if( nullptr != inbuf )
   {
