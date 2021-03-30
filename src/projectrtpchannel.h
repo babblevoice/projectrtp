@@ -291,6 +291,12 @@ private:
 
   boost::lockfree::stack< boost::shared_ptr< channelrecorder > > newrecorders;
   std::list< boost::shared_ptr< channelrecorder > > recorders;
+
+  /* for stats */
+  uint64_t maxticktime;
+  uint64_t totalticktime;
+  uint64_t totaltickcount;
+
 };
 
 typedef std::deque<projectrtpchannel::pointer> rtpchannels;

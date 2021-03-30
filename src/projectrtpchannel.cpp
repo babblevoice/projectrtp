@@ -34,8 +34,6 @@ channelrecorder::channelrecorder( std::string &file ) :
 
 channelrecorder::~channelrecorder()
 {
-  std::cout << "recording finished" << std::endl;
-
   if( nullptr != this->control )
   {
     JSON::Object v;
@@ -189,6 +187,8 @@ void projectchannelmux::handletick( const boost::system::error_code& error )
 {
   if ( error != boost::asio::error::operation_aborted )
   {
+    boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
+
     this->checkfornewmixes();
 
     for( auto& chan: this->channels )
@@ -241,6 +241,17 @@ void projectchannelmux::handletick( const boost::system::error_code& error )
       chan->checkidlerecv();
       chan->checkandfixoverrun();
     }
+
+    /* calc our timer */
+    boost::posix_time::time_duration const diff = ( boost::posix_time::microsec_clock::local_time() - nowtime );
+    uint64_t tms = diff.total_microseconds();
+    for( auto& chan: this->channels )
+    {
+      chan->totalticktime += tms;
+      chan->totaltickcount++;
+      if( tms > chan->maxticktime ) chan->maxticktime = tms;
+    }
+
 
     this->tick.expires_at( this->tick.expiry() + boost::asio::chrono::milliseconds( 20 ) );
     this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
@@ -421,7 +432,10 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsign
   send( true ),
   recv( true ),
   havedata( false ),
-  newrecorders( MIXQUEUESIZE )
+  newrecorders( MIXQUEUESIZE ),
+  maxticktime( 0 ),
+  totalticktime( 0 ),
+  totaltickcount( 0 )
 {
   for( auto i = 0; i < BUFFERPACKETCOUNT; i ++ )
   {
@@ -458,6 +472,10 @@ void projectrtpchannel::open( std::string &id, std::string &uuid, controlclient:
   this->id = id;
   this->uuid = uuid;
   this->control = c;
+
+  this->maxticktime = 0;
+  this->totalticktime = 0;
+  this->totaltickcount = 0;
 
   this->receivedpkcount = 0;
   this->receivedpkskip = 0;
@@ -586,6 +604,12 @@ void projectrtpchannel::doclose( void )
       JSON::Object s;
       s[ "in" ] = i;
 
+      if( this->totaltickcount > 0 )
+      {
+        s[ "maxticktimeus" ] = ( JSON::Integer ) this->maxticktime;
+        s[ "meanticktimeus" ] = ( JSON::Integer ) ( this->totalticktime / this->totaltickcount );
+      }
+
       v[ "stats" ] = s;
     }
 
@@ -712,7 +736,10 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
     }
 
     boost::posix_time::time_duration const diff = ( boost::posix_time::microsec_clock::local_time() - nowtime );
-    //std::cout << diff.total_microseconds() << std::endl;
+    uint64_t tms = diff.total_microseconds();
+    this->totalticktime += tms;
+    this->totaltickcount++;
+    if( tms > this->maxticktime ) this->maxticktime = tms;
 
     /* The last thing we do */
     this->tick.expires_at( this->tick.expiry() + boost::asio::chrono::milliseconds( 20 ) );
