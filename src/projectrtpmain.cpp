@@ -21,6 +21,7 @@
 #include "json.hpp"
 #include "projectdaemon.h"
 #include "projectrtpchannel.h"
+#include "projectrtpsrtp.h"
 #include "projectrtppacket.h"
 #include "projectrtpsoundfile.h"
 #include "projectrtptonegen.h"
@@ -368,6 +369,11 @@ int main( int argc, const char* argv[] )
       {
         /* run tests */
         codectests();
+        return 0;
+      }
+      else if( "--dtlstest" == argvstr )
+      {
+        dtlstest();
         return 0;
       }
     }
