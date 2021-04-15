@@ -159,6 +159,41 @@ void dtlssession::write( const void *data, size_t size )
   this->incount++;
 }
 
+/*
+ref: https://github.com/gremwell/dtls-srtp-server/blob/master/dtls-srtp-server.c
+*/
+void dtlssession::getkeys( void )
+{
+  std::cout << gnutls_protocol_get_name( gnutls_protocol_get_version( this->session ) ) << std::endl;
+
+  uint8_t km[ DTLSMAXKEYMATERIAL ];
+  gnutls_datum_t srtp_cli_key, srtp_cli_salt, srtp_server_key, srtp_server_salt;
+
+  if( gnutls_srtp_get_keys(session, km, sizeof( km ), &srtp_cli_key, &srtp_cli_salt,
+                        &srtp_server_key, &srtp_server_salt) < 0 )
+  {
+    std::cerr << "Unable to et key material" << std::endl;
+    return;
+  }
+  //gnutls_srtp_get_keys( this->session, )
+  char buf[ 2 * DTLSMAXKEYMATERIAL ];
+  size_t size = sizeof( buf );
+  gnutls_hex_encode( &srtp_cli_key, buf, &size );
+  std::cout << "Client key: " << buf << std::endl;
+
+  size = sizeof(buf);
+  gnutls_hex_encode( &srtp_cli_salt, buf, &size );
+  std::cout << "Client salt: " << buf << std::endl;
+
+  size = sizeof(buf);
+  gnutls_hex_encode( &srtp_server_key, buf, &size );
+  std::cout << "Server key: " << buf << std::endl;
+
+  size = sizeof(buf);
+  gnutls_hex_encode( &srtp_server_salt, buf, &size );
+  std::cout << "Server salt: " << buf << std::endl;
+}
+
 static void dtlsinit( void )
 {
   gnutls_global_init();
@@ -219,6 +254,8 @@ void dtlstest( void )
   if( 0 == retval )
   {
     std::cout << "TLS session negotiated" << std::endl;
+    serversession.getkeys();
+    clientsession.getkeys();
   }
   std::cout << +retval << std::endl;
   dtlsdestroy();

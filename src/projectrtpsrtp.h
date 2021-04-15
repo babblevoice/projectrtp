@@ -9,6 +9,8 @@
 #define DTLSMTUSIZE 1200
 #define DTLSNUMBUFFERS 10
 
+#define DTLSMAXKEYMATERIAL (64 * 4)
+
 
 //#define DTLSDEBUGOUTPUT 1
 
@@ -41,6 +43,7 @@ public:
   int handshake( void );
   void write( const void *data, size_t size );
   void ondata( std::function< void( const void*, size_t )> f ) { this->bindwritefunc = f; }
+  void getkeys( void );
 
   /* Private, but not private - our callback functions from our gnutls interface. */
   void push( const void *data, size_t size );
