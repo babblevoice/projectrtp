@@ -160,7 +160,7 @@ void dtlssession::write( const void *data, size_t size )
 }
 
 /*
-ref: https://github.com/gremwell/dtls-srtp-server/blob/master/dtls-srtp-server.c
+ref: https://gitlab.com/gnutls/gnutls/blob/master/tests/mini-dtls-srtp.c
 */
 void dtlssession::getkeys( void )
 {
