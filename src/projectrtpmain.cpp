@@ -55,28 +55,6 @@ void ontimer(const boost::system::error_code& /*e*/)
   periodictimer.async_wait( &ontimer );
 }
 
-
-/*!md
-# stopserver
-Actually do the stopping
-*/
-static void stopserver( void )
-{
-  running = false;
-  iocontext.stop();
-  workercontext.stop();
-}
-
-/*!md
-# killServer
-As it says...
-*/
-static void killserver( int signum )
-{
-  std::cout << "OUCH" << std::endl;
-  stopserver();
-}
-
 /*!md
 # startserver
 Start our server and kick off all of the worker threads.
@@ -92,6 +70,13 @@ void startserver()
 {
   running = true;
   unsigned numcpus = std::thread::hardware_concurrency();
+
+  /* Register our CTRL-C handler - sinal can't capture vars */
+  signal( SIGINT, []( int signum ) -> void {
+    running = false;
+    iocontext.stop();
+    workercontext.stop();
+  } );
 
   if( 0 != maxworker && numcpus > maxworker )
   {
@@ -372,8 +357,6 @@ int main( int argc, const char* argv[] )
     }
   }
 
-  // Register our CTRL-C handler
-  signal( SIGINT, killserver );
   std::cout << "Starting Project RTP server" << std::endl;
   std::cout << "RTP published address is " << publicaddress << std::endl;
   std::cout << "RTP ports "  << startrtpport << " => " << endrtpport << ": " << (int) ( ( endrtpport - startrtpport ) / 2 ) << " channels" << std::endl;
