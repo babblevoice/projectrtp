@@ -78,30 +78,6 @@ static void killserver( int signum )
 }
 
 /*!md
-## workerthread
-Worker threads perform transcoding and generally the workload of mixing etc.
-*/
-void workerthread( void )
-{
-  while( running )
-  {
-    try
-    {
-      workercontext.run();
-    }
-    catch( std::exception& e )
-    {
-      std::cerr << e.what() << std::endl;
-    }
-    catch( ... )
-    {
-      std::cerr << "Unhandled exception in worker bees - rentering workercontext" << std::endl;
-    }
-    std::cout << "Worker bee finished" << std::endl;
-  }
-}
-
-/*!md
 # startserver
 Start our server and kick off all of the worker threads.
 
@@ -152,7 +128,24 @@ void startserver()
 
     for ( unsigned i = 0; i < numcpus; i++ )
     {
-      threads[ i ] = std::thread( workerthread );
+      threads[ i ] = std::thread( []() -> void {
+        while( running )
+        {
+          try
+          {
+            workercontext.run();
+          }
+          catch( std::exception& e )
+          {
+            std::cerr << e.what() << std::endl;
+          }
+          catch( ... )
+          {
+            std::cerr << "Unhandled exception in worker bees - rentering workercontext" << std::endl;
+          }
+          std::cout << "Worker bee finished" << std::endl;
+        }
+      } );
 
       CPU_ZERO( &cpuset );
       CPU_SET( ( i + 1 ) % numcpus, &cpuset );
