@@ -1,36 +1,30 @@
 
-
+#include <sstream>
 #include <cstring>
 #include <iostream>
 #include <cstdlib>
+#include <iomanip>
+
+/* Hash functions */
+#include <gnutls/crypto.h>
+#include <gnutls/x509.h>
+
+/* ntohs etc */
+#include <arpa/inet.h>
+
+/* strol etc */
+#include <stdlib.h>
+
+/* min etc */
+#include <algorithm>
 
 #include "projectrtpsrtp.h"
 
-gnutls_certificate_credentials_t xcred;
+static gnutls_certificate_credentials_t xcred;
+static std::string fingerprintsha256;
 
 const char *pemfile = "dtls-srtp.pem";
 
-/*
-
-dnf install gnutls-devel
-
-Note to me:
-
-I think this is true of RTP also - we need to set the flag don't fragment
-setsockopt(listen_sd, IPPROTO_IP, IP_DONTFRAG,
-                           (const void *) &optval, sizeof(optval));
-
-Notes on how this is working.
-
-Docs are really good for gnutls. I am concerned that this is lesser gnu license, but it suites our needs at the moment.
-https://www.gnutls.org/manual/gnutls.html
-
-To use gnutls in async mode we have to use the pull, push, timeout functions (which we provide) and have to set
-and return approtpriate values. As we receive data then I have to now wire this up so the call to
-pull function. I need to place data in our object so that this pull function can then pull it back in.
-When we have written data into our object, then if we are still performing a handshake, then
-we call gnutls_handshake again to ensure the pull function is called then processed.
-*/
 
 #ifdef DTLSDEBUGOUTPUT
 static void serverlogfunc(int level, const char *str)
@@ -51,6 +45,12 @@ dtlssession::dtlssession( dtlssession::mode mode ) :
   else
   {
     gnutls_init( &this->session, GNUTLS_SERVER | GNUTLS_DATAGRAM | GNUTLS_NONBLOCK );
+    gnutls_certificate_server_set_request( this->session, GNUTLS_CERT_REQUIRE );
+
+    gnutls_datum_t skey;
+
+    gnutls_session_ticket_key_generate( &skey );
+    gnutls_session_ticket_enable_server( this->session, &skey );
   }
 
 #ifdef DTLSDEBUGOUTPUT
@@ -80,6 +80,16 @@ dtlssession::dtlssession( dtlssession::mode mode ) :
   gnutls_transport_set_pull_timeout_function( this->session, [] ( gnutls_transport_ptr_t p, unsigned int ms ) -> int {
     return ( ( dtlssession * )( p ) )->timeout( ms );
   } );
+}
+
+dtlssession::~dtlssession()
+{
+  gnutls_deinit( this->session );
+}
+
+dtlssession::pointer dtlssession::create( dtlssession::mode mode )
+{
+  return pointer( new dtlssession( mode ) );
 }
 
 void dtlssession::push( const void *data, size_t size )
@@ -172,7 +182,7 @@ void dtlssession::getkeys( void )
   if( gnutls_srtp_get_keys(session, km, sizeof( km ), &srtp_cli_key, &srtp_cli_salt,
                         &srtp_server_key, &srtp_server_salt) < 0 )
   {
-    std::cerr << "Unable to et key material" << std::endl;
+    std::cerr << "Unable to get key material" << std::endl;
     return;
   }
   //gnutls_srtp_get_keys( this->session, )
@@ -194,12 +204,51 @@ void dtlssession::getkeys( void )
   std::cout << "Server salt: " << buf << std::endl;
 }
 
+int dtlssession::peersha256( void )
+{
+  unsigned int l;
+  const gnutls_datum_t *c = gnutls_certificate_get_peers( this->session, &l );
+  uint8_t digest[ 32 ];
+
+  if( nullptr != c && l > 0 && c[ 0 ].size > 0 )
+  {
+    gnutls_hash_fast( GNUTLS_DIG_SHA256, ( const void * ) c->data, c->size, ( void * ) digest );
+
+    if( 0 == memcmp( digest, peersha256sum, 32 ) )
+    {
+      std::cout << "hello: compared ok!!!" << std::endl;
+      return 0;
+    }
+  }
+  return -1;
+}
+
+/* Takes the format: 70:4B:FC:94:C8:41:C4:A3:54:96:8A:DD:6C:FD:CD:20:77:45:82:B7:F2:45:F5:79:81:D9:BB:FB:A7:3A:5A:C4
+and converts to a char array and sotres for checking. */
+void dtlssession::setpeersha256( std::string &s )
+{
+  auto n = std::min( (int) ( s.size() + 1 ) / 3, 32 );
+  char conv[ 3 ];
+  conv[ 2 ] = 0;
+  for( auto i = 0; i < n; i ++ )
+  {
+    conv[ 0 ] = s[ i * 3 ];
+    conv[ 1 ] = s[ ( i *3 ) + 1 ];
+    this->peersha256sum[ i ] = strtol( conv, NULL, 16);
+  }
+}
+
+
+/*
+TODO At the moment we load a cert from a file. I would prefer to generate this on the fly on startup.
+*/
 static void dtlsinit( void )
 {
   gnutls_global_init();
 
   /* X509 stuff */
   gnutls_certificate_allocate_credentials( &xcred );
+  gnutls_certificate_set_flags( xcred, GNUTLS_CERTIFICATE_API_V2 );
 
   /* sets the system trusted CAs for Internet PKI */
   gnutls_certificate_set_x509_system_trust( xcred );
@@ -208,10 +257,11 @@ static void dtlsinit( void )
                                             pemfile,
                                             GNUTLS_X509_FMT_PEM );
 
-  if( gnutls_certificate_set_x509_key_file( xcred,
+  int idx;
+  if( ( idx = gnutls_certificate_set_x509_key_file( xcred,
                                               pemfile,
                                               pemfile,
-                                              GNUTLS_X509_FMT_PEM ) < 0 )
+                                              GNUTLS_X509_FMT_PEM ) ) < 0 )
   {
     std::cerr << "No certificate or key were found - quiting" << std::endl;
     exit( 1 );
@@ -219,10 +269,47 @@ static void dtlsinit( void )
 
   gnutls_certificate_set_known_dh_params( xcred, GNUTLS_SEC_PARAM_MEDIUM );
 
+  gnutls_certificate_set_verify_function( xcred, [] ( gnutls_session_t s ) -> int {
+    std::cout << "gnutls_certificate_set_verify_function" << std::endl;
+    return ( ( dtlssession * ) gnutls_transport_get_ptr( s ) )->peersha256();
+  } );
+
+  /* Calculate our fingerprint of our cert we pass over to our peer (this is a shasum of our public DER cert) */
+  gnutls_x509_crt_t *crts;
+	unsigned ncrts;
+  gnutls_datum_t crtdata;
+
+  if( GNUTLS_E_SUCCESS != gnutls_certificate_get_x509_crt( xcred, idx, &crts, &ncrts ) )
+  {
+    std::cerr << "Problem gettin our DER cert" << std::endl;
+    exit( 1 );
+  }
+
+  uint8_t digest[ 32 ];
+  for ( unsigned int i = 0; i < ncrts; i++ )
+  {
+    gnutls_x509_crt_export2( crts[ i ],
+						                  GNUTLS_X509_FMT_DER,
+						                  &crtdata );
+
+    gnutls_hash_fast( GNUTLS_DIG_SHA256, ( const void * ) crtdata.data, crtdata.size, ( void * ) digest );
+    gnutls_free( crtdata.data );
+  }
+
+  /* Convert to the string view which is needed for SDP (a=fingerprint:sha-256 ...) */
+  std::stringstream conv;
+  conv << std::hex << std::setfill( '0' );
+  for( unsigned int i = 0; i < 31; i++ )
+  {
+    conv << std::setw( 2 ) << std::uppercase << ( int ) digest[ i ] << ":";
+  }
+  conv << std::setw( 2 ) << std::uppercase << ( int ) digest[ 31 ];
+  fingerprintsha256 = conv.str();
 }
 
 static void dtlsdestroy( void )
 {
+  gnutls_certificate_free_credentials( xcred );
   gnutls_global_deinit();
 }
 
@@ -231,8 +318,13 @@ void dtlstest( void )
 {
   dtlsinit();
 
+  std::cout << "a=fingerprint:sha-256 " << fingerprintsha256 << std::endl;
+
   dtlssession clientsession( dtlssession::act );
   dtlssession serversession( dtlssession::pass );
+
+  clientsession.setpeersha256( fingerprintsha256 );
+  serversession.setpeersha256( fingerprintsha256 );
 
   clientsession.ondata( [ &serversession ] ( const void *d , size_t l ) -> void {
     std::cout << "clientsession.ondata:" << l << std::endl;
@@ -247,8 +339,8 @@ void dtlstest( void )
   int retval;
   do
   {
-    clientsession.handshake();
-    retval = serversession.handshake();
+    retval = clientsession.handshake();
+    serversession.handshake();
   } while( GNUTLS_E_AGAIN == retval );
 
   if( 0 == retval )
@@ -257,7 +349,12 @@ void dtlstest( void )
     serversession.getkeys();
     clientsession.getkeys();
   }
-  std::cout << +retval << std::endl;
+
   dtlsdestroy();
 
+}
+
+const char* getdtlssrtpsha256fingerprint( void )
+{
+  return fingerprintsha256.c_str();
 }

@@ -3,7 +3,7 @@
 DEBUG:= -DDEBUG -g
 RELEASE:=-O3
 CCOPTS:=-Wall -fstack-protector-all -std=c++17 -fconcepts
-LL:=-lboost_system -lpthread -lrt -L../Debug/ -lspandsp -lilbc -lgnutls
+LL:=-lboost_system -lpthread -lrt -L../Debug/ -lspandsp -lilbc -lgnutls -lsrtp2
 
 COMPILER:=g++
 LINKER:=g++

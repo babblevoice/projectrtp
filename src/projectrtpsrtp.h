@@ -5,12 +5,12 @@
 
 #include <functional>
 
+#include <boost/enable_shared_from_this.hpp>
 
 #define DTLSMTUSIZE 1200
 #define DTLSNUMBUFFERS 10
 
 #define DTLSMAXKEYMATERIAL (64 * 4)
-
 
 //#define DTLSDEBUGOUTPUT 1
 
@@ -26,24 +26,33 @@ class DTLSPlaintext
 public:
   uint8_t type;
   ProtocolVersion version;
-  uint16_t epoch;                                    // New field
-  uint64_t sequencenumber:48;                          // New field
+  uint16_t epoch;
+  uint64_t sequencenumber:48;
   uint16_t length;
   //opaque fragment[DTLSPlaintext.length];
 };
 
 
-class dtlssession
+class dtlssession:
+  public std::enable_shared_from_this< dtlssession >
 {
 public:
 
   enum mode { act, pass };
   dtlssession( mode m );
+  ~dtlssession();
+
+  typedef boost::shared_ptr< dtlssession > pointer;
+  static pointer create( mode m );
 
   int handshake( void );
   void write( const void *data, size_t size );
   void ondata( std::function< void( const void*, size_t )> f ) { this->bindwritefunc = f; }
   void getkeys( void );
+  gnutls_session_t get( void ) { return this->session; }
+
+  void setpeersha256( std::string &s );
+  int peersha256( void );
 
   /* Private, but not private - our callback functions from our gnutls interface. */
   void push( const void *data, size_t size );
@@ -60,6 +69,10 @@ private:
   int incount;
 
   std::function< void( const void*, size_t ) > bindwritefunc;
+
+  uint8_t peersha256sum[ 32 ];
 };
 
+
+const char* getdtlssrtpsha256fingerprint( void );
 void dtlstest( void );

@@ -9,6 +9,14 @@ This is currently work in progress.
 * ilbc-devel
 * spandsp-devel
 * boost
+* gnutls
+* libsrtp
+
+### Fedora
+
+After installing standard build tools - including g++.
+
+dnf install ilbc-devel spandsp-devel boost gnutls libsrtp libsrtp-devel
 
 # Build
 
