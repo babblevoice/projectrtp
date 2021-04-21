@@ -439,7 +439,9 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsign
   newrecorders( MIXQUEUESIZE ),
   maxticktime( 0 ),
   totalticktime( 0 ),
-  totaltickcount( 0 )
+  totaltickcount( 0 ),
+  rtpdtls( nullptr ),
+  rtpdtlshandshakeing( false )
 {
   for( auto i = 0; i < BUFFERPACKETCOUNT; i ++ )
   {
@@ -509,9 +511,6 @@ void projectrtpchannel::open( std::string &id, std::string &uuid, controlclient:
   this->rfc2833pt = 0;
   this->lasttelephoneevent = 0;
 
-  this->readsomertp();
-  this->readsomertcp();
-
   this->ssrcout = rand();
 
   /* anchor our out time to when the channel is opened */
@@ -526,16 +525,38 @@ void projectrtpchannel::open( std::string &id, std::string &uuid, controlclient:
   this->tickswithnortpcount = 0;
 
   this->havedata = false;
-
-  this->go();
 }
 
 void projectrtpchannel::go( void )
 {
+  this->readsomertp();
+  this->readsomertcp();
+
   this->tick.expires_after( std::chrono::milliseconds( 20 ) );
   this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
                                         shared_from_this(),
                                         boost::asio::placeholders::error ) );
+}
+
+void projectrtpchannel::enabledtls( dtlssession::mode m, std::string &fingerprint )
+{
+  this->rtpdtls = dtlssession::create( m );
+  this->rtpdtls->setpeersha256( fingerprint );
+
+  this->rtpdtlshandshakeing = true;
+
+  projectrtpchannel::pointer p = shared_from_this();
+  this->rtpdtls->ondata( [ p ] ( const void *d , size_t l ) -> void {
+    /* Note to me, I need to confirm that gnutls maintains the buffer ptr until after the handshake is confirmed (or
+       at least until we have sent the packet). */
+    p->rtpsocket.async_send_to(
+                      boost::asio::buffer( d, l ),
+                      p->confirmedrtpsenderendpoint,
+                      []( const boost::system::error_code& ec, std::size_t bytes_transferred ) -> void {
+                        /* We don't need to do anything */
+                      } );
+
+  } );
 }
 
 unsigned short projectrtpchannel::getport( void )
@@ -563,6 +584,10 @@ void projectrtpchannel::doclose( void )
 
   /* remove oursevelse from our list of mixers */
   this->others = nullptr;
+
+  /* close our session if we have one */
+  this->rtpdtls = nullptr;
+  this->rtpdtlshandshakeing = false;
 
   for( auto i = 0; i < BUFFERPACKETCOUNT; i ++ )
   {
@@ -932,6 +957,23 @@ void projectrtpchannel::readsomertp( void )
       {
         if ( !ec && bytes_recvd > 0 && bytes_recvd <= RTPMAXLENGTH )
         {
+          if( this->rtpdtlshandshakeing )
+          {
+            this->rtpdtls->write( buf, bytes_recvd );
+            auto dtlsstate = this->rtpdtls->handshake();
+            if( GNUTLS_E_AGAIN == dtlsstate )
+            {
+              this->readsomertp();
+            }
+            else if ( GNUTLS_E_SUCCESS == dtlsstate )
+            {
+              this->readsomertp();
+              this->rtpdtlshandshakeing = false;
+            }
+
+            return;
+          }
+
           if( !this->recv )
           {
             /* silently drop */

@@ -32,6 +32,7 @@
 #include "projectrtppacket.h"
 #include "projectrtpsoundsoup.h"
 #include "controlclient.h"
+#include "projectrtpsrtp.h"
 
 /* The number of packets we will keep in a buffer */
 #define BUFFERPACKETCOUNT 50
@@ -163,6 +164,8 @@ public:
   void go( void );
 
   unsigned short getport( void );
+
+  void enabledtls( dtlssession::mode, std::string &fingerprint );
 
   void target( std::string &address, unsigned short port );
   void rfc2833( unsigned short pt );
@@ -296,6 +299,10 @@ private:
   uint64_t maxticktime;
   uint64_t totalticktime;
   uint64_t totaltickcount;
+
+  /* DTLS Session */
+  dtlssession::pointer rtpdtls;
+  bool rtpdtlshandshakeing;
 
 };
 
