@@ -120,6 +120,24 @@ void controlclient::parserequest( void )
 
         p->open( id, u, shared_from_this() );
 
+        if( body.has_key( "dtls" ) )
+        {
+          JSON::Object dtls = JSON::as_object( body[ "dtls" ] );
+          /* Only support sha256 so no need for type, finerprint shoud be in the format 00:01:0F.... */
+          if( dtls.has_key( "fingerprint" ) )
+          {
+            std::string fingerprint = JSON::as_string( dtls[ "fingerprint" ] );
+            if( body.has_key( "dtsetupls" ) && "act" == JSON::as_string( dtls[ "setup" ] ) )
+            {
+              p->enabledtls( dtlssession::act, fingerprint );
+            }
+            else
+            {
+              p->enabledtls( dtlssession::pass, fingerprint );
+            }
+          }
+        }
+
         if( body.has_key( "target" ) )
         {
           JSON::Object target = JSON::as_object( body[ "target" ] );
@@ -136,6 +154,9 @@ void controlclient::parserequest( void )
 
         v[ "channel" ] = c;
         this->sendmessage( v );
+
+        /* Finally set the channel going */
+        p->go();
       }
       else if( "target" == action )
       {
@@ -514,7 +535,7 @@ void controlclient::dowrite( stringptr msg )
   JSON::Object msgbody = JSON::as_object( JSON::parse( *msg ) );
   JSON::Object s;
   JSON::Object c;
-  msgbody[ "instance" ] = this->uuid;
+  s[ "instance" ] = this->uuid;
   c[ "active" ] = ( JSON::Integer ) activechannels.size();
   c[ "available" ] = ( JSON::Integer ) dormantchannels.size();
   s[ "channels" ] = c;
