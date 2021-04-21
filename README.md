@@ -2,7 +2,21 @@
 
 A simple RTP server which offers functionality to process RTP data streams and mix them. Channels will be able to be mixed with other channels or local functions like recording or file playback. Instructions to create and manipulate RTP streams via a TCP connection (control connection). Enabling the ability to have 1 SIP/control server to manage multiple RTP servers to increase scalability of the system.
 
+ProjectRTP is designed to provide all the functions required for a PBX, including channel bridging, recording, playback and all the functions required for IVR.
+
 This is currently work in progress.
+
+Features
+
+* Channel mixing for 2+ channels
+* CODEC transcoding (between supported CODECs listed below)
+* Call recording (WAV)
+  * Multiple recorders per channel
+  * Start and end based on power detection or on command
+* WAV playback using sound soup descriptions to play complex sentences from parts
+* DTMF (RFC 2833)
+* DTLS SRTP (WebRTC)
+
 
 ## Dependencies
 
@@ -24,6 +38,8 @@ cd src
 make
 
 This will build the executable and also generate some UK sounds.
+
+There is also a debug target which includes debug symbols.
 
 ## Codecs
 
@@ -73,9 +89,16 @@ Open and return port number to publish to client.
     "port": 56802,
     "ip": "192.168.0.141"
     },
+  "dtls": {
+    "fingerprint": "00:01:ff...",
+    "setup": "act"
+  },
   "id": "44fd13298e7b427f782ec6cf1ce9482d"
 }
 ```
+
+If "dtls" is populated then fingerprint and setup then will be enforced. The connection will close if the DTLS handshake fails
+or the fingerprint does not match to what is expected. "setup" is either "act" or "pass" (default).
 
 id is a transparent id, which is returned with a channel uuid to the server can associate the 2. Commands are then sent using the channel uuid. The port and ip are the expected remote source of the stream.
 
@@ -146,9 +169,9 @@ ProjectRTP will respond with a confirmation and some stats.
     "maxticktimeus":239,
     "meanticktimeus":84
   },
-  "instance":"a42b1e86-b6c2-4a9b-a839-bc20187663af",
   "status":
   {
+    "instance":"a42b1e86-b6c2-4a9b-a839-bc20187663af",
     "channels":
     {
       "active":0,
@@ -243,6 +266,7 @@ Record to a file. ProjectRTP currently supports 2 channel PCM.
 
 Can take options as per projectrtp:
 file = <string> - filename to save as
+uuid = <string> - channel uuid to record
 
 In seconds up to MA max size (5 seconds?), default is 1 second
 RMS power is calculated from each packet then averaged using a moving average filter.
@@ -270,6 +294,7 @@ numchannels = < int > count
   "uuid":"3f78c0f1-a1e5-4372-87f3-1938f5cb30c4",
   "file":"testfile.wav"
 }
+```
 
 Record to a filename. UUID is the channel UUID that is returned when you open a file. File is the name - this file will be overwritten if it already exists.
 
@@ -280,29 +305,12 @@ ProjectRTP will respond with
   "action":"record",
   "id":"a752dc3c0f5671e067e320d4e632f159",
   "uuid":"ab033164-3a55-4e4d-8f63-dedf71866d29",
-  "chaneluuid":"8134ca03-42db-4a52-adb9-864f8bb01ca3",
+  "chaneluuid":"3f78c0f1-a1e5-4372-87f3-1938f5cb30c4",
   "file":"testfile.wav",
   "state":"recording",
-  "instance":"7ca96e59-6cef-454f-b752-333cdb94112e",
   "status":
   {
-    "channels":
-    {
-      "active":1,
-      "available":508
-    }
-  }
-}
-
-
-{
-  "action":"record",
-  "uuid":"ab033164-3a55-4e4d-8f63-dedf71866d29",
-  "state":"Finished",
-  "reason":"finishbelowpower",
-  "instance":"7ca96e59-6cef-454f-b752-333cdb94112e",
-  "status":
-  {
+    "instance":"7ca96e59-6cef-454f-b752-333cdb94112e",
     "channels":
     {
       "active":1,
@@ -312,6 +320,28 @@ ProjectRTP will respond with
 }
 ```
 
+In the initial response (which confirms the command) the uuid returned is the uuid of the recording instance. The channeluuid refers back to the channel uuid and the id refers to the channel id you provided to projectrtp when opening the channel. All messages sent to back contain the status so we are updated regarding the workload of the server and also the instance which is the uuid of the projectrtp instance.
+
+
+```json
+{
+  "action":"record",
+  "uuid":"ab033164-3a55-4e4d-8f63-dedf71866d29",
+  "state":"Finished",
+  "reason":"finishbelowpower",
+  "status":
+  {
+    "instance":"7ca96e59-6cef-454f-b752-333cdb94112e",
+    "channels":
+    {
+      "active":1,
+      "available":508
+    }
+  }
+}
+```
+
+This final message is sent when the recording has completed.
 
 
 ## Utils
