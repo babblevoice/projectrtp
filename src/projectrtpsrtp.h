@@ -1,4 +1,6 @@
 
+#ifndef PROJECTRTPSRPT_H
+#define PROJECTRTPSRPT_H
 
 #include <gnutls/gnutls.h>
 #include <gnutls/dtls.h>
@@ -76,3 +78,6 @@ private:
 
 const char* getdtlssrtpsha256fingerprint( void );
 void dtlstest( void );
+
+
+#endif /* PROJECTRTPSRPT_H */
