@@ -29,7 +29,10 @@
 
 #include "firfilter.h"
 
+/* Single threaded */
 boost::asio::io_context iocontext;
+
+/* Multi threaded worker pool */
 boost::asio::io_context workercontext;
 
 std::string mediachroot;
@@ -43,7 +46,6 @@ std::string publicaddress;
 std::string controlhost;
 unsigned maxworker;
 std::atomic_bool running;
-
 
 /*!md
 ## ontimer
@@ -90,9 +92,6 @@ void startserver()
   }
 
   std::cout << "Starting " << numcpus << " worker threads" << std::endl;
-
-  // A mutex ensures orderly access to std::cout from multiple threads.
-  std::mutex iomutex;
   std::vector< std::thread > threads( numcpus );
 
   periodictimer.expires_at( std::chrono::system_clock::now() );
@@ -128,8 +127,8 @@ void startserver()
           {
             std::cerr << "Unhandled exception in worker bees - rentering workercontext" << std::endl;
           }
-          std::cout << "Worker bee finished" << std::endl;
         }
+        std::cout << "Worker bee finished" << std::endl;
       } );
 
       CPU_ZERO( &cpuset );
@@ -188,7 +187,7 @@ void initchannels( unsigned short startport, unsigned short endport )
     std::string dummycontrol;
     for( i = startport; i < endport; i += 2 )
     {
-      projectrtpchannel::pointer p = projectrtpchannel::create( workercontext, i );
+      projectrtpchannel::pointer p = projectrtpchannel::create( workercontext, iocontext, i );
 
       std::string id, uuid;
       p->open( id, uuid, controlclient::pointer( nullptr ) );

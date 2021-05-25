@@ -152,11 +152,11 @@ class projectrtpchannel :
 
 public:
   friend projectchannelmux;
-  projectrtpchannel( boost::asio::io_context &iocontext, unsigned short port );
+  projectrtpchannel( boost::asio::io_context &workercontext, boost::asio::io_context &iocontext, unsigned short port );
   ~projectrtpchannel( void );
 
   typedef std::shared_ptr< projectrtpchannel > pointer;
-  static pointer create( boost::asio::io_context &iocontext, unsigned short port );
+  static pointer create( boost::asio::io_context &workercontext, boost::asio::io_context &iocontext, unsigned short port );
 
   void open( std::string &id, std::string &uuid, controlclient::pointer );
   void close( void );
@@ -233,6 +233,7 @@ private:
   std::string uuid;
 
   boost::asio::io_context &iocontext;
+  boost::asio::io_context &workercontext;
   boost::asio::ip::udp::resolver resolver;
 
   boost::asio::ip::udp::socket rtpsocket;

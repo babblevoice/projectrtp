@@ -399,7 +399,7 @@ Create the socket then wait for data
 
 echo "This is my data" > /dev/udp/127.0.0.1/10000
 */
-projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsigned short port )
+projectrtpchannel::projectrtpchannel( boost::asio::io_context &workercontext, boost::asio::io_context &iocontext, unsigned short port )
   :
   selectedcodec( 0 ),
   ssrcout( 0 ),
@@ -418,9 +418,10 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsign
   rfc2833pt( 0 ),
   lasttelephoneevent( 0 ),
   iocontext( iocontext ),
+  workercontext( workercontext ),
   resolver( iocontext ),
-  rtpsocket( iocontext ),
-  rtcpsocket( iocontext ),
+  rtpsocket( workercontext ),
+  rtcpsocket( workercontext ),
   receivedrtp( false ),
   targetconfirmed( false ),
   reader( true ),
@@ -431,7 +432,7 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &iocontext, unsign
   player( nullptr ),
   newplaydef( nullptr ),
   doecho( false ),
-  tick( iocontext ),
+  tick( workercontext ),
   tickswithnortpcount( 0 ),
   send( true ),
   recv( true ),
@@ -464,9 +465,9 @@ projectrtpchannel::~projectrtpchannel( void )
 # create
 
 */
-projectrtpchannel::pointer projectrtpchannel::create( boost::asio::io_context &iocontext, unsigned short port )
+projectrtpchannel::pointer projectrtpchannel::create( boost::asio::io_context &workercontext, boost::asio::io_context &iocontext, unsigned short port )
 {
-  return pointer( new projectrtpchannel( iocontext, port ) );
+  return pointer( new projectrtpchannel( workercontext, iocontext, port ) );
 }
 
 /*!md
@@ -1249,7 +1250,7 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other )
   projectchannelmux::pointer m = this->others.load( std::memory_order_relaxed );
   if( nullptr == m )
   {
-    m = projectchannelmux::create( this->iocontext );
+    m = projectchannelmux::create( this->workercontext );
     m->addchannel( shared_from_this() );
     m->addchannel( other );
     /* We don't need our channel timer */
@@ -1269,7 +1270,6 @@ As it says.
 */
 void projectrtpchannel::unmix( void )
 {
-std::cout << "unmix" << std::endl << std::flush;
   this->others = nullptr;
 }
 
