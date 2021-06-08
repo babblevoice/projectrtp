@@ -214,7 +214,7 @@ Test an atomic variable to ensure it is lock free. Issue a warning if it is not 
 */
 void testatomic( void )
 {
-  std::atomic_bool test;
+  std::atomic_bool test(false);
   if( !test.is_lock_free() )
   {
     std::cerr << "Warning: atomic variables appear to be not atomic so we will be using locks which will impact performance" << std::endl;
