@@ -115,7 +115,8 @@ void startserver()
       threads[ i ] = std::thread( []() -> void {
 
         struct sched_param sched = { 0 };
-        if ( sched_setscheduler( 0, SCHED_FIFO, &sched ) < 0 ) {
+        if ( sched_setscheduler( 0, SCHED_FIFO, &sched ) < 0 )
+        {
           std::cerr << "Warning: failed to set realtime priority" << std::endl;
         }
 
