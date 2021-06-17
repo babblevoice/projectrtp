@@ -662,7 +662,7 @@ bool projectrtpchannel::checkidlerecv( void )
   if( this->recv && this->active )
   {
     this->tickswithnortpcount++;
-    if( this->tickswithnortpcount > 400 )
+    if( this->tickswithnortpcount > ( 50 * 20 ) ) /* 50 (@20mS ptime)/S */
     {
       this->close();
       return true;
@@ -764,12 +764,15 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
       }
       else if( this->doecho )
       {
-        this->outcodec << codecx::next;
-        this->outcodec << *src;
+        if( nullptr != src )
+        {
+          this->outcodec << codecx::next;
+          this->outcodec << *src;
 
-        rtppacket *dst = this->gettempoutbuf();
-        dst << this->outcodec;
-        this->writepacket( dst );
+          rtppacket *dst = this->gettempoutbuf();
+          dst << this->outcodec;
+          this->writepacket( dst );
+        }
       }
 
       this->writerecordings();
@@ -959,7 +962,11 @@ Any clashes should be handled by atomics.
 void projectrtpchannel::readsomertp( void )
 {
   rtppacket *buf = this->getbuffer();
-  if( nullptr == buf ) return;
+  if( nullptr == buf )
+  {
+    std::cerr << "ERROR: we should never get here - we have no more buffer available on port " << this->port << std::endl;
+    return;
+  }
 
   this->rtpsocket.async_receive_from(
     boost::asio::buffer( buf->pk, RTPMAXLENGTH ),
@@ -1001,10 +1008,20 @@ void projectrtpchannel::readsomertp( void )
           if( 0 == this->rtpbuffercount )
           {
             /* silently drop this packet and repeat until we have space in our buffer  */
-            std::cerr << "Dropping packet due to low space in buffer" << std::endl;
-            this->returnbuffer( buf );
-            this->readsomertp();
-            return;
+            std::cerr << "Discarding data due to low space in buffer on port " << this->port << std::endl;
+            for( size_t i = 0; i < ( BUFFERPACKETCOUNT - BUFFERHIGHDELAYCOUNT ); i++ )
+            {
+              rtppacket *bot = this->getrtpbottom();
+              if( nullptr != bot )
+              {
+                this->incrrtpbottom( bot );
+                this->returnbuffer( bot );
+              }
+              else
+              {
+                std::cerr << "ERROR: how did we end up in this state?? on port " << this->port << std::endl;
+              }
+            }
           }
 
 #ifdef SIMULATEDPACKETLOSSRATE
@@ -1023,9 +1040,12 @@ void projectrtpchannel::readsomertp( void )
           this->receivedpkcount++;
           if( !this->receivedrtp )
           {
-            this->lastworkedonsn.store( buf->getsequencenumber() - 1 ); /* pseudo */
-            this->orderedinminsn.store( buf->getsequencenumber() );
-            this->orderedinmaxsn.store( buf->getsequencenumber() );
+            if( 1 == this->receivedpkcount )
+            {
+              this->lastworkedonsn.store( buf->getsequencenumber() - 1 ); /* pseudo */
+              this->orderedinminsn.store( buf->getsequencenumber() );
+              this->orderedinmaxsn.store( buf->getsequencenumber() );
+            }
             this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
             this->receivedrtp = true;
           }
@@ -1102,11 +1122,6 @@ void projectrtpchannel::checkandfixoverrun( void )
     this->orderedrtpdata[ sn % BUFFERPACKETCOUNT ].store( tmp, std::memory_order_relaxed );
     this->orderedinminsn = this->orderedinmaxsn = sn;
     this->toolatertppacket = nullptr;
-
-    if( this->active )
-    {
-      this->readsomertp();
-    }
   }
 }
 
@@ -1326,6 +1341,9 @@ void projectrtpchannel::handletargetresolve (
 
   this->confirmedrtpsenderendpoint = *it;
   this->targetconfirmed = true;
+
+  /* allow us to re-auto correct */
+  this->receivedrtp = false;
 }
 
 /*!md
