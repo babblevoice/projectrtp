@@ -269,6 +269,8 @@ private:
               boost::system::error_code e,
               boost::asio::ip::udp::resolver::iterator it );
 
+  void displaybuffer( void );
+
   uint64_t receivedpkcount;
   uint64_t receivedpkskip;
 

@@ -46,6 +46,7 @@ std::string publicaddress;
 std::string controlhost;
 unsigned maxworker;
 std::atomic_bool running;
+bool enabledisprtpbuff; /* readonly by another other process */
 
 /*!md
 ## ontimer
@@ -238,6 +239,7 @@ int main( int argc, const char* argv[] )
   publicaddress = "127.0.0.1";
   controlhost = "127.0.0.1";
   maxworker = 0;
+  enabledisprtpbuff = false;
 
   unsigned short startrtpport = 10000;
   unsigned short endrtpport = 20000;
@@ -360,6 +362,11 @@ int main( int argc, const char* argv[] )
       {
         dtlstest();
         return 0;
+      }
+      else if( "--displayrtpbuff" == argvstr )
+      {
+        std::cout << "WARNING: displayrtpbuff intended for testing only." << std::endl;
+        enabledisprtpbuff = true;
       }
     }
   }

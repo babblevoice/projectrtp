@@ -950,6 +950,36 @@ rtppacket* projectrtpchannel::getbuffer( void )
   return buf;
 }
 
+void projectrtpchannel::displaybuffer( void )
+{
+  std::string available;
+  uint16_t diff = this->orderedinmaxsn - this->orderedinminsn;
+  for( uint16_t i = 0; i < diff; i ++ )
+  {
+    rtppacket *src = this->orderedrtpdata[ ( this->orderedinminsn + i ) % BUFFERPACKETCOUNT ];
+    if( nullptr == src )
+    {
+      available += "u";
+    }
+    else if( ( this->orderedinminsn + i ) != src->getsequencenumber() )
+    {
+      available += "b";
+    }
+    else
+    {
+      available += "a";
+    }
+  }
+
+  rtppacket *src = this->orderedrtpdata[ this->orderedinminsn % BUFFERPACKETCOUNT ];
+  if( nullptr == src || this->orderedinminsn != src->getsequencenumber() )
+  {
+    available = 'u';
+  }
+
+  std::cout << this->uuid << ": " << this->orderedinminsn << "(" << diff << ") <-----(" << available << ")-----> " << this->orderedinmaxsn << std::endl;
+}
+
 /*!md
 ## handlereadsomertp
 Wait for RTP data. We have to re-order when required. Look after all of the round robin memory here.
@@ -1015,7 +1045,6 @@ void projectrtpchannel::readsomertp( void )
               if( nullptr != bot )
               {
                 this->incrrtpbottom( bot );
-                this->returnbuffer( bot );
               }
               else
               {
@@ -1075,6 +1104,7 @@ void projectrtpchannel::readsomertp( void )
 
         if( !ec && bytes_recvd && this->active )
         {
+          if( enabledisprtpbuff ) this->displaybuffer();
           this->readsomertp();
         }
       } );
