@@ -17,6 +17,22 @@ Features
 * DTMF (RFC 2833)
 * DTLS SRTP (WebRTC)
 
+ProjectRTP connects to a control server - which I anticipate is generally a SIP server of some form (but doesn't need to be). This server can have multiple RTP servers connected which allows the control server to farm out work to balance workload.
+
+## Usage
+
+### AWS
+
+As projectrtp is designed to be distributed it allows sessions to be created by the main control server (SIP). Each projectrtp instance is assigned its own public address (--pa) so that when a main control server opens a channel on that server then projectrtp can inform the control server what the public address is for this connection.
+
+projectrtp --fg --pa $(curl http://checkip.amazonaws.com) --connect 127.0.0.1 --chroot ../out/
+
+| Flag        | Description                                                                                  |
+| ----------- | -------------------------------------------------------------------------------------------- |
+| --fg        | Run in the foreground                                                                        |
+| --pa        | Set the public address - either set it statically or use $(curl ...)                         |
+| --connect   | The address of the control server to connect to                                              |
+| --chroot    | The directory to chroot to for sound files, in commands to play a file a / to this directory |
 
 ## Dependencies
 
@@ -40,6 +56,15 @@ make
 This will build the executable and also generate some UK sounds.
 
 There is also a debug target which includes debug symbols.
+
+## RPM
+
+In the root directory there is buildrpm script which will build an RPM of application. This needs running
+if you want to build a docker image with projectrtp in it.
+
+## Docker/Podman
+
+The buildah directory contains 2 scripts and a readme.md. Refer to that doc to build a docker image. It actually uses podman to do the work.
 
 ## Codecs
 
