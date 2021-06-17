@@ -620,28 +620,38 @@ void projectrtpchannel::doclose( void )
     v[ "uuid" ] = this->uuid;
 
     /* calculate mos - calc borrowed from FS - thankyou. */
+    JSON::Object i;
     if( this->receivedpkcount > 0 )
     {
       double r = ( ( this->receivedpkcount - this->receivedpkskip ) / this->receivedpkcount ) * 100.0;
       if ( r < 0 || r > 100 ) r = 100;
       double mos = 1 + ( 0.035 * r ) + (.000007 * r * ( r - 60 ) * ( 100 - r ) );
 
-      JSON::Object i;
       i[ "mos" ] = ( JSON::Double ) mos;
-      i[ "count" ] = ( JSON::Integer ) this->receivedpkcount;
-      i[ "skip" ] = ( JSON::Integer ) this->receivedpkskip;
-
-      JSON::Object s;
-      s[ "in" ] = i;
-
-      if( this->totaltickcount > 0 )
-      {
-        s[ "maxticktimeus" ] = ( JSON::Integer ) this->maxticktime;
-        s[ "meanticktimeus" ] = ( JSON::Integer ) ( this->totalticktime / this->totaltickcount );
-      }
-
-      v[ "stats" ] = s;
     }
+    else
+    {
+      i[ "mos" ] = ( JSON::Double ) 0.0;
+    }
+    i[ "count" ] = ( JSON::Integer ) this->receivedpkcount;
+    i[ "skip" ] = ( JSON::Integer ) this->receivedpkskip;
+
+    JSON::Object s;
+    s[ "in" ] = i;
+
+    if( this->totaltickcount > 0 )
+    {
+      s[ "meanticktimeus" ] = ( JSON::Integer ) ( this->totalticktime / this->totaltickcount );
+    }
+    else
+    {
+      s[ "meanticktimeus" ] = ( JSON::Integer ) 0;
+    }
+    s[ "maxticktimeus" ] = ( JSON::Integer ) this->maxticktime;
+    s[ "tickswithnortpcount" ] = ( JSON::Integer ) this->tickswithnortpcount;
+    s[ "totaltickcount" ] = ( JSON::Integer ) this->totaltickcount;
+
+    v[ "stats" ] = s;
 
     this->control->sendmessage( v );
   }
