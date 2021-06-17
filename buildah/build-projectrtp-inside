@@ -1,0 +1,7 @@
+#!/bin/bash
+
+dnf -y install --nogpgcheck /tmp/projectrtp-0-1.fc34.x86_64.rpm
+dnf clean all
+
+rm /tmp/projectrtp-0-1.fc34.x86_64.rpm
+rm /tmp/build-projectrtp-inside
