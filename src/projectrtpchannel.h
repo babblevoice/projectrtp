@@ -35,11 +35,11 @@
 #include "projectrtpsrtp.h"
 
 /* The number of packets we will keep in a buffer */
-#define BUFFERPACKETCOUNT 50
+#define BUFFERPACKETCOUNT 20
 /* The level we start dropping packets to clear backlog */
-#define BUFFERPACKETCAP 40
-#define BUFFERLOWDELAYCOUNT 12
-#define BUFFERHIGHDELAYCOUNT 25 /* 500mS @ a ptime of 20mS */
+#define BUFFERPACKETCAP 15
+#define BUFFERLOWDELAYCOUNT 5
+#define BUFFERHIGHDELAYCOUNT 10 /* 200mS @ a ptime of 20mS */
 
 /* The size of our message queue where we send info about new channels added
 to the mixr to be added */
@@ -210,7 +210,7 @@ public:
   std::atomic_uint16_t orderedinminsn; /* sn = sequence number, min smallest we hold which is unprocessed - when it is processed we can forget about it */
   std::atomic_uint16_t orderedinmaxsn;
   std::atomic_uint16_t lastworkedonsn;
-  uint16_t rtpbuffercount; /* keeps track of availble buffer items in availablertpdata */
+  std::atomic_uint16_t rtpbuffercount; /* keeps track of availble buffer items in availablertpdata */
   std::atomic_bool rtpbufferlock; /* spin lock to keep syncronised between reading and processing thread */
 
 
