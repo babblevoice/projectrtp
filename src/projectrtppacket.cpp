@@ -15,17 +15,6 @@ rtppacket::rtppacket() :
 }
 
 /*!md
-## Copy contructor
-
-We only need to copy the required bytes.
-*/
-rtppacket::rtppacket( rtppacket &p )
-{
-  this->length = p.length;
-  memcpy( this->pk, p.pk, p.length );
-}
-
-/*!md
 ## init
 Sets up all of the RTP packet header to defaults.
 */

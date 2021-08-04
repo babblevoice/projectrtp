@@ -57,6 +57,25 @@ This will build the executable and also generate some UK sounds.
 
 There is also a debug target which includes debug symbols.
 
+## Node Module
+
+node-gyp is required to build the module:
+
+```
+sudo npm install -g node-gyp
+sudo npm install -g node-addon-api
+```
+
+From the src folder
+```
+node-gyp configure
+node-gyp build
+```
+
+### Test
+
+All tests are run from node. From the root directory run `npm test`
+
 ## RPM
 
 In the root directory there is buildrpm script which will build an RPM of application. This needs running

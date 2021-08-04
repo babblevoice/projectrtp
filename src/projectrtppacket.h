@@ -18,7 +18,6 @@ class rtppacket
 {
 public:
   rtppacket();
-  rtppacket( rtppacket & );
   size_t length;
   uint8_t pk[ RTPMAXLENGTH ];
 
