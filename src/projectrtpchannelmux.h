@@ -5,16 +5,28 @@
 
 #include <boost/asio.hpp>
 #include <memory>
+#include <atomic>
+
+#include <boost/smart_ptr/atomic_shared_ptr.hpp>
+#include <boost/enable_shared_from_this.hpp>
 
 #include "projectrtpchannel.h"
 
+/*
+# projectchannelmux
+
+Generate our own tick. If we get up to multiple channels we don't want all to have a timer
+firing - we want only one to mix all. A channel will maintain its own timer (when needed)
+for things like playing a sound file (on single channels) or echo.
+*/
+
 class projectchannelmux:
-  public std::enable_shared_from_this< projectchannelmux >
+  public boost::enable_shared_from_this< projectchannelmux >
 {
 public:
   projectchannelmux( boost::asio::io_context &iocontext );
   ~projectchannelmux();
-  typedef std::shared_ptr< projectchannelmux > pointer;
+  typedef boost::shared_ptr< projectchannelmux > pointer;
   static pointer create( boost::asio::io_context &iocontext );
 
   void handletick( const boost::system::error_code& error );
@@ -39,9 +51,8 @@ private:
 
   rawsound added;
   rawsound subtracted;
-  int failcount;
 };
 
-typedef std::atomic_shared_ptr< projectchannelmux > atomicmuxptr;
+typedef boost::atomic_shared_ptr< projectchannelmux > atomicmuxptr;
 
-#endif /*  */
+#endif /* PROJECTRTPCHANNELMUX_H */

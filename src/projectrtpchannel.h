@@ -20,7 +20,6 @@
 #include <boost/enable_shared_from_this.hpp>
 #include <boost/lockfree/stack.hpp>
 #include <boost/smart_ptr/atomic_shared_ptr.hpp>
-
 #include "boost/date_time/posix_time/posix_time.hpp"
 
 /* CODECs */
@@ -31,8 +30,11 @@
 #include "projectrtpcodecx.h"
 #include "projectrtppacket.h"
 #include "projectrtpsoundsoup.h"
-#include "controlclient.h"
+#include "projectrtpchannelrecorder.h"
 #include "projectrtpsrtp.h"
+
+class projectrtpchannel;
+class projectchannelmux;
 #include "projectrtpchannelmux.h"
 
 /* The number of packets we will keep in a buffer */
@@ -49,15 +51,6 @@ to the mixr to be added */
 /* 1 in ... packet loss */
 //#define SIMULATEDPACKETLOSSRATE 10
 
-
-
-/*
-# projectchannelmux
-
-Generate our own tick. If we get up to multiple channels we don't want all to have a timer
-firing - we want only one to mix all. A channel will maintain its own timer (when needed)
-for things like playing a sound file (on single channels) or echo.
-*/
 
 /*!md
 # projectrtpchannel
@@ -79,7 +72,7 @@ public:
   typedef std::shared_ptr< projectrtpchannel > pointer;
   static pointer create( boost::asio::io_context &workercontext, boost::asio::io_context &iocontext, unsigned short port );
 
-  void open( std::string &id, std::string &uuid, controlclient::pointer );
+  void open( std::string &id, std::string &uuid );
   void close( void );
   void doclose( void );
   void go( void );
@@ -206,7 +199,6 @@ private:
 
   std::atomic_bool doecho;
   boost::asio::steady_timer tick;
-  controlclient::pointer control;
 
   std::atomic_uint16_t tickswithnortpcount;
 

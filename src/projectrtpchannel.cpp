@@ -9,9 +9,6 @@
 #include <utility>
 
 #include "projectrtpchannel.h"
-#include "controlclient.h"
-
-
 
 /*!md
 # Project RTP Channel
@@ -103,11 +100,10 @@ projectrtpchannel::pointer projectrtpchannel::create( boost::asio::io_context &w
 ## open
 Open the channel to read network data. Setup memory and pointers.
 */
-void projectrtpchannel::open( std::string &id, std::string &uuid, controlclient::pointer c )
+void projectrtpchannel::open( std::string &id, std::string &uuid )
 {
   this->id = id;
   this->uuid = uuid;
-  this->control = c;
 
   this->maxticktime = 0;
   this->totalticktime = 0;
@@ -238,7 +234,8 @@ void projectrtpchannel::doclose( void )
 
   this->rtpsocket.close();
   this->rtcpsocket.close();
-
+#warning TODO
+#if 0
   if( this->control )
   {
     this->control->channelclosed( this->uuid );
@@ -284,6 +281,7 @@ void projectrtpchannel::doclose( void )
 
     this->control->sendmessage( v );
   }
+#endif
 }
 
 bool projectrtpchannel::checkidlerecv( void )
@@ -314,9 +312,8 @@ void projectrtpchannel::checkfornewrecorders( void )
         soundfile::wavformatfrompt( this->selectedcodec ),
         rec->numchannels,
         soundfile::getsampleratefrompt( this->selectedcodec ) );
-
+#if 0
     rec->control = this->control;
-    this->recorders.push_back( rec );
 
     if( this->control )
     {
@@ -330,6 +327,9 @@ void projectrtpchannel::checkfornewrecorders( void )
 
       this->control->sendmessage( v );
     }
+#endif
+
+    this->recorders.push_back( rec );
   }
 }
 
@@ -363,20 +363,15 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
       stringptr newplaydef = this->newplaydef.load();
       if( newplaydef )
       {
-        try
+#warning remove dependanciy on c++ json - node can handle this now
+        if( !this->player )
         {
-          if( !this->player )
-          {
-            this->player = soundsoup::create();
-          }
+          this->player = soundsoup::create();
+        }
 
-          JSON::Value ob = JSON::parse( *newplaydef );
-          this->player->config( JSON::as_object( ob ), selectedcodec );
-        }
-        catch(...)
-        {
-          std::cerr << "Bad sound soup: " << *newplaydef << std::endl;
-        }
+        JSON::Value ob = JSON::parse( *newplaydef );
+        this->player->config( JSON::as_object( ob ), selectedcodec );
+
         this->newplaydef = nullptr;
       }
       else if( this->player )

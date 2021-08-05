@@ -5,14 +5,17 @@
 #include <memory>
 #include <string>
 
+#include <boost/enable_shared_from_this.hpp>
+
 #include "projectrtpsoundfile.h"
 
-class channelrecorder
+class channelrecorder:
+  public boost::enable_shared_from_this< channelrecorder >
 {
 public:
   channelrecorder( std::string &file );
   ~channelrecorder();
-  typedef std::shared_ptr< channelrecorder > pointer;
+  typedef boost::shared_ptr< channelrecorder > pointer;
   static pointer create( std::string &file );
   uint16_t poweravg( uint16_t power );
 

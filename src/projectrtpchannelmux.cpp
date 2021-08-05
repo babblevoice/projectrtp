@@ -8,8 +8,7 @@
 projectchannelmux::projectchannelmux( boost::asio::io_context &iocontext ):
   iocontext( iocontext ),
   tick( iocontext ),
-  newchannels( MIXQUEUESIZE ),
-  failcount( 0 )
+  newchannels( MIXQUEUESIZE )
 {
 }
 

@@ -18,7 +18,8 @@
         "projectrtpchannelrecorder.cpp",
         "projectrtpsoundfile.cpp",
         "projectrtpsoundsoup.cpp",
-        "projectrtptonegen.cpp" ]
+        "projectrtptonegen.cpp",
+        "projectrtpchannel.cpp" ]
     }
   ]
 }
