@@ -22,10 +22,6 @@
 /* min 2 for write buffers on 2 channel audio */
 #define SOUNDFILENUMBUFFERS 2
 
-/*!md
-
-*/
-
 typedef struct
 {
     /* RIFF Header */

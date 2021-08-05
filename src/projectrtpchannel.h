@@ -33,6 +33,7 @@
 #include "projectrtpsoundsoup.h"
 #include "controlclient.h"
 #include "projectrtpsrtp.h"
+#include "projectrtpchannelmux.h"
 
 /* The number of packets we will keep in a buffer */
 #define BUFFERPACKETCOUNT 20
@@ -48,50 +49,7 @@ to the mixr to be added */
 /* 1 in ... packet loss */
 //#define SIMULATEDPACKETLOSSRATE 10
 
-class channelrecorder
-{
-public:
-  channelrecorder( std::string &file );
-  ~channelrecorder();
-  typedef boost::shared_ptr< channelrecorder > pointer;
-  static pointer create( std::string &file );
-  uint16_t poweravg( uint16_t power );
 
-  std::string file;
-  std::string uuid;
-
-/* In seconds up to MA max size (5 seconds?) */
-  uint16_t poweraverageduration;
-
-  /* must have started for this to kick in */
-  uint16_t startabovepower;
-
-  /* must have started for this to kick in */
-  uint16_t finishbelowpower;
-  /* used in conjunction with finishbelowpower */
-  uint32_t minduration; /* mSeconds */
-
-  uint32_t maxduration; /* mSeconds */
-
-  int numchannels;
-
-  soundfile::pointer sfile;
-
-  bool active;
-
-  uint16_t lastpowercalc;
-
-  boost::posix_time::ptime created;
-
-  std::string finishreason;
-  controlclient::pointer control;
-
-private:
-
-  /* Rolling average of power reads */
-  ma_filer powerfilter;
-
-};
 
 /*
 # projectchannelmux
@@ -100,43 +58,6 @@ Generate our own tick. If we get up to multiple channels we don't want all to ha
 firing - we want only one to mix all. A channel will maintain its own timer (when needed)
 for things like playing a sound file (on single channels) or echo.
 */
-class projectrtpchannel;
-
-class projectchannelmux:
-  public boost::enable_shared_from_this< projectchannelmux >
-{
-public:
-  projectchannelmux( boost::asio::io_context &iocontext );
-  ~projectchannelmux();
-  typedef boost::shared_ptr< projectchannelmux > pointer;
-  static pointer create( boost::asio::io_context &iocontext );
-
-  void handletick( const boost::system::error_code& error );
-  void checkfordtmf( std::shared_ptr< projectrtpchannel > chan, rtppacket *src );
-  void postrtpdata( std::shared_ptr< projectrtpchannel > srcchan, std::shared_ptr< projectrtpchannel > dstchan, rtppacket *src, uint32_t skipcount );
-  inline size_t size() { return this->channels.size(); }
-  void addchannel( std::shared_ptr< projectrtpchannel > chan );
-  void go( void );
-
-  std::list< std::shared_ptr< projectrtpchannel > > channels;
-
-private:
-
-  void checkfornewmixes( void );
-  void mix2( void );
-  void mixall( void );
-
-  boost::asio::io_context &iocontext;
-  boost::asio::steady_timer tick;
-
-  boost::lockfree::stack< std::shared_ptr< projectrtpchannel > > newchannels;
-
-  rawsound added;
-  rawsound subtracted;
-  int failcount;
-};
-
-typedef boost::atomic_shared_ptr< projectchannelmux > atomicmuxptr;
 
 /*!md
 # projectrtpchannel
