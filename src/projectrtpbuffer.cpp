@@ -268,14 +268,14 @@ static napi_value buffercreate( napi_env env, napi_callback_info info ) {
   if( napi_ok != napi_type_tag_object( env, result, &buffercreatetag ) ) return NULL;
   if( napi_ok != napi_wrap( env, result, pb, bufferdestroy, nullptr, nullptr ) ) return NULL;
 
-  if ( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, bufferpush, nullptr, &npush ) ) return NULL;
-  if ( napi_ok != napi_set_named_property( env, result, "push", npush ) ) return NULL;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, bufferpush, nullptr, &npush ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "push", npush ) ) return NULL;
 
-  if ( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, bufferpop, nullptr, &npop ) ) return NULL;
-  if ( napi_ok != napi_set_named_property( env, result, "pop", npop ) ) return NULL;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, bufferpop, nullptr, &npop ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "pop", npop ) ) return NULL;
 
-  if ( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, bufferpeek, nullptr, &npeek ) ) return NULL;
-  if ( napi_ok != napi_set_named_property( env, result, "peek", npeek ) ) return NULL;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, bufferpeek, nullptr, &npeek ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "peek", npeek ) ) return NULL;
 
   /*
   std::string res = "Hello World!";
@@ -293,8 +293,8 @@ void initrtpbuffer( napi_env env, napi_value &result ) {
 
   if( napi_ok != napi_create_object( env, &rtpbuff ) ) return;
   if( napi_ok != napi_set_named_property( env, result, "rtpbuffer", rtpbuff ) ) return;
-  if ( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, buffercreate, nullptr, &bcreate ) ) return;
-  if ( napi_ok != napi_set_named_property( env, rtpbuff, "create", bcreate ) ) return;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, buffercreate, nullptr, &bcreate ) ) return;
+  if( napi_ok != napi_set_named_property( env, rtpbuff, "create", bcreate ) ) return;
 
 }
 
