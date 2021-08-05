@@ -1,5 +1,6 @@
 
 #include "projectrtpbuffer.h"
+#include "globals.h"
 
 rtpbuffer::rtpbuffer( int buffercount, int waterlevel ) :
   reserved( nullptr ),
@@ -13,6 +14,9 @@ rtpbuffer::rtpbuffer( int buffercount, int waterlevel ) :
     this->orderedrtpdata.at( i ) = nullptr;
     this->availablertpdata.push( &this->buffer.at( i ) );
   }
+}
+
+rtpbuffer::~rtpbuffer() {
 }
 
 rtpbuffer::pointer rtpbuffer::create( int buffercount, int waterlevel ) {
@@ -100,13 +104,13 @@ static const napi_type_tag buffercreatetag = {
 };
 
 
-static rtpbuffer *getrtpbufferfromthis( napi_env env, napi_callback_info info ) {
+static rtpbuffer::pointer getrtpbufferfromthis( napi_env env, napi_callback_info info ) {
   size_t argc = 1;
   napi_value argv[ 1 ];
   napi_value thisarg;
   bool isrtpbuffer;
 
-  rtpbuffer *pb;
+  hiddensharedptr *pb;
 
   if( napi_ok != napi_get_cb_info( env, info, &argc, argv, &thisarg, nullptr ) ) return nullptr;
   if( napi_ok != napi_check_object_type_tag( env, thisarg, &buffercreatetag, &isrtpbuffer ) ) return nullptr;
@@ -121,7 +125,7 @@ static rtpbuffer *getrtpbufferfromthis( napi_env env, napi_callback_info info ) 
     return nullptr;
   }
 
-  return pb;
+  return pb->get< rtpbuffer >();
 }
 
 
@@ -130,7 +134,7 @@ static napi_value bufferpop( napi_env env, napi_callback_info info ) {
   napi_value result;
   void *outdata;
 
-  rtpbuffer *pb = getrtpbufferfromthis( env, info );
+  rtpbuffer::pointer pb = getrtpbufferfromthis( env, info );
   if( nullptr == pb ) return NULL;
 
 
@@ -151,7 +155,7 @@ static napi_value bufferpeek( napi_env env, napi_callback_info info ) {
   napi_value result;
   void *outdata;
 
-  rtpbuffer *pb = getrtpbufferfromthis( env, info );
+  rtpbuffer::pointer pb = getrtpbufferfromthis( env, info );
   if( nullptr == pb ) return NULL;
 
 
@@ -209,7 +213,7 @@ static napi_value bufferpush( napi_env env, napi_callback_info info ) {
     return NULL;
   }
 
-  rtpbuffer *pb = getrtpbufferfromthis( env, info );
+  rtpbuffer::pointer pb = getrtpbufferfromthis( env, info );
   if( nullptr == pb ) return NULL;
 
   rtppacket *p = pb->reserve();
@@ -231,7 +235,7 @@ static napi_value bufferpush( napi_env env, napi_callback_info info ) {
 }
 
 void bufferdestroy( napi_env env, void* instance, void* /* hint */ ) {
-  delete ( (rtpbuffer* ) instance );
+  delete ( ( hiddensharedptr * ) instance );
 }
 
 static napi_value buffercreate( napi_env env, napi_callback_info info ) {
@@ -258,11 +262,11 @@ static napi_value buffercreate( napi_env env, napi_callback_info info ) {
   }
 
   napi_value result;
-  rtpbuffer *pb = new rtpbuffer( packetcount, packetwaterlevel );
+  hiddensharedptr *pb = new hiddensharedptr( rtpbuffer::create( packetcount, packetwaterlevel ) );
 
   if( napi_ok != napi_create_object( env, &result ) ) return NULL;
   if( napi_ok != napi_type_tag_object( env, result, &buffercreatetag ) ) return NULL;
-  if( napi_ok != napi_wrap( env, result, ( void * )pb, bufferdestroy, nullptr, nullptr ) ) return NULL;
+  if( napi_ok != napi_wrap( env, result, pb, bufferdestroy, nullptr, nullptr ) ) return NULL;
 
   if ( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, bufferpush, nullptr, &npush ) ) return NULL;
   if ( napi_ok != napi_set_named_property( env, result, "push", npush ) ) return NULL;

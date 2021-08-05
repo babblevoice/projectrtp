@@ -43,4 +43,20 @@ ddn't complain about the tagerget object not being atomic also!
 typedef boost::shared_ptr< std::string > stringptr;
 typedef boost::atomic_shared_ptr< std::string > atomicstringptr;
 
+/*
+Used to hide shared pointers so we can pass a void * into libraries tht need it.
+*/
+class hiddensharedptr {
+public:
+  hiddensharedptr( const std::shared_ptr< void >& p ) { this->d = p; }
+
+  template<typename T>
+  auto get() {
+   return std::static_pointer_cast<T>( this->d );
+  }
+
+private:
+  std::shared_ptr< void > d; // Copied from Request
+};
+
 #endif /* PROJECTRTPGLOBALS_H */

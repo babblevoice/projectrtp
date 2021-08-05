@@ -23,7 +23,7 @@ class rtpbuffer :
 public:
 
   rtpbuffer( int count, int waterlevel );
-  ~rtpbuffer() {}
+  ~rtpbuffer();
 
   typedef std::shared_ptr< rtpbuffer > pointer;
   static pointer create( int count, /* size of the array to store packets */
