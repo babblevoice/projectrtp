@@ -13,36 +13,25 @@
 #include "projectrtpchannel.h"
 
 extern boost::asio::io_context workercontext;
-
 std::queue < unsigned short >availableports;
 
 /*!md
 # Project RTP Channel
 
-This file (class) represents an RP channel. That is an RTP stream (UDP) with its pair RTCP socket. Basic functions for
+This file (class) represents an RP channel. That is an RTP stream (UDP) with
+its pair RTCP socket. Basic functions for
 
 1. Opening and closing channels
 2. bridging 2 channels
-3. Sending data to an endpoint based on us receiving data first or (to be implimented) the address and port given to us when opening in the channel.
+3. Sending data to an endpoint based on us receiving data first or (to be
+implimented) the address and port given to us when opening in the channel.
 
-
-## projectrtpchannel constructor
-Create the socket then wait for data
-
-echo "This is my data" > /dev/udp/127.0.0.1/10000
 */
-projectrtpchannel::projectrtpchannel( unsigned short port )
-  :
+projectrtpchannel::projectrtpchannel( unsigned short port ):
   selectedcodec( 0 ),
   ssrcout( 0 ),
-  ssrcin( 0 ),
   tsout( 0 ),
-  seqout( 0 ),
-  toolatertppacket( nullptr ),
-  orderedinminsn( 0 ),
-  orderedinmaxsn( 0 ),
-  lastworkedonsn( 0 ),
-  rtpbuffercount( BUFFERPACKETCOUNT ),
+  snout( 0 ),
   rtpbufferlock( false ),
   rtpoutindex( 0 ),
   active( false ),
@@ -54,8 +43,6 @@ projectrtpchannel::projectrtpchannel( unsigned short port )
   rtcpsocket( workercontext ),
   receivedrtp( false ),
   targetconfirmed( false ),
-  reader( true ),
-  writer( true ),
   receivedpkcount( 0 ),
   receivedpkskip( 0 ),
   others( nullptr ),
@@ -72,12 +59,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port )
   totalticktime( 0 ),
   totaltickcount( 0 ),
   rtpdtls( nullptr ),
-  rtpdtlshandshakeing( false )
-{
-  for( auto i = 0; i < BUFFERPACKETCOUNT; i ++ ) {
-    this->orderedrtpdata[ i ] = nullptr;
-    this->availablertpdata[ i ] = &this->rtpdata[ i ];
-  }
+  rtpdtlshandshakeing( false ) {
 }
 
 void projectrtpchannel::requestopen( void ) {
@@ -108,7 +90,6 @@ void projectrtpchannel::doopen( void ) {
       boost::asio::ip::udp::v4(), this->port + 1 ) );
 
   this->receivedrtp = false;
-  this->toolatertppacket = nullptr;
   this->active = true;
   this->send = true;
   this->recv = true;
@@ -124,11 +105,7 @@ void projectrtpchannel::doopen( void ) {
   /* anchor our out time to when the channel is opened */
   this->tsout = std::chrono::system_clock::to_time_t( std::chrono::system_clock::now() );
 
-  this->seqout = 0;
-
-  this->orderedinminsn = 0;
-  this->orderedinmaxsn = 0;
-  this->lastworkedonsn = 0;
+  this->snout = rand();
 
   this->tickswithnortpcount = 0;
 
@@ -148,23 +125,18 @@ void projectrtpchannel::doopen( void ) {
 ## projectrtpchannel destructor
 Clean up
 */
-projectrtpchannel::~projectrtpchannel( void )
-{
-  this->player = nullptr;
-  this->others = nullptr;
+projectrtpchannel::~projectrtpchannel( void ) {
 }
 
 /*!md
 # create
 
 */
-projectrtpchannel::pointer projectrtpchannel::create( unsigned short port )
-{
+projectrtpchannel::pointer projectrtpchannel::create( unsigned short port ) {
   return pointer( new projectrtpchannel( port ) );
 }
 
-void projectrtpchannel::enabledtls( dtlssession::mode m, std::string &fingerprint )
-{
+void projectrtpchannel::enabledtls( dtlssession::mode m, std::string &fingerprint ) {
   this->rtpdtls = dtlssession::create( m );
   this->rtpdtls->setpeersha256( fingerprint );
 
@@ -184,8 +156,7 @@ void projectrtpchannel::enabledtls( dtlssession::mode m, std::string &fingerprin
   } );
 }
 
-unsigned short projectrtpchannel::getport( void )
-{
+unsigned short projectrtpchannel::getport( void ) {
   return this->port;
 }
 
@@ -193,8 +164,7 @@ unsigned short projectrtpchannel::getport( void )
 ## close
 Closes the channel.
 */
-void projectrtpchannel::requestclose( void )
-{
+void projectrtpchannel::requestclose( void ) {
   availableports.push( this->port );
   this->active = false;
 
@@ -206,8 +176,7 @@ void projectrtpchannel::requestecho( bool e ) {
   this->doecho = e;
 }
 
-void projectrtpchannel::doclose( void )
-{
+void projectrtpchannel::doclose( void ) {
   this->active = false;
   this->tick.cancel();
   this->player = nullptr;
@@ -220,22 +189,14 @@ void projectrtpchannel::doclose( void )
   this->rtpdtls = nullptr;
   this->rtpdtlshandshakeing = false;
 
-  for( auto i = 0; i < BUFFERPACKETCOUNT; i ++ )
-  {
-    this->orderedrtpdata[ i ] = nullptr;
-    this->availablertpdata[ i ] = &this->rtpdata[ i ];
-  }
-
   /* close up any remaining recorders */
-  for( auto& rec: this->recorders )
-  {
+  for( auto& rec: this->recorders ) {
     rec->finishreason = "channel closed";
   }
 
   this->recorders.clear();
 
-  this->rtpbuffercount = BUFFERPACKETCOUNT;
-  this->rtpbufferlock.store( false, std::memory_order_release );
+  RELEASESPINLOCK( this->rtpbufferlock );
 
   this->rtpsocket.close();
   this->rtcpsocket.close();
@@ -354,15 +315,16 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
     if( nullptr == mux || 0 == mux->size() )
     {
       if( this->checkidlerecv() ) return;
-      this->checkandfixoverrun();
       this->checkfornewrecorders();
 
-      rtppacket *src = this->getrtpbottom();
+      AQUIRESPINLOCK( this->rtpbufferlock );
+      rtppacket *src = this->inbuff->pop();
+      RELEASESPINLOCK( this->rtpbufferlock );
+
       if( nullptr != src )
       {
         this->incodec << codecx::next;
         this->incodec << *src;
-        this->incrrtpbottom( src );
       }
 
       stringptr newplaydef = this->newplaydef.load();
@@ -492,123 +454,6 @@ void projectrtpchannel::writerecordings( void )
   this->recorders.remove_if( recorderfinished );
 }
 
-/*
-## getrtpbottom
-Gets our oldest RTP packet required processing.highcount and lowcount
-provide some hysteresis so we don't quickly stop and start a channel
-only really needed if we need to mix from multiple sources (i.e. conference).
-*/
-rtppacket *projectrtpchannel::getrtpbottom( uint16_t highcount, uint16_t lowcount )
-{
-  if( !this->receivedrtp ) return nullptr;
-
-  /* There probably has been a network delay and they are now coming through
-  which has filled up our RTP buffer - help clear out */
-  uint16_t diff = this->orderedinmaxsn - this->orderedinminsn;
-  if( diff > BUFFERPACKETCAP )
-  {
-    for( uint16_t i = 0; i < diff; i++ )
-    {
-      this->incrrtpbottom( this->orderedrtpdata[ this->orderedinminsn % BUFFERPACKETCOUNT ] );
-    }
-  }
-
-  rtppacket *src = this->orderedrtpdata[ this->orderedinminsn % BUFFERPACKETCOUNT ];
-
-  if( nullptr == src ) return nullptr;
-  auto sn = src->getsequencenumber();
-  if( this->orderedinminsn != sn ) return nullptr;
-
-  auto aheadby = this->orderedinmaxsn - sn;
-  auto delaycount = highcount;
-  if( this->havedata ) delaycount = lowcount;
-
-  /* We allow n to accumulate in our buffer before we work on them */
-  if( aheadby < delaycount )
-  {
-    this->havedata = false;
-    return nullptr;
-  }
-  this->havedata = true;
-
-  return src;
-}
-
-void projectrtpchannel::incrrtpbottom( rtppacket *from )
-{
-  if( nullptr == from ) return;
-  this->lastworkedonsn = from->getsequencenumber();
-  this->returnbuffer( this->orderedrtpdata[ this->lastworkedonsn % BUFFERPACKETCOUNT ] );
-  this->orderedrtpdata[ this->lastworkedonsn % BUFFERPACKETCOUNT ] = nullptr;
-  this->orderedinminsn++;
-}
-
-/*
-Get and return an avaiable memory buffer for an rtp packet. Use a spin lock for a tiny section.
-*/
-void projectrtpchannel::returnbuffer( rtppacket *buf )
-{
-  while( this->rtpbufferlock.exchange( true, std::memory_order_acquire ) );
-
-  this->availablertpdata[ this->rtpbuffercount ] = buf;
-  this->rtpbuffercount++;
-
-  this->rtpbufferlock.store( false, std::memory_order_release );
-}
-
-
-rtppacket* projectrtpchannel::getbuffer( void )
-{
-  rtppacket* buf = nullptr;
-  while( this->rtpbufferlock.exchange( true, std::memory_order_acquire ) );
-
-  if( this->rtpbuffercount == 0 )
-  {
-    goto getbufferend;
-  }
-
-  {
-    auto currentmax = --this->rtpbuffercount;
-
-    buf = this->availablertpdata[ currentmax ];
-    this->availablertpdata[ currentmax ] = nullptr;
-  }
-
-  getbufferend:
-  this->rtpbufferlock.store( false, std::memory_order_release );
-  return buf;
-}
-
-void projectrtpchannel::displaybuffer( void )
-{
-  std::string available;
-  uint16_t diff = this->orderedinmaxsn - this->orderedinminsn;
-  for( uint16_t i = 0; i < diff; i ++ )
-  {
-    rtppacket *src = this->orderedrtpdata[ ( this->orderedinminsn + i ) % BUFFERPACKETCOUNT ];
-    if( nullptr == src )
-    {
-      available += "u";
-    }
-    else if( ( this->orderedinminsn + i ) != src->getsequencenumber() )
-    {
-      available += "b";
-    }
-    else
-    {
-      available += "a";
-    }
-  }
-
-  rtppacket *src = this->orderedrtpdata[ this->orderedinminsn % BUFFERPACKETCOUNT ];
-  if( nullptr == src || this->orderedinminsn != src->getsequencenumber() )
-  {
-    available = 'u';
-  }
-
-  std::cout << this->uuid << ": " << this->orderedinminsn << "(" << diff << ") <-----(" << available << ")-----> " << this->orderedinmaxsn << std::endl;
-}
-
 /*!md
 ## handlereadsomertp
 Wait for RTP data. We have to re-order when required. Look after all of the round robin memory here.
@@ -620,215 +465,97 @@ Any clashes should be handled by atomics.
 */
 void projectrtpchannel::readsomertp( void )
 {
-  rtppacket *buf = this->getbuffer();
-  if( nullptr == buf )
-  {
+  AQUIRESPINLOCK( this->rtpbufferlock );
+  rtppacket* buf = this->inbuff->reserve();
+  if( nullptr == buf ) {
+    this->inbuff->pop();
+    buf = this->inbuff->reserve();
+  }
+  RELEASESPINLOCK( this->rtpbufferlock );
+
+  if( nullptr == buf ) {
     std::cerr << "ERROR: we should never get here - we have no more buffer available on port " << this->port << std::endl;
     return;
   }
 
   this->rtpsocket.async_receive_from(
-    boost::asio::buffer( buf->pk, RTPMAXLENGTH ),
-                          this->rtpsenderendpoint,
-      [ this, buf ]( boost::system::error_code ec, std::size_t bytes_recvd )
-      {
-        if ( !ec && bytes_recvd > 0 && bytes_recvd <= RTPMAXLENGTH )
-        {
-          if( this->rtpdtlshandshakeing )
-          {
+    boost::asio::buffer( buf->pk, RTPMAXLENGTH ), this->rtpsenderendpoint,
+      [ this, buf ]( boost::system::error_code ec, std::size_t bytes_recvd ) {
+        /* To be finished */
+        if ( !ec && bytes_recvd > 0 && bytes_recvd <= RTPMAXLENGTH ) {
+          if( this->rtpdtlshandshakeing ) {
             this->rtpdtls->write( buf, bytes_recvd );
             auto dtlsstate = this->rtpdtls->handshake();
-            if( GNUTLS_E_AGAIN == dtlsstate )
-            {
+            if( GNUTLS_E_AGAIN == dtlsstate ) {
               this->readsomertp();
-            }
-            else if ( GNUTLS_E_SUCCESS == dtlsstate )
-            {
+            } else if ( GNUTLS_E_SUCCESS == dtlsstate ) {
               this->readsomertp();
               this->rtpdtlshandshakeing = false;
             }
-
             return;
           }
 
-          if( !this->recv )
-          {
-            /* silently drop */
-            this->returnbuffer( buf );
-            if( !ec && bytes_recvd && this->active )
-            {
-              this->readsomertp();
-            }
-            return;
-          }
-
-          /* As we check if there is any buffer left this should stop us ever running out and quitting trying
-          i.e. when we are very low imm return and retry - eventually our tick will process the backlog */
-          if( 0 == this->rtpbuffercount )
-          {
-            /* silently drop this packet and repeat until we have space in our buffer  */
-            std::cerr << "Discarding data due to low space in buffer on port " << this->port << std::endl;
-            for( size_t i = 0; i < ( BUFFERPACKETCOUNT - BUFFERHIGHDELAYCOUNT ); i++ )
-            {
-              rtppacket *bot = this->getrtpbottom();
-              if( nullptr != bot )
-              {
-                this->incrrtpbottom( bot );
-              }
-              else
-              {
-                std::cerr << "ERROR: how did we end up in this state?? on port " << this->port << std::endl;
-              }
-            }
-          }
-
-#ifdef SIMULATEDPACKETLOSSRATE
-          /* simulate packet loss */
-          if( 0 == rand() % SIMULATEDPACKETLOSSRATE )
-          {
-            this->returnbuffer( buf );
-            if( !ec && bytes_recvd && this->active )
-            {
-              this->readsomertp();
-            }
-            return;
-          }
-#endif
-          this->tickswithnortpcount = 0;
+          /* We should still count packets we are instructed to drop */
           this->receivedpkcount++;
-          if( !this->receivedrtp )
-          {
-            if( 1 == this->receivedpkcount )
-            {
-              this->lastworkedonsn.store( buf->getsequencenumber() - 1 ); /* pseudo */
-              this->orderedinminsn.store( buf->getsequencenumber() );
-              this->orderedinmaxsn.store( buf->getsequencenumber() );
+
+          if( !this->recv ) {
+            if( !ec && bytes_recvd && this->active ) {
+              this->readsomertp();
             }
+            return;
+          }
+
+          this->tickswithnortpcount = 0;
+
+          if( !this->receivedrtp ) {
             this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
             this->receivedrtp = true;
-          }
-          else
-          {
+          } else {
             /* After the first packet - we only accept data from the verified source */
-            if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint )
-            {
-              this->returnbuffer( buf );
+            if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint ) {
               this->readsomertp();
               return;
             }
-
-            if( this->checkforoverrun( buf ) ) return;
-            if( this->checkforunderrun( buf ) ) return;
           }
 
-          /* store in the buffer */
           buf->length = bytes_recvd;
 
-          /* Now order it */
-          uint16_t sn = buf->getsequencenumber();
-          this->orderedrtpdata[ sn % BUFFERPACKETCOUNT ].store( buf, std::memory_order_relaxed );
-          if( sn > this->orderedinmaxsn ) this->orderedinmaxsn = sn;
-          if( sn < this->orderedinminsn ) this->orderedinminsn = sn;
+          AQUIRESPINLOCK( this->rtpbufferlock );
+          this->inbuff->push();
+          RELEASESPINLOCK( this->rtpbufferlock );
         }
 
-        if( !ec && bytes_recvd && this->active )
-        {
+        if( !ec && bytes_recvd && this->active ) {
           this->readsomertp();
         }
       } );
 }
 
-/*
-## checkforoverrun
-See if the received packet is within our window. If it does we have to trash
-existing items in our buffer so we have to hand this off to our tick.
-*/
-bool projectrtpchannel::checkforoverrun( rtppacket *buf )
-{
-  uint16_t diff = buf->getsequencenumber() - this->orderedinminsn;
-
-  if( diff > BUFFERPACKETCOUNT )
-  {
-    /* We have to clear the buffer and re-go */
-    this->toolatertppacket = buf;
-    return true;
-  }
-
-  return false;
-}
-
-/*
-## fixoverrun
-When we have received a packet which is too new - we need to clear our buffers
-and restart. This MUST be called from our tick.
-*/
-void projectrtpchannel::checkandfixoverrun( void )
-{
-  rtppacket *tmp = this->toolatertppacket.load( std::memory_order_relaxed );
-  if( nullptr != tmp )
-  {
-    for( size_t i = 0; i < BUFFERPACKETCOUNT; i++ )
-    {
-      if( nullptr != this->orderedrtpdata[ i ] )
-      {
-        this->returnbuffer( this->orderedrtpdata[ i ] );
-        this->orderedrtpdata[ i ] = nullptr;
-      }
-    }
-
-    uint16_t sn = tmp->getsequencenumber();
-    this->orderedrtpdata[ sn % BUFFERPACKETCOUNT ].store( tmp, std::memory_order_relaxed );
-    this->orderedinminsn = this->orderedinmaxsn = sn;
-    this->toolatertppacket = nullptr;
-  }
-}
-
-/*
-## checkforunderrun
-Received too late - do we just bin...
-*/
-bool projectrtpchannel::checkforunderrun( rtppacket *buf )
-{
-  uint16_t sn = buf->getsequencenumber();
-
-  auto diff = this->orderedinminsn - sn;
-  if( diff > 0 && diff < BUFFERPACKETCOUNT  )
-  {
-    this->returnbuffer( buf );
-    if( this->active )
-    {
-      this->readsomertp();
-    }
-    return true;
-  }
-  return false;
-}
-
 /*!md
 ## gettempoutbuf
-When we need a buffer to send data out (because we cannot guarantee our own buffer will be available) we can use the circular out buffer on this channel. This will return the next one available.
+When we need a buffer to send data out (because we cannot guarantee our
+own buffer will be available) we can use the circular out buffer on this
+channel. This will return the next one available.
 
-We assume this is called to send packets out in order, and at intervals required for each timestamp to be incremented in lou of it payload type.
+We assume this is called to send packets out in order, and at intervals
+ required for each timestamp to be incremented in lou of it payload type.
 */
-rtppacket *projectrtpchannel::gettempoutbuf( uint32_t skipcount )
-{
-  rtppacket *buf = &this->outrtpdata[ this->rtpoutindex ];
-  this->rtpoutindex = ( this->rtpoutindex + 1 ) % BUFFERPACKETCOUNT;
+rtppacket *projectrtpchannel::gettempoutbuf( uint32_t skipcount ) {
+  int outindex = this->rtpoutindex++;
+  rtppacket *buf = &this->outrtpdata[ outindex % BUFFERPACKETCOUNT ];
 
   buf->init( this->ssrcout );
   buf->setpayloadtype( this->selectedcodec );
 
-  this->seqout += skipcount;
-  buf->setsequencenumber( this->seqout );
+  this->snout += skipcount;
+  buf->setsequencenumber( this->snout );
 
-  if( skipcount > 0 )
-  {
+  if( skipcount > 0 ) {
     this->tsout += ( buf->getticksperpacket() * skipcount );
   }
 
   buf->settimestamp( this->tsout );
-
-  this->seqout++;
+  this->snout++;
 
   return buf;
 }

@@ -7,15 +7,19 @@ const projectrtp = require( "../src/build/Release/projectrtp" )
 
 
 describe( "server", function() {
-  describe( "start/stop", function() {
-    it( `start and stop the server`, async function() {
+  describe( "shutdown", function() {
+    it( `shutdown to exist`, async function() {
 
-      this.timeout( 3000 )
+      expect( projectrtp.shutdown ).to.be.an( "function" )
 
-      expect( projectrtp.server.start() ).to.be.an( "object" )
-
-      await new Promise( (resolve) => { setTimeout( resolve, 1500 ) } )
-      await projectrtp.server.stop()
     } )
+  } )
+
+  before( () => {
+    projectrtp.run()
+  } )
+
+  after( async () => {
+    await projectrtp.shutdown()
   } )
 } )

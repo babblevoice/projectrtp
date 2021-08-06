@@ -29,6 +29,7 @@
 #include <node_api.h>
 
 #include "globals.h"
+#include "projectrtpbuffer.h"
 #include "projectrtpcodecx.h"
 #include "projectrtppacket.h"
 #include "projectrtpsoundsoup.h"
@@ -50,8 +51,8 @@ class projectchannelmux;
 to the mixr to be added */
 #define MIXQUEUESIZE 50
 
-/* 1 in ... packet loss */
-//#define SIMULATEDPACKETLOSSRATE 10
+/* Must be to the power 2 */
+#define OUTBUFFERPACKETCOUNT 16
 
 
 /*!md
@@ -63,8 +64,7 @@ RTP on SIP channels should be able to switch between CODECS during a session so 
 
 
 class projectrtpchannel :
-  public std::enable_shared_from_this< projectrtpchannel >
-{
+  public std::enable_shared_from_this< projectrtpchannel > {
 
 public:
   friend projectchannelmux;
@@ -103,10 +103,6 @@ public:
         std::size_t bytes_transferred);
 
   void handletick( const boost::system::error_code& error );
-
-  bool canread( void ) { return this->reader; };
-  bool canwrite( void ) { return this->writer; };
-
   bool isactive( void );
 
   bool mix( projectrtpchannel::pointer other );
@@ -117,38 +113,26 @@ public:
   codeclist codecs;
   int selectedcodec;
   uint32_t ssrcout;
-  uint32_t ssrcin;
   uint32_t tsout;
-  uint16_t seqout;
+  uint16_t snout;
 
-  atomicrtppacketptr toolatertppacket;
-  rtppacket rtpdata[ BUFFERPACKETCOUNT ];
-  atomicrtppacketptr availablertpdata[ BUFFERPACKETCOUNT ];
-  atomicrtppacketptr orderedrtpdata[ BUFFERPACKETCOUNT ];
-  std::atomic_uint16_t orderedinminsn; /* sn = sequence number, min smallest we hold which is unprocessed - when it is processed we can forget about it */
-  std::atomic_uint16_t orderedinmaxsn;
-  std::atomic_uint16_t lastworkedonsn;
-  std::atomic_uint16_t rtpbuffercount; /* keeps track of availble buffer items in availablertpdata */
-  std::atomic_bool rtpbufferlock; /* spin lock to keep syncronised between reading and processing thread */
-
+  /* buffer and spin lock for in traffic */
+  rtpbuffer::pointer inbuff;
+  std::atomic_bool rtpbufferlock;
 
   unsigned char rtcpdata[ RTCPMAXLENGTH ];
 
-  /* The out data is intended to be written by other channels (or functions), they can then be sent to other channels as well as our own end point  */
-  rtppacket outrtpdata[ BUFFERPACKETCOUNT ];
-  int rtpoutindex;
+  /* The out data is intended to be written by other channels
+     (or functions), they can then be sent to other channels
+     as well as our own end point  */
+  rtppacket outrtpdata[ OUTBUFFERPACKETCOUNT ];
+  std::atomic_uint16_t rtpoutindex;
 
 private:
   std::atomic_bool active;
   unsigned short port;
   unsigned short rfc2833pt;
   uint32_t lasttelephoneevent;
-
-  /* id provided to us */
-  std::string id;
-
-  /* uuid we generate for this channel */
-  std::string uuid;
 
   boost::asio::ip::udp::resolver resolver;
 
@@ -163,20 +147,10 @@ private:
   std::atomic_bool receivedrtp;
   bool targetconfirmed;
 
-  bool reader;
-  bool writer;
-  void returnbuffer( rtppacket *buf );
-  rtppacket* getbuffer( void );
   void readsomertp( void );
   void readsomertcp( void );
 
-  /* Generally used as a pair */
-  rtppacket *getrtpbottom( uint16_t highcount = BUFFERHIGHDELAYCOUNT, uint16_t lowcount = BUFFERLOWDELAYCOUNT );
-  void incrrtpbottom( rtppacket *from );
   bool checkidlerecv( void );
-  bool checkforoverrun( rtppacket *buf );
-  void checkandfixoverrun( void );
-  bool checkforunderrun( rtppacket *buf );
   void checkfornewrecorders( void );
   void writerecordings( void );
 
@@ -184,8 +158,6 @@ private:
   void handletargetresolve (
               boost::system::error_code e,
               boost::asio::ip::udp::resolver::iterator it );
-
-  void displaybuffer( void );
 
   uint64_t receivedpkcount;
   uint64_t receivedpkskip;
@@ -204,6 +176,7 @@ private:
 
   std::atomic_uint16_t tickswithnortpcount;
 
+  /* do we send, do we receive */
   std::atomic_bool send;
   std::atomic_bool recv;
 

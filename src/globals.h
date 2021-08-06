@@ -58,4 +58,8 @@ private:
   std::shared_ptr< void > d; // Copied from Request
 };
 
+/* useful macros for use with std::atomic_bool */
+#define AQUIRESPINLOCK( l ) while( l.exchange( true, std::memory_order_acquire ) )
+#define RELEASESPINLOCK( l ) l.store( false, std::memory_order_release )
+
 #endif /* PROJECTRTPGLOBALS_H */
