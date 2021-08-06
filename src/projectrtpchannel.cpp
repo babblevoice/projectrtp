@@ -627,8 +627,7 @@ void projectrtpchannel::writepacket( rtppacket *pk )
 ## target
 Our control can set the target of the RTP stream. This can be important in order to open holes in firewall for our reverse traffic.
 */
-void projectrtpchannel::target( std::string &address, unsigned short port )
-{
+void projectrtpchannel::target( std::string &address, unsigned short port ) {
   this->receivedrtp = false;
   boost::asio::ip::udp::resolver::query query( boost::asio::ip::udp::v4(), address, std::to_string( port ) );
 
@@ -640,8 +639,7 @@ void projectrtpchannel::target( std::string &address, unsigned short port )
         boost::asio::placeholders::iterator ) );
 }
 
-void projectrtpchannel::rfc2833( unsigned short pt )
-{
+void projectrtpchannel::rfc2833( unsigned short pt ) {
   this->rfc2833pt = pt;
 }
 
@@ -649,25 +647,20 @@ void projectrtpchannel::rfc2833( unsigned short pt )
 ## mix
 Add the other to our list of others. n way relationship. Adds to queue for when our main thread calls into us.
 */
-bool projectrtpchannel::mix( projectrtpchannel::pointer other )
-{
+bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
   projectrtpchannel::pointer tmpother;
-  if( this == other.get() )
-  {
+  if( this == other.get() ) {
     return true;
   }
 
   projectchannelmux::pointer m = this->others.load( std::memory_order_relaxed );
-  if( nullptr == m )
-  {
+  if( nullptr == m ) {
     m = projectchannelmux::create( workercontext );
     m->addchannel( shared_from_this() );
     m->addchannel( other );
     /* We don't need our channel timer */
     m->go();
-  }
-  else
-  {
+  } else {
     m->addchannel( other );
   }
 
@@ -678,8 +671,7 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other )
 ## unmix
 As it says.
 */
-void projectrtpchannel::unmix( void )
-{
+void projectrtpchannel::unmix( void ) {
   this->others = nullptr;
 }
 
@@ -687,19 +679,15 @@ void projectrtpchannel::unmix( void )
 ## audio
 The CODECs on the other end which are acceptable. The first one should be the preferred. For now we keep hold of the list of codecs as we may be using them in the future. Filter out non-RTP streams (such as DTMF).
 */
-bool projectrtpchannel::audio( codeclist codecs )
-{
+bool projectrtpchannel::audio( codeclist codecs ) {
   this->codecs = codecs;
   codeclist::iterator it;
-  for( it = codecs.begin(); it != codecs.end(); it++ )
-  {
-    switch( *it )
-    {
+  for( it = codecs.begin(); it != codecs.end(); it++ ) {
+    switch( *it ) {
       case PCMAPAYLOADTYPE:
       case PCMUPAYLOADTYPE:
       case G722PAYLOADTYPE:
-      case ILBCPAYLOADTYPE:
-      {
+      case ILBCPAYLOADTYPE: {
         this->selectedcodec = *it;
         return true;
       }
@@ -714,8 +702,7 @@ We have resolved the target address and port now use it. Further work could be t
 */
 void projectrtpchannel::handletargetresolve (
             boost::system::error_code e,
-            boost::asio::ip::udp::resolver::iterator it )
-{
+            boost::asio::ip::udp::resolver::iterator it ) {
   boost::asio::ip::udp::resolver::iterator end;
 
   if( it == end )
@@ -737,8 +724,7 @@ What is called once we have sent something.
 */
 void projectrtpchannel::handlesend(
       const boost::system::error_code& error,
-      std::size_t bytes_transferred)
-{
+      std::size_t bytes_transferred) {
 
 }
 
@@ -746,8 +732,7 @@ void projectrtpchannel::handlesend(
 ## handlertcpdata
 We have received some RTCP data - now do something with it.
 */
-void projectrtpchannel::handlertcpdata( void )
-{
+void projectrtpchannel::handlertcpdata( void ) {
 
 }
 
