@@ -34,7 +34,6 @@ could be a larger length with our CODECs */
 
 
 extern std::string mediachroot;
-extern bool enabledisprtpbuff;
 
 /* Switch to boost for now as atomic shared pointer in std doesn't compile
 std::atomic_store( stringptr

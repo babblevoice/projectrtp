@@ -8,7 +8,13 @@
 #include <iomanip>
 #include <utility>
 
+#include <queue>
+
 #include "projectrtpchannel.h"
+
+extern boost::asio::io_context workercontext;
+
+std::queue < unsigned short >availableports;
 
 /*!md
 # Project RTP Channel
@@ -25,7 +31,7 @@ Create the socket then wait for data
 
 echo "This is my data" > /dev/udp/127.0.0.1/10000
 */
-projectrtpchannel::projectrtpchannel( boost::asio::io_context &workercontext, boost::asio::io_context &iocontext, unsigned short port )
+projectrtpchannel::projectrtpchannel( unsigned short port )
   :
   selectedcodec( 0 ),
   ssrcout( 0 ),
@@ -43,9 +49,7 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &workercontext, bo
   port( port ),
   rfc2833pt( 0 ),
   lasttelephoneevent( 0 ),
-  iocontext( iocontext ),
-  workercontext( workercontext ),
-  resolver( iocontext ),
+  resolver( workercontext ),
   rtpsocket( workercontext ),
   rtcpsocket( workercontext ),
   receivedrtp( false ),
@@ -70,40 +74,18 @@ projectrtpchannel::projectrtpchannel( boost::asio::io_context &workercontext, bo
   rtpdtls( nullptr ),
   rtpdtlshandshakeing( false )
 {
-  for( auto i = 0; i < BUFFERPACKETCOUNT; i ++ )
-  {
+  for( auto i = 0; i < BUFFERPACKETCOUNT; i ++ ) {
     this->orderedrtpdata[ i ] = nullptr;
     this->availablertpdata[ i ] = &this->rtpdata[ i ];
   }
 }
 
-/*!md
-## projectrtpchannel destructor
-Clean up
-*/
-projectrtpchannel::~projectrtpchannel( void )
-{
-  this->player = nullptr;
-  this->others = nullptr;
+void projectrtpchannel::requestopen( void ) {
+  boost::asio::post( workercontext,
+        boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
 }
 
-/*!md
-# create
-
-*/
-projectrtpchannel::pointer projectrtpchannel::create( boost::asio::io_context &workercontext, boost::asio::io_context &iocontext, unsigned short port )
-{
-  return pointer( new projectrtpchannel( workercontext, iocontext, port ) );
-}
-
-/*!md
-## open
-Open the channel to read network data. Setup memory and pointers.
-*/
-void projectrtpchannel::open( std::string &id, std::string &uuid )
-{
-  this->id = id;
-  this->uuid = uuid;
+void projectrtpchannel::doopen( void ) {
 
   this->maxticktime = 0;
   this->totalticktime = 0;
@@ -151,10 +133,7 @@ void projectrtpchannel::open( std::string &id, std::string &uuid )
   this->tickswithnortpcount = 0;
 
   this->havedata = false;
-}
 
-void projectrtpchannel::go( void )
-{
   this->readsomertp();
   this->readsomertcp();
 
@@ -162,6 +141,26 @@ void projectrtpchannel::go( void )
   this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
                                         shared_from_this(),
                                         boost::asio::placeholders::error ) );
+
+}
+
+/*!md
+## projectrtpchannel destructor
+Clean up
+*/
+projectrtpchannel::~projectrtpchannel( void )
+{
+  this->player = nullptr;
+  this->others = nullptr;
+}
+
+/*!md
+# create
+
+*/
+projectrtpchannel::pointer projectrtpchannel::create( unsigned short port )
+{
+  return pointer( new projectrtpchannel( port ) );
 }
 
 void projectrtpchannel::enabledtls( dtlssession::mode m, std::string &fingerprint )
@@ -194,11 +193,17 @@ unsigned short projectrtpchannel::getport( void )
 ## close
 Closes the channel.
 */
-void projectrtpchannel::close( void )
+void projectrtpchannel::requestclose( void )
 {
+  availableports.push( this->port );
   this->active = false;
-  boost::asio::post( this->iocontext,
+
+  boost::asio::post( workercontext,
         boost::bind( &projectrtpchannel::doclose, this ) );
+}
+
+void projectrtpchannel::requestecho( bool e ) {
+  this->doecho = e;
 }
 
 void projectrtpchannel::doclose( void )
@@ -291,7 +296,7 @@ bool projectrtpchannel::checkidlerecv( void )
     this->tickswithnortpcount++;
     if( this->tickswithnortpcount > ( 50 * 20 ) ) /* 50 (@20mS ptime)/S */
     {
-      this->close();
+      this->doclose();
       return true;
     }
   }
@@ -728,7 +733,6 @@ void projectrtpchannel::readsomertp( void )
 
         if( !ec && bytes_recvd && this->active )
         {
-          if( enabledisprtpbuff ) this->displaybuffer();
           this->readsomertp();
         }
       } );
@@ -929,7 +933,7 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other )
   projectchannelmux::pointer m = this->others.load( std::memory_order_relaxed );
   if( nullptr == m )
   {
-    m = projectchannelmux::create( this->workercontext );
+    m = projectchannelmux::create( workercontext );
     m->addchannel( shared_from_this() );
     m->addchannel( other );
     /* We don't need our channel timer */
@@ -1019,3 +1023,132 @@ void projectrtpchannel::handlertcpdata( void )
 {
 
 }
+
+
+#ifdef NODE_MODULE
+
+// uuidgen | sed -r -e 's/-//g' -e 's/(.{16})(.*)/0x\1, 0x\2/'
+static const napi_type_tag channelcreatetag = {
+  0x7616402bbbee4a21, 0x81dbc4cc8f07ebc3
+};
+
+static napi_value createnapibool( napi_env env, bool v ) {
+  napi_value result;
+  napi_create_uint32( env, v == true? 1 : 0, &result );
+  napi_coerce_to_bool( env, result, &result );
+  return result;
+}
+
+static projectrtpchannel::pointer getrtpchannelfromthis( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+  napi_value thisarg;
+  bool isrtpchannel;
+
+  hiddensharedptr *pb;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, &thisarg, nullptr ) ) return nullptr;
+  if( napi_ok != napi_check_object_type_tag( env, thisarg, &channelcreatetag, &isrtpchannel ) ) return nullptr;
+
+  if( !isrtpchannel ) {
+    napi_throw_type_error( env, "0", "Not an RTP Channel type" );
+    return nullptr;
+  }
+
+  if( napi_ok != napi_unwrap( env, thisarg, ( void** ) &pb ) ) {
+    napi_throw_type_error( env, "1", "Channel didn't unwrap" );
+    return nullptr;
+  }
+
+  return pb->get< projectrtpchannel >();
+}
+
+static napi_value channelclose( napi_env env, napi_callback_info info ) {
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) createnapibool( env, false );
+
+  chan->requestclose();
+
+  return createnapibool( env, true );
+}
+
+static napi_value channelecho( napi_env env, napi_callback_info info ) {
+
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  bool echo = true;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( argc > 0 ) {
+    if( napi_ok == napi_get_value_bool( env, argv[ 0 ], &echo ) ) {
+      return createnapibool( env, false );
+    }
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) return createnapibool( env, false );
+
+  chan->requestecho( echo );
+
+  return createnapibool( env, true );
+}
+
+void channeldestroy( napi_env env, void* instance, void* /* hint */ ) {
+  delete ( ( hiddensharedptr * ) instance );
+}
+
+static napi_value channelcreate( napi_env env, napi_callback_info info ) {
+
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  napi_value result;
+  auto port = availableports.front();
+  availableports.pop();
+
+  hiddensharedptr *pb = new hiddensharedptr( projectrtpchannel::create( port ) );
+
+  pb->get< projectrtpchannel >()->requestopen();
+
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+  if( napi_ok != napi_type_tag_object( env, result, &channelcreatetag ) ) return NULL;
+  if( napi_ok != napi_wrap( env, result, pb, channeldestroy, nullptr, nullptr ) ) return NULL;
+
+  /* methods */
+  napi_value mclose, mecho;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelclose, nullptr, &mclose ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "close", mclose ) ) return NULL;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelecho, nullptr, &mecho ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "echo", mecho ) ) return NULL;
+
+  /* values */
+  napi_value nport;
+  if( napi_ok != napi_create_int32( env, port, &nport ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "port", nport ) ) return NULL;
+
+  return result;
+}
+
+void initrtpchannel( napi_env env, napi_value &result ) {
+  napi_value rtpchan;
+  napi_value ccreate;
+
+  for( int i = 10000; i < 20000; i = i + 2 ) {
+    availableports.push( i );
+  }
+
+  if( napi_ok != napi_create_object( env, &rtpchan ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "rtpchannel", rtpchan ) ) return;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelcreate, nullptr, &ccreate ) ) return;
+  if( napi_ok != napi_set_named_property( env, rtpchan, "create", ccreate ) ) return;
+
+}
+
+#endif /* NODE_MODULE */

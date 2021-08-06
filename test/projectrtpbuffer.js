@@ -155,4 +155,12 @@ describe( "rtpbuffer", function() {
 
     } )
   } )
+
+  before( () => {
+    projectrtp.run()
+  } )
+
+  after( async () => {
+    await projectrtp.shutdown()
+  } )
 } )

@@ -72,6 +72,17 @@ node-gyp configure
 node-gyp build
 ```
 
+Or
+
+```
+node-gyp build --debug
+```
+
+Then you can look at backtrace etc - Fedora:
+```
+coredumpctl debug
+```
+
 ### Test
 
 All tests are run from node. From the root directory run `npm test`

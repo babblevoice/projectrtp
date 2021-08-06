@@ -12,17 +12,27 @@
 
 #include "projectrtpnodemain.h"
 #include "projectrtpbuffer.h"
+#include "projectrtpchannel.h"
 
-static boost::asio::io_context workercontext;
+std::string mediachroot;
+boost::asio::io_context workercontext;
 /* our work queue requires some work to not exit */
 static ourhighrestimer periodictimer( workercontext );
 
 std::atomic_bool running;
 
-static void ontimer( const boost::system::error_code& /*e*/ ) {
-  if( running ) {
-    periodictimer.expires_at( periodictimer.expiry() + std::chrono::seconds( 1 ) );
-    periodictimer.async_wait( &ontimer );
+static void ontimer( const boost::system::error_code& e ) {
+  if ( e != boost::asio::error::operation_aborted ) {
+    if( running ) {
+      periodictimer.expires_at( periodictimer.expiry() + std::chrono::seconds( 1 ) );
+      periodictimer.async_wait( &ontimer );
+    }
+  }
+}
+
+static void workerbee( void ) {
+  while( running ) {
+    workercontext.run();
   }
 }
 
@@ -33,15 +43,13 @@ static void runwork( napi_env env, void *data ) {
   auto numcpus = std::thread::hardware_concurrency();
   std::vector< std::thread > threads( numcpus );
 
-  periodictimer.expires_at( std::chrono::system_clock::now() );
-  periodictimer.async_wait( &ontimer );
+  boost::asio::post( workercontext, [](){
+    periodictimer.expires_after( std::chrono::seconds( 1 ) );
+    periodictimer.async_wait( &ontimer );
+  } );
 
   for ( unsigned i = 0; i < numcpus; i++ ) {
-    threads[ i ] = std::thread( []() -> void {
-      while( running ) {
-        workercontext.run();
-      }
-    } );
+    threads[ i ] = std::thread( workerbee );
   }
 
   for ( auto& t : threads ) {
@@ -70,7 +78,8 @@ static napi_value stopserver( napi_env env, napi_callback_info info ) {
 }
 
 static napi_value startserver( napi_env env, napi_callback_info info ) {
-  napi_value workname, result;
+
+  napi_value workname;
   napi_async_work workhandle;
 
   if( napi_ok != napi_create_string_utf8( env, "projectrtp", NAPI_AUTO_LENGTH, &workname ) ) {
@@ -91,23 +100,19 @@ static napi_value startserver( napi_env env, napi_callback_info info ) {
     return NULL;
   }
 
-  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
-  return result;
+  return NULL;
 }
 
 
 void initserver( napi_env env, napi_value &result ) {
 
-  napi_value server;
-  napi_value bstartserver, bstopserver;
+  napi_value bstopserver, bstartserver;
 
-  if( napi_ok != napi_create_object( env, &server ) ) return;
-  if( napi_ok != napi_set_named_property( env, result, "server", server ) ) return;
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, startserver, nullptr, &bstartserver ) ) return;
-  if( napi_ok != napi_set_named_property( env, server, "start", bstartserver ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "run", bstartserver ) ) return;
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, stopserver, nullptr, &bstopserver ) ) return;
-  if( napi_ok != napi_set_named_property( env, server, "stop", bstopserver ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "shutdown", bstopserver ) ) return;
 }
 
 napi_value init( napi_env env, napi_value exports ) {
@@ -118,6 +123,7 @@ napi_value init( napi_env env, napi_value exports ) {
   /* Init our modules */
   initserver( env, result );
   initrtpbuffer( env, result );
+  initrtpchannel( env, result );
 
   return result;
 }

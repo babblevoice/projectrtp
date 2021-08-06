@@ -20,11 +20,13 @@
 #include <boost/enable_shared_from_this.hpp>
 #include <boost/lockfree/stack.hpp>
 #include <boost/smart_ptr/atomic_shared_ptr.hpp>
-#include "boost/date_time/posix_time/posix_time.hpp"
+#include <boost/date_time/posix_time/posix_time.hpp>
 
 /* CODECs */
 #include <ilbc.h>
 #include <spandsp.h>
+
+#include <node_api.h>
 
 #include "globals.h"
 #include "projectrtpcodecx.h"
@@ -66,16 +68,18 @@ class projectrtpchannel :
 
 public:
   friend projectchannelmux;
-  projectrtpchannel( boost::asio::io_context &workercontext, boost::asio::io_context &iocontext, unsigned short port );
+  projectrtpchannel( unsigned short port );
   ~projectrtpchannel( void );
 
   typedef std::shared_ptr< projectrtpchannel > pointer;
-  static pointer create( boost::asio::io_context &workercontext, boost::asio::io_context &iocontext, unsigned short port );
+  static pointer create( unsigned short port );
 
-  void open( std::string &id, std::string &uuid );
-  void close( void );
+  void requestopen( void );
+  void requestclose( void );
+  void requestecho( bool e = true );
+
   void doclose( void );
-  void go( void );
+  void doopen( void );
 
   unsigned short getport( void );
 
@@ -146,8 +150,6 @@ private:
   /* uuid we generate for this channel */
   std::string uuid;
 
-  boost::asio::io_context &iocontext;
-  boost::asio::io_context &workercontext;
   boost::asio::ip::udp::resolver resolver;
 
   boost::asio::ip::udp::socket rtpsocket;
@@ -225,5 +227,7 @@ private:
 typedef std::deque<projectrtpchannel::pointer> rtpchannels;
 typedef std::unordered_map<std::string, projectrtpchannel::pointer> activertpchannels;
 
+
+void initrtpchannel( napi_env env, napi_value &result );
 
 #endif

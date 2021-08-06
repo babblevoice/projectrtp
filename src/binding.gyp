@@ -10,6 +10,7 @@
         "-std=c++17",
         "-fconcepts-ts" ],
       "sources": [
+        "firfilter.cpp",
         "projectrtpnodemain.cpp",
         "projectrtpbuffer.cpp",
         "projectrtppacket.cpp",
