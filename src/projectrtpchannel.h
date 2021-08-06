@@ -74,10 +74,11 @@ public:
   typedef std::shared_ptr< projectrtpchannel > pointer;
   static pointer create( unsigned short port );
 
-  void requestopen( void );
+  void requestopen( std::string address, unsigned short port );
   void requestclose( void );
   void requestecho( bool e = true );
 
+  void dotarget( void );
   void doclose( void );
   void doopen( void );
 
@@ -85,7 +86,6 @@ public:
 
   void enabledtls( dtlssession::mode, std::string &fingerprint );
 
-  void target( std::string &address, unsigned short port );
   void rfc2833( unsigned short pt );
   void play( stringptr newdef ) { this->newplaydef = newdef; }
   inline void echo( void ) { this->doecho = true; }
@@ -194,6 +194,9 @@ private:
   /* DTLS Session */
   dtlssession::pointer rtpdtls;
   bool rtpdtlshandshakeing;
+
+  std::string targetaddress;
+  unsigned short targetport;
 
 };
 

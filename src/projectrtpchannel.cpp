@@ -62,11 +62,9 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   rtpdtlshandshakeing( false ) {
 }
 
-void projectrtpchannel::requestopen( void ) {
-  boost::asio::post( workercontext,
-        boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
-}
-
+/*
+Must be called in the workercontext.
+*/
 void projectrtpchannel::doopen( void ) {
 
   this->maxticktime = 0;
@@ -586,8 +584,7 @@ void projectrtpchannel::readsomertcp( void )
 ## isactive
 As it says.
 */
-bool projectrtpchannel::isactive( void )
-{
+bool projectrtpchannel::isactive( void ) {
   return this->active;
 }
 
@@ -595,22 +592,18 @@ bool projectrtpchannel::isactive( void )
 ## writepacket
 Send a [RTP] packet to our endpoint.
 */
-void projectrtpchannel::writepacket( rtppacket *pk )
-{
-  if( 0 == pk->length )
-  {
+void projectrtpchannel::writepacket( rtppacket *pk ) {
+  if( 0 == pk->length ) {
     std::cerr << "We have been given an RTP packet of zero length??" << std::endl;
     return;
   }
 
-  if( !this->send )
-  {
+  if( !this->send ) {
     /* silently drop - could we do this sooner to use less CPU? */
     return;
   }
 
-  if( this->receivedrtp || this->targetconfirmed )
-  {
+  if( this->receivedrtp || this->targetconfirmed ) {
     this->tsout = pk->getnexttimestamp();
 
     this->rtpsocket.async_send_to(
@@ -627,9 +620,22 @@ void projectrtpchannel::writepacket( rtppacket *pk )
 ## target
 Our control can set the target of the RTP stream. This can be important in order to open holes in firewall for our reverse traffic.
 */
-void projectrtpchannel::target( std::string &address, unsigned short port ) {
+void projectrtpchannel::requestopen( std::string address, unsigned short port ) {
+
+  this->targetaddress = address;
+  this->targetport = port;
+
+  boost::asio::post( workercontext,
+        boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
+}
+
+void projectrtpchannel::dotarget( void ) {
+
   this->receivedrtp = false;
-  boost::asio::ip::udp::resolver::query query( boost::asio::ip::udp::v4(), address, std::to_string( port ) );
+  boost::asio::ip::udp::resolver::query query(
+    boost::asio::ip::udp::v4(),
+    this->targetaddress,
+    std::to_string( this->targetport ) );
 
   /* Resolve the address */
   this->resolver.async_resolve( query,
@@ -637,6 +643,30 @@ void projectrtpchannel::target( std::string &address, unsigned short port ) {
         shared_from_this(),
         boost::asio::placeholders::error,
         boost::asio::placeholders::iterator ) );
+}
+
+/*!md
+## handletargetresolve
+We have resolved the target address and port now use it. Further work could be to inform control there is an issue.
+*/
+void projectrtpchannel::handletargetresolve (
+            boost::system::error_code e,
+            boost::asio::ip::udp::resolver::iterator it ) {
+  boost::asio::ip::udp::resolver::iterator end;
+
+  if( it == end )
+  {
+    /* Failure - silent (the call will be as well!) */
+    return;
+  }
+
+  this->confirmedrtpsenderendpoint = *it;
+  this->targetconfirmed = true;
+
+  /* allow us to re-auto correct */
+  this->receivedrtp = false;
+
+  this->dotarget();
 }
 
 void projectrtpchannel::rfc2833( unsigned short pt ) {
@@ -694,28 +724,6 @@ bool projectrtpchannel::audio( codeclist codecs ) {
     }
   }
   return false;
-}
-
-/*!md
-## handletargetresolve
-We have resolved the target address and port now use it. Further work could be to inform control there is an issue.
-*/
-void projectrtpchannel::handletargetresolve (
-            boost::system::error_code e,
-            boost::asio::ip::udp::resolver::iterator it ) {
-  boost::asio::ip::udp::resolver::iterator end;
-
-  if( it == end )
-  {
-    /* Failure - silent (the call will be as well!) */
-    return;
-  }
-
-  this->confirmedrtpsenderendpoint = *it;
-  this->targetconfirmed = true;
-
-  /* allow us to re-auto correct */
-  this->receivedrtp = false;
 }
 
 /*!md
@@ -812,21 +820,67 @@ void channeldestroy( napi_env env, void* instance, void* /* hint */ ) {
   delete ( ( hiddensharedptr * ) instance );
 }
 
+/*
+argv[ 0 ]: {
+  "target": {
+    "port": int,
+    "address": string
+  },
+  "dtls": {
+    "fingerprint": "00:01:ff...",
+    "setup": "act"
+  }
+}
+*/
 static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
   size_t argc = 1;
   napi_value argv[ 1 ];
+  napi_value ntarget, nport, naddress;
 
+  napi_value result;
+  auto ourport = availableports.front();
+  availableports.pop();
+
+  napi_value request, target;
+  int32_t targetport;
+  char targetaddress[ 128 ];
 
   if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
 
-  napi_value result;
-  auto port = availableports.front();
-  availableports.pop();
+  if( argc != 1 ) {
+    napi_throw_error( env, "0", "You must provide an object to create a channel from" );
+    return NULL;
+  }
 
-  hiddensharedptr *pb = new hiddensharedptr( projectrtpchannel::create( port ) );
+  if( napi_ok != napi_get_named_property( env, argv[ 0 ], "target", &ntarget ) ) {
+    napi_throw_error( env, "0", "Missing target in object" );
+    return NULL;
+  }
 
-  pb->get< projectrtpchannel >()->requestopen();
+  if( napi_ok != napi_get_named_property( env, ntarget, "port", &nport ) ) {
+    napi_throw_error( env, "1", "Missing port in target object" );
+    return NULL;
+  }
+
+  napi_get_value_int32( env, nport, &targetport );
+
+  if( napi_ok != napi_get_named_property( env, ntarget, "address", &naddress ) ) {
+    napi_throw_error( env, "1", "Missing address in target object" );
+    return NULL;
+  }
+
+  size_t bytescopied;
+  napi_get_value_string_utf8( env, naddress, targetaddress, sizeof( targetaddress ), &bytescopied );
+  if( 0 == bytescopied || bytescopied >= sizeof( targetaddress ) ) {
+    napi_throw_error( env, "1", "Target host address too long" );
+    return NULL;
+  }
+
+  projectrtpchannel::pointer p = projectrtpchannel::create( ourport );
+  hiddensharedptr *pb = new hiddensharedptr( p );
+
+  p->requestopen( targetaddress, targetport );
 
   if( napi_ok != napi_create_object( env, &result ) ) return NULL;
   if( napi_ok != napi_type_tag_object( env, result, &channelcreatetag ) ) return NULL;
@@ -841,9 +895,9 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   if( napi_ok != napi_set_named_property( env, result, "echo", mecho ) ) return NULL;
 
   /* values */
-  napi_value nport;
-  if( napi_ok != napi_create_int32( env, port, &nport ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "port", nport ) ) return NULL;
+  napi_value nourport;
+  if( napi_ok != napi_create_int32( env, ourport, &nourport ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "port", nourport ) ) return NULL;
 
   return result;
 }
