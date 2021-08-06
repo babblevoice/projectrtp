@@ -277,13 +277,6 @@ static napi_value buffercreate( napi_env env, napi_callback_info info ) {
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, bufferpeek, nullptr, &npeek ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "peek", npeek ) ) return NULL;
 
-  /*
-  std::string res = "Hello World!";
-  if ( napi_ok != napi_create_string_utf8( env, res.c_str(), res.size(), &result ) ) {
-    return NULL;
-  }
-  */
-
   return result;
 }
 
