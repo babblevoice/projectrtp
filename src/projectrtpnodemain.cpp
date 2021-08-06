@@ -74,6 +74,9 @@ static napi_value stopserver( napi_env env, napi_callback_info info ) {
   }
 
   running = false;
+  periodictimer.cancel();
+  workercontext.stop();
+
   return stoppingpromise;
 }
 
