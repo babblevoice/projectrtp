@@ -43,9 +43,7 @@ class projectchannelmux;
 /* The number of packets we will keep in a buffer */
 #define BUFFERPACKETCOUNT 20
 /* The level we start dropping packets to clear backlog */
-#define BUFFERPACKETCAP 15
-#define BUFFERLOWDELAYCOUNT 5
-#define BUFFERHIGHDELAYCOUNT 10 /* 200mS @ a ptime of 20mS */
+#define BUFFERPACKETCAP 10  /* 200mS @ a ptime of 20mS */
 
 /* The size of our message queue where we send info about new channels added
 to the mixr to be added */
@@ -116,6 +114,16 @@ public:
   uint32_t tsout;
   uint16_t snout;
 
+  /* for stats */
+  std::atomic_uint64_t receivedpkcount;
+  std::atomic_uint64_t receivedpkskip;
+  std::atomic_uint64_t maxticktime;
+  std::atomic_uint64_t totalticktime;
+  std::atomic_uint64_t totaltickcount;
+  std::atomic_uint16_t tickswithnortpcount;
+
+  std::atomic_uint64_t outpkcount;
+
   /* buffer and spin lock for in traffic */
   rtpbuffer::pointer inbuff;
   std::atomic_bool rtpbufferlock;
@@ -127,6 +135,9 @@ public:
      as well as our own end point  */
   rtppacket outrtpdata[ OUTBUFFERPACKETCOUNT ];
   std::atomic_uint16_t rtpoutindex;
+
+  napi_value jsthis;
+  napi_threadsafe_function cb;
 
 private:
   std::atomic_bool active;
@@ -159,9 +170,6 @@ private:
               boost::system::error_code e,
               boost::asio::ip::udp::resolver::iterator it );
 
-  uint64_t receivedpkcount;
-  uint64_t receivedpkskip;
-
   atomicmuxptr others;
 
   /* CODECs  */
@@ -174,8 +182,6 @@ private:
   std::atomic_bool doecho;
   boost::asio::steady_timer tick;
 
-  std::atomic_uint16_t tickswithnortpcount;
-
   /* do we send, do we receive */
   std::atomic_bool send;
   std::atomic_bool recv;
@@ -185,11 +191,6 @@ private:
 
   boost::lockfree::stack< boost::shared_ptr< channelrecorder > > newrecorders;
   std::list< boost::shared_ptr< channelrecorder > > recorders;
-
-  /* for stats */
-  uint64_t maxticktime;
-  uint64_t totalticktime;
-  uint64_t totaltickcount;
 
   /* DTLS Session */
   dtlssession::pointer rtpdtls;
@@ -205,5 +206,14 @@ typedef std::unordered_map<std::string, projectrtpchannel::pointer> activertpcha
 
 
 void initrtpchannel( napi_env env, napi_value &result );
+
+class jschannelevent {
+public:
+  jschannelevent( std::string event, projectrtpchannel::pointer p ):
+    event( event ), p( p ) {}
+
+  std::string event;
+  projectrtpchannel::pointer p;
+};
 
 #endif

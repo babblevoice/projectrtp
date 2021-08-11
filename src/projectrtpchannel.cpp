@@ -15,7 +15,10 @@
 extern boost::asio::io_context workercontext;
 std::queue < unsigned short >availableports;
 
-/*!md
+/* The one function used by our channel */
+void postdatabacktojsfromthread( std::string event, projectrtpchannel::pointer p );
+
+/*
 # Project RTP Channel
 
 This file (class) represents an RP channel. That is an RTP stream (UDP) with
@@ -28,12 +31,24 @@ implimented) the address and port given to us when opening in the channel.
 
 */
 projectrtpchannel::projectrtpchannel( unsigned short port ):
+  /* public */
   selectedcodec( 0 ),
   ssrcout( 0 ),
   tsout( 0 ),
   snout( 0 ),
+  receivedpkcount( 0 ),
+  receivedpkskip( 0 ),
+  maxticktime( 0 ),
+  totalticktime( 0 ),
+  totaltickcount( 0 ),
+  tickswithnortpcount( 0 ),
+  outpkcount( 0 ),
+  inbuff( rtpbuffer::create( BUFFERPACKETCOUNT, BUFFERPACKETCAP ) ),
   rtpbufferlock( false ),
   rtpoutindex( 0 ),
+  jsthis( NULL ),
+  cb( NULL ),
+  /* private */
   active( false ),
   port( port ),
   rfc2833pt( 0 ),
@@ -43,38 +58,35 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   rtcpsocket( workercontext ),
   receivedrtp( false ),
   targetconfirmed( false ),
-  receivedpkcount( 0 ),
-  receivedpkskip( 0 ),
   others( nullptr ),
   player( nullptr ),
   newplaydef( nullptr ),
   doecho( false ),
   tick( workercontext ),
-  tickswithnortpcount( 0 ),
   send( true ),
   recv( true ),
   havedata( false ),
   newrecorders( MIXQUEUESIZE ),
-  maxticktime( 0 ),
-  totalticktime( 0 ),
-  totaltickcount( 0 ),
   rtpdtls( nullptr ),
   rtpdtlshandshakeing( false ) {
 }
 
+
+/*
+## requestopen
+*/
+void projectrtpchannel::requestopen( std::string address, unsigned short port ) {
+
+  this->targetaddress = address;
+  this->targetport = port;
+
+  boost::asio::post( workercontext,
+        boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
+}
 /*
 Must be called in the workercontext.
 */
 void projectrtpchannel::doopen( void ) {
-
-  this->maxticktime = 0;
-  this->totalticktime = 0;
-  this->totaltickcount = 0;
-
-  this->receivedpkcount = 0;
-  this->receivedpkskip = 0;
-
-  this->rtpoutindex = 0;
 
   this->outcodec.reset();
   this->incodec.reset();
@@ -91,23 +103,14 @@ void projectrtpchannel::doopen( void ) {
   this->active = true;
   this->send = true;
   this->recv = true;
+  this->havedata = false;
 
   this->codecs.clear();
-  this->selectedcodec = 0;
-
-  this->rfc2833pt = 0;
-  this->lasttelephoneevent = 0;
-
   this->ssrcout = rand();
 
   /* anchor our out time to when the channel is opened */
   this->tsout = std::chrono::system_clock::to_time_t( std::chrono::system_clock::now() );
-
   this->snout = rand();
-
-  this->tickswithnortpcount = 0;
-
-  this->havedata = false;
 
   this->readsomertp();
   this->readsomertcp();
@@ -124,6 +127,7 @@ void projectrtpchannel::doopen( void ) {
 Clean up
 */
 projectrtpchannel::~projectrtpchannel( void ) {
+  printf("~projectrtpchannel\n");fflush(stdout);
 }
 
 /*!md
@@ -158,23 +162,26 @@ unsigned short projectrtpchannel::getport( void ) {
   return this->port;
 }
 
-/*!md
-## close
-Closes the channel.
-*/
-void projectrtpchannel::requestclose( void ) {
-  availableports.push( this->port );
-  this->active = false;
-
-  boost::asio::post( workercontext,
-        boost::bind( &projectrtpchannel::doclose, this ) );
-}
-
 void projectrtpchannel::requestecho( bool e ) {
   this->doecho = e;
 }
 
+/*
+## requestclose
+Closes the channel.
+*/
+void projectrtpchannel::requestclose( void ) {
+
+  boost::asio::post( workercontext,
+        boost::bind( &projectrtpchannel::doclose, shared_from_this() ) );
+
+  availableports.push( this->port );
+}
+
 void projectrtpchannel::doclose( void ) {
+
+  if( !this->active ) return;
+
   this->active = false;
   this->tick.cancel();
   this->player = nullptr;
@@ -198,54 +205,8 @@ void projectrtpchannel::doclose( void ) {
 
   this->rtpsocket.close();
   this->rtcpsocket.close();
-#warning TODO
-#if 0
-  if( this->control )
-  {
-    this->control->channelclosed( this->uuid );
 
-    JSON::Object v;
-    v[ "action" ] = "close";
-    v[ "id" ] = this->id;
-    v[ "uuid" ] = this->uuid;
-
-    /* calculate mos - calc borrowed from FS - thankyou. */
-    JSON::Object i;
-    if( this->receivedpkcount > 0 )
-    {
-      double r = ( ( this->receivedpkcount - this->receivedpkskip ) / this->receivedpkcount ) * 100.0;
-      if ( r < 0 || r > 100 ) r = 100;
-      double mos = 1 + ( 0.035 * r ) + (.000007 * r * ( r - 60 ) * ( 100 - r ) );
-
-      i[ "mos" ] = ( JSON::Double ) mos;
-    }
-    else
-    {
-      i[ "mos" ] = ( JSON::Double ) 0.0;
-    }
-    i[ "count" ] = ( JSON::Integer ) this->receivedpkcount;
-    i[ "skip" ] = ( JSON::Integer ) this->receivedpkskip;
-
-    JSON::Object s;
-    s[ "in" ] = i;
-
-    if( this->totaltickcount > 0 )
-    {
-      s[ "meanticktimeus" ] = ( JSON::Integer ) ( this->totalticktime / this->totaltickcount );
-    }
-    else
-    {
-      s[ "meanticktimeus" ] = ( JSON::Integer ) 0;
-    }
-    s[ "maxticktimeus" ] = ( JSON::Integer ) this->maxticktime;
-    s[ "tickswithnortpcount" ] = ( JSON::Integer ) this->tickswithnortpcount;
-    s[ "totaltickcount" ] = ( JSON::Integer ) this->totaltickcount;
-
-    v[ "stats" ] = s;
-
-    this->control->sendmessage( v );
-  }
-#endif
+  postdatabacktojsfromthread( "close", shared_from_this() );
 }
 
 bool projectrtpchannel::checkidlerecv( void )
@@ -470,7 +431,6 @@ void projectrtpchannel::readsomertp( void )
     buf = this->inbuff->reserve();
   }
   RELEASESPINLOCK( this->rtpbufferlock );
-
   if( nullptr == buf ) {
     std::cerr << "ERROR: we should never get here - we have no more buffer available on port " << this->port << std::endl;
     return;
@@ -539,8 +499,8 @@ We assume this is called to send packets out in order, and at intervals
  required for each timestamp to be incremented in lou of it payload type.
 */
 rtppacket *projectrtpchannel::gettempoutbuf( uint32_t skipcount ) {
-  int outindex = this->rtpoutindex++;
-  rtppacket *buf = &this->outrtpdata[ outindex % BUFFERPACKETCOUNT ];
+  uint16_t outindex = this->rtpoutindex++;
+  rtppacket *buf = &this->outrtpdata[ ( outindex % OUTBUFFERPACKETCOUNT ) ];
 
   buf->init( this->ssrcout );
   buf->setpayloadtype( this->selectedcodec );
@@ -593,6 +553,14 @@ bool projectrtpchannel::isactive( void ) {
 Send a [RTP] packet to our endpoint.
 */
 void projectrtpchannel::writepacket( rtppacket *pk ) {
+
+  if( !this->active ) return;
+
+  if( nullptr == pk ) {
+    std::cerr << "We have been given an nullptr RTP packet??" << std::endl;
+    return;
+  }
+
   if( 0 == pk->length ) {
     std::cerr << "We have been given an RTP packet of zero length??" << std::endl;
     return;
@@ -610,23 +578,10 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
                       boost::asio::buffer( pk->pk, pk->length ),
                       this->confirmedrtpsenderendpoint,
                       boost::bind( &projectrtpchannel::handlesend,
-                                    this,
+                                    shared_from_this(),
                                     boost::asio::placeholders::error,
                                     boost::asio::placeholders::bytes_transferred ) );
   }
-}
-
-/*!md
-## target
-Our control can set the target of the RTP stream. This can be important in order to open holes in firewall for our reverse traffic.
-*/
-void projectrtpchannel::requestopen( std::string address, unsigned short port ) {
-
-  this->targetaddress = address;
-  this->targetport = port;
-
-  boost::asio::post( workercontext,
-        boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
 }
 
 void projectrtpchannel::dotarget( void ) {
@@ -733,7 +688,7 @@ What is called once we have sent something.
 void projectrtpchannel::handlesend(
       const boost::system::error_code& error,
       std::size_t bytes_transferred) {
-
+  this->outpkcount++;
 }
 
 /*!md
@@ -832,24 +787,142 @@ argv[ 0 ]: {
   }
 }
 */
+
+void postdatabacktojsfromthread( std::string event, projectrtpchannel::pointer p ) {
+
+  if( NULL == p->cb ) return;
+  /*
+    The return might be ignorable? We have created a threadsafe function
+    with a max_queue_size with no limit. Can this still hit a limit?
+  */
+  switch( napi_call_threadsafe_function( p->cb,
+                                         new jschannelevent( event, p ),
+                                         napi_tsfn_nonblocking ) ) {
+
+  case napi_queue_full:
+    fprintf( stderr, "napi_call_threadsafe_function queue full - this shouldn't happen - investigate\n" );
+    break;
+  case napi_ok:
+    break;
+  default:
+    break;
+  }
+}
+/*
+  Some terms.
+  dropped is when the in buffer decided the packet received is no longer valid - i.e. it is outside of our receve window
+  skip is when we are processing RTP we have jumped (unexpectantly) in sequence number
+*/
+napi_value createcloseobject( napi_env env, projectrtpchannel::pointer p ) {
+
+  napi_value result, action;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+  if( napi_ok != napi_create_string_utf8( env, "close", NAPI_AUTO_LENGTH, &action ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "action", action ) ) return NULL;
+
+  /* calculate mos - calc borrowed from FS - thankyou. */
+  napi_value mos, in, out, tick;
+  if( napi_ok != napi_create_object( env, &in ) ) return NULL;
+  if( napi_ok != napi_create_object( env, &out ) ) return NULL;
+  if( napi_ok != napi_create_object( env, &tick ) ) return NULL;
+
+  if( p->receivedpkcount > 0 ) {
+    double r = ( ( p->receivedpkcount - p->receivedpkskip ) / p->receivedpkcount ) * 100.0;
+    if ( r < 0 || r > 100 ) r = 100;
+    double mosval = 1 + ( 0.035 * r ) + ( .000007 * r * ( r - 60 ) * ( 100 - r ) );
+
+    if( napi_ok != napi_create_double( env, mosval, &mos ) ) return NULL;
+  } else {
+    if( napi_ok != napi_create_double( env, 0.0, &mos ) ) return NULL;
+  }
+
+  napi_value receivedpkcount, receivedpkskip, receiveddropped;
+  if( napi_ok != napi_create_double( env, p->receivedpkcount, &receivedpkcount ) ) return NULL;
+  if( napi_ok != napi_create_double( env, p->receivedpkskip, &receivedpkskip ) ) return NULL;
+  if( napi_ok != napi_create_double( env, p->inbuff->getdropped(), &receiveddropped ) ) return NULL;
+
+  if( napi_ok != napi_set_named_property( env, in, "mos", mos ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, in, "count", receivedpkcount ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, in, "dropped", receiveddropped ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, in, "skip", receivedpkskip ) ) return NULL;
+
+  napi_value sentpkcount;
+  if( napi_ok != napi_create_double( env, p->outpkcount, &sentpkcount ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, out, "count", sentpkcount ) ) return NULL;
+
+  napi_value meanticktimeus, maxticktimeus, totaltickcount;
+  if( p->totaltickcount > 0 ) {
+    if( napi_ok != napi_create_double( env, ( p->totalticktime / p->totaltickcount ), &meanticktimeus ) ) return NULL;
+  } else {
+    if( napi_ok != napi_create_double( env, 0, &meanticktimeus ) ) return NULL;
+  }
+
+  if( napi_ok != napi_create_double( env, p->maxticktime, &maxticktimeus ) ) return NULL;
+  if( napi_ok != napi_create_double( env, p->totaltickcount, &totaltickcount ) ) return NULL;
+
+  if( napi_ok != napi_set_named_property( env, tick, "meanus", meanticktimeus ) ) return NULL;
+
+  if( napi_ok != napi_set_named_property( env, tick, "maxus", maxticktimeus ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, tick, "count", totaltickcount ) ) return NULL;
+
+  napi_value stats;
+  if( napi_ok != napi_create_object( env, &stats ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, stats, "in", in ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, stats, "out", out ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, stats, "tick", tick ) ) return NULL;
+
+  if( napi_ok != napi_set_named_property( env, result, "stats", stats ) ) return NULL;
+  return result;
+}
+
+/*
+This function is called when we convert data into node types. This is called
+by the napi framework after the threadsafe function has been acquired and called.
+*/
+static void eventcallback( napi_env env, napi_value jscb, void* context, void* data ) {
+
+  napi_value ourdata = NULL;
+  jschannelevent *ev = ( ( jschannelevent * ) data );
+  projectrtpchannel::pointer p = ev->p;
+
+  if( "close" == ev->event ) {
+    ourdata = createcloseobject( env, p );
+  }
+
+  napi_value undefined;
+  napi_get_undefined( env, &undefined );
+  napi_call_function( env,
+                      undefined,
+                      jscb,
+                      1,
+                      &ourdata,
+                      NULL );
+
+  /* our final call - allow js to clean up */
+  if( "close" == ev->event ) {
+    napi_release_threadsafe_function( p->cb, napi_tsfn_abort );
+  }
+
+  delete ev;
+}
+
 static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
-  size_t argc = 1;
-  napi_value argv[ 1 ];
+  size_t argc = 2;
+  napi_value argv[ 2 ];
   napi_value ntarget, nport, naddress;
 
   napi_value result;
   auto ourport = availableports.front();
   availableports.pop();
 
-  napi_value request, target;
   int32_t targetport;
   char targetaddress[ 128 ];
 
   if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
 
-  if( argc != 1 ) {
-    napi_throw_error( env, "0", "You must provide an object to create a channel from" );
+  if( argc < 1 || argc > 2 ) {
+    napi_throw_error( env, "0", "You must provide 1 or 2 params" );
     return NULL;
   }
 
@@ -880,11 +953,36 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   projectrtpchannel::pointer p = projectrtpchannel::create( ourport );
   hiddensharedptr *pb = new hiddensharedptr( p );
 
-  p->requestopen( targetaddress, targetport );
+  if( argc > 1 ) {
+    napi_value workname;
+
+    if( napi_ok != napi_create_string_utf8( env, "projectrtp", NAPI_AUTO_LENGTH, &workname ) ) {
+      return NULL;
+    }
+
+    /*
+      We don't need to call napi_acquire_threadsafe_function as we are setting
+      the inital value of initial_thread_count to 1.
+    */
+    if( napi_ok != napi_create_threadsafe_function( env,
+                                         argv[ 1 ],
+                                         NULL,
+                                         workname,
+                                         0,
+                                         1,
+                                         NULL,
+                                         NULL,
+                                         NULL,
+                                         eventcallback,
+                                         &p->cb ) ) return NULL;
+  }
 
   if( napi_ok != napi_create_object( env, &result ) ) return NULL;
   if( napi_ok != napi_type_tag_object( env, result, &channelcreatetag ) ) return NULL;
   if( napi_ok != napi_wrap( env, result, pb, channeldestroy, nullptr, nullptr ) ) return NULL;
+
+  p->jsthis = result;
+  p->requestopen( targetaddress, targetport );
 
   /* methods */
   napi_value mclose, mecho;
