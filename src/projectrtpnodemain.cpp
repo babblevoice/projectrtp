@@ -120,6 +120,8 @@ void initserver( napi_env env, napi_value &result ) {
 napi_value init( napi_env env, napi_value exports ) {
   napi_value result;
 
+  srand( time( NULL ) );
+
   if( napi_ok != napi_create_object( env, &result ) ) return NULL;
 
   /* Init our modules */
