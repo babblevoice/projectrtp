@@ -14,7 +14,8 @@ rawsound::rawsound() :
   allocatedlength( 0 ),
   bytespersample( 1 ),
   format( 0 ),
-  samplerate( 0 )
+  samplerate( 0 ),
+  dirtydata( false )
 {
 }
 
@@ -66,6 +67,7 @@ void rawsound::frompt( int payloadtype )
 {
   switch( payloadtype )
   {
+    default:
     case PCMUPAYLOADTYPE:
     case PCMAPAYLOADTYPE:
     {
