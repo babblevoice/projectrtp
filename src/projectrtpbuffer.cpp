@@ -5,7 +5,8 @@
 rtpbuffer::rtpbuffer( int buffercount, int waterlevel ) :
   reserved( nullptr ),
   waterlevel( waterlevel ),
-  outsn( 0 ) {
+  outsn( 0 ),
+  dropped( 0 ) {
 
   this->buffer.resize( buffercount );
   this->orderedrtpdata.resize( buffercount );
@@ -72,6 +73,7 @@ void rtpbuffer::push( void ) {
     if( ( ( uint16_t )( sn - this->outsn ) ) > ( ( uint16_t ) this->buffer.size() ) ) {
       this->availablertpdata.push( this->reserved );
       this->reserved = nullptr;
+      this->dropped++;
       return;
     }
   }

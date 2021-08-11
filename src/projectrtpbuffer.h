@@ -33,6 +33,7 @@ public:
   rtppacket* pop( void );
   void push( void );
   rtppacket* reserve( void );
+  uint64_t getdropped( void ) { return this->dropped; }
 
   typedef std::vector< rtppacket > rtppackets;
   typedef std::vector< rtppacket* > rtppacketptrs;
@@ -54,6 +55,7 @@ private:
 
   int waterlevel;
   uint16_t outsn;
+  uint64_t dropped;
 };
 
 #ifdef NODE_MODULE
