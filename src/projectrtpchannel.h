@@ -104,12 +104,13 @@ public:
   bool isactive( void );
 
   bool mix( projectrtpchannel::pointer other );
-  rtppacket *gettempoutbuf( uint32_t skipcount = 0 );
+  rtppacket *gettempoutbuf( void );
 
   void unmix( void );
 
   codeclist codecs;
   int selectedcodec;
+  uint32_t ssrcin;
   uint32_t ssrcout;
   uint32_t tsout;
   uint16_t snout;

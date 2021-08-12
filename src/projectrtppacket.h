@@ -29,7 +29,6 @@ public:
   uint8_t getpayloadtype( void );
   uint16_t getsequencenumber( void );
   uint32_t gettimestamp( void );
-  uint32_t getnexttimestamp( void );
   uint32_t getticksperpacket( void );
   uint32_t getssrc( void );
   uint32_t getcsrc( uint8_t index );
