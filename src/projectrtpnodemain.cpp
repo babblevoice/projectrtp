@@ -43,6 +43,10 @@ static void runwork( napi_env env, void *data ) {
   auto numcpus = std::thread::hardware_concurrency();
   std::vector< std::thread > threads( numcpus );
 
+  if( workercontext.stopped() ) {
+    workercontext.restart();
+  }
+
   boost::asio::post( workercontext, [](){
     periodictimer.expires_after( std::chrono::seconds( 1 ) );
     periodictimer.async_wait( &ontimer );
