@@ -776,19 +776,6 @@ void channeldestroy( napi_env env, void* instance, void* /* hint */ ) {
   delete ( ( hiddensharedptr * ) instance );
 }
 
-/*
-argv[ 0 ]: {
-  "target": {
-    "port": int,
-    "address": string
-  },
-  "dtls": {
-    "fingerprint": "00:01:ff...",
-    "setup": "act"
-  }
-}
-*/
-
 void postdatabacktojsfromthread( std::string event, projectrtpchannel::pointer p ) {
 
   if( NULL == p->cb ) return;
@@ -907,6 +894,18 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
   delete ev;
 }
 
+/*
+argv[ 0 ]: {
+  "target": {
+    "port": int,
+    "address": string
+  },
+  "dtls": {
+    "fingerprint": "00:01:ff...",
+    "setup": "act"
+  }
+}
+*/
 static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
   size_t argc = 2;
