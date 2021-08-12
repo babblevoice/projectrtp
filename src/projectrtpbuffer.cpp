@@ -2,8 +2,21 @@
 #include "projectrtpbuffer.h"
 #include "globals.h"
 
+/*
+RTP Buffer.
+
+We have a buffer which orders based on SN. We can peek at the current SN
+and we can pop which returns the same item but moves on the SN.
+
+The water level is what we set the outsn to be beind the first insertion.
+If the first sn is 30 and the water level is 15, then we set the outsn to be 15.
+
+When we pop we look for sn of 15, then 16 and so on for each pop.
+*/
+
 rtpbuffer::rtpbuffer( int buffercount, int waterlevel ) :
   reserved( nullptr ),
+  buffercount( buffercount ),
   waterlevel( waterlevel ),
   outsn( 0 ),
   dropped( 0 ) {
@@ -28,10 +41,8 @@ rtpbuffer::pointer rtpbuffer::create( int buffercount, int waterlevel ) {
 Returns the next packet in order - does not modify our structure.
 */
 rtppacket* rtpbuffer::peek( void ) {
-  rtppacket *out = this->orderedrtpdata.at( this->outsn % this->orderedrtpdata.size() );
+  rtppacket *out = this->orderedrtpdata.at( this->outsn % this->buffercount );
   if( nullptr == out ) return nullptr;
-  if( out->getsequencenumber() != this->outsn ) return nullptr;
-
   return out;
 }
 
@@ -40,11 +51,21 @@ Returns the next packet in order.
 */
 rtppacket* rtpbuffer::pop( void ) {
   rtppacket *out = this->peek();
-  this->orderedrtpdata.at( this->outsn % this->orderedrtpdata.size() ) = nullptr;
+  uint16_t oldsn = this->outsn;
   this->outsn++;
-  if( nullptr == out ) return nullptr;
 
-  this->availablertpdata.push( out );
+  if( nullptr == out ) {
+    return nullptr;
+  }
+
+  if( nullptr != this->orderedrtpdata.at( oldsn % this->buffercount ) ) {
+    this->orderedrtpdata.at( oldsn % this->buffercount ) = nullptr;
+    this->availablertpdata.push( out );
+  }
+
+  if( out->getsequencenumber() != oldsn ) {
+    return nullptr;
+  }
   return out;
 }
 
@@ -63,14 +84,13 @@ void rtpbuffer::push( void ) {
     When this is our first packet entering (either becuase we were emptied or
     this is the first use) then we set the out sn to be the water level ahead to
     allow packets to build up to that level and gain some order.
-    -1 as we have a reserved packet
+    -1 as we have the this->reserved packet
   */
   if( this->availablertpdata.size() == ( this->buffer.size() - 1 ) ) {
-    this->outsn = sn - this->buffer.size() + this->waterlevel;
-    /* printf( "outsn: %.2X\n", this->outsn ); */
+    this->outsn = sn - static_cast< uint16_t >( this->waterlevel );
   } else {
     /* out of range - based on our outsn counter */
-    if( ( ( uint16_t )( sn - this->outsn ) ) > ( ( uint16_t ) this->buffer.size() ) ) {
+    if( ( static_cast< uint16_t >( sn - this->outsn ) ) > ( static_cast< uint16_t >( this->buffercount ) ) ) {
       this->availablertpdata.push( this->reserved );
       this->reserved = nullptr;
       this->dropped++;
@@ -78,8 +98,8 @@ void rtpbuffer::push( void ) {
     }
   }
 
-  if( nullptr == this->orderedrtpdata.at( sn % this->orderedrtpdata.size() ) ) {
-    this->orderedrtpdata.at( sn % this->orderedrtpdata.size() ) = this->reserved;
+  if( nullptr == this->orderedrtpdata.at( sn % this->buffercount ) ) {
+    this->orderedrtpdata.at( sn % this->buffercount ) = this->reserved;
   }
 
   this->reserved = nullptr;
@@ -249,7 +269,7 @@ static napi_value buffercreate( napi_env env, napi_callback_info info ) {
   int32_t packetcount, packetwaterlevel;
 
   packetcount = 20;
-  packetwaterlevel = 15;
+  packetwaterlevel = 10;
 
   if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
 

@@ -25,16 +25,13 @@ describe( "rtpbuffer", function() {
 
       let b = projectrtp.rtpbuffer.create()
 
-      b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00 ] ) } )
-      expect( b.pop() ).to.be.undefined
-      b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00 ] ) } )
-      expect( b.pop() ).to.be.undefined
-      b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00 ] ) } )
-      expect( b.pop() ).to.be.undefined
-      b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00 ] ) } )
-      expect( b.pop() ).to.be.undefined
+      for( let v = 0; v < 10; v++ ) {
+        b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0x01, v, 0x00, 0x00, 0x00, 0x00 ] ) } )
+        expect( b.pop() ).to.be.undefined
+      }
+
+      /* These should be dropped */
       b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0x03, 0x02, 0x00, 0x00, 0x00, 0x00 ] ) } ) // out of range
-      expect( b.pop() ).to.be.undefined
       b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0x03, 0xff, 0xff, 0x00, 0x00, 0x00 ] ) } ) // out of range
 
       for ( let step = 0; step < 4; step++ ) {
@@ -44,7 +41,7 @@ describe( "rtpbuffer", function() {
         expect( pk[ 3 ] ).to.equal( 0 )
       }
 
-      for ( let step = 0; step < 4; step++ ) {
+      for ( let step = 0; step < 10; step++ ) {
         let pk = b.pop()
         expect( pk[ 2 ] ).to.equal( 1 )
         expect( pk[ 3 ] ).to.equal( step )
@@ -59,15 +56,19 @@ describe( "rtpbuffer", function() {
 
       let b = projectrtp.rtpbuffer.create()
 
-      for ( let step = 0; step < 10; step++ ) {
+      for ( let step = 0; step < 5; step++ ) {
         b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0x01, step, 0x00, 0x00, 0x00, 0x00 ] ) } )
       }
 
-      for ( let step = 0; step < 5; step++ ) {
+      for ( let step = 0; step < 10; step++ ) {
         expect( b.pop() ).to.be.undefined
       }
 
-      for ( let step = 0; step < 10; step++ ) {
+      for ( let step = 5; step < 15; step++ ) {
+        b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0x01, step, 0x00, 0x00, 0x00, 0x00 ] ) } )
+      }
+
+      for ( let step = 0; step < 15; step++ ) {
         let pk = b.pop()
         expect( pk[ 2 ] ).to.equal( 1 )
         expect( pk[ 3 ] ).to.equal( step )
@@ -76,9 +77,6 @@ describe( "rtpbuffer", function() {
       /* now restart from a much higher sn */
       for ( let step = 0; step < 10; step++ ) {
         b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0x02, step, 0x00, 0x00, 0x00, 0x00 ] ) } )
-      }
-
-      for ( let step = 0; step < 5; step++ ) {
         expect( b.pop() ).to.be.undefined
       }
 
@@ -100,8 +98,10 @@ describe( "rtpbuffer", function() {
       b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0x00, 105, 0x00, 0x00, 0x00, 0x00 ] ) } )
       expect( b.pop() ).to.be.undefined
       b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0x00, 104, 0x00, 0x00, 0x00, 0x00 ] ) } )
-      expect( b.pop() ).to.be.undefined
-      expect( b.pop() ).to.be.undefined
+
+      for ( let step = 0; step < 7; step++ ) {
+        expect( b.pop() ).to.be.undefined
+      }
 
 
       let pk = b.pop()
@@ -125,17 +125,17 @@ describe( "rtpbuffer", function() {
     it( `pump some data through with wrap of sn`, async function() {
       let b = projectrtp.rtpbuffer.create()
 
-      for ( let step = 0; step < 5; step++ ) {
+      for ( let step = 0; step < 10; step++ ) {
         b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0xff, step, 0x00, 0x00, 0x00, 0x00 ] ) } )
         expect( b.pop() ).to.be.undefined
       }
 
-      for ( let step = 5; step < 256; step++ ) {
+      for ( let step = 10; step < 256; step++ ) {
         b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0xff, step, 0x00, 0x00, 0x00, 0x00 ] ) } )
         let pk = b.pop()
 
         expect( pk[ 2 ] ).to.equal( 255 )
-        expect( pk[ 3 ] ).to.equal( step - 5 )
+        expect( pk[ 3 ] ).to.equal( step - 10 )
       }
 
       /* wrap */
@@ -143,13 +143,13 @@ describe( "rtpbuffer", function() {
         b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0x00, step, 0x00, 0x00, 0x00, 0x00 ] ) } )
 
         let pk = b.pop()
-        if( step < 5 ) {
+        if( step < 10 ) {
           /* remaining data from previous loop */
           expect( pk[ 2 ] ).to.equal( 255 )
-          expect( pk[ 3 ] ).to.equal( 256 - ( 5 - step ) )
+          expect( pk[ 3 ] ).to.equal( 256 - ( 10 - step ) )
         } else {
           expect( pk[ 2 ] ).to.equal( 0 )
-          expect( pk[ 3 ] ).to.equal( step - 5 )
+          expect( pk[ 3 ] ).to.equal( step - 10 )
         }
       }
 

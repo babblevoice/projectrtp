@@ -186,15 +186,6 @@ uint32_t rtppacket::gettimestamp( void )
 }
 
 /*!md
-## getnexttimestamp
-Takes the current timesamp and adds the number of samples (depending on the CODEC) and returns that value - so it can be assigned to the next packet.
-*/
-uint32_t rtppacket::getnexttimestamp( void )
-{
-  return this->gettimestamp() + this->getticksperpacket();
-}
-
-/*!md
 ## getticksperpacket
 Returns the number of ticks per packet. All support packets are the same. A bit strange!
 */

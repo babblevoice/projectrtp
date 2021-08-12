@@ -33,6 +33,7 @@ implimented) the address and port given to us when opening in the channel.
 projectrtpchannel::projectrtpchannel( unsigned short port ):
   /* public */
   selectedcodec( 0 ),
+  ssrcin( 0 ),
   ssrcout( 0 ),
   tsout( 0 ),
   snout( 0 ),
@@ -127,7 +128,6 @@ void projectrtpchannel::doopen( void ) {
 Clean up
 */
 projectrtpchannel::~projectrtpchannel( void ) {
-  printf("~projectrtpchannel\n");fflush(stdout);
 }
 
 /*!md
@@ -273,6 +273,8 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
     projectchannelmux::pointer mux = this->others;
     if( nullptr == mux || 0 == mux->size() )
     {
+      this->tsout += G711PAYLOADBYTES;
+
       if( this->checkidlerecv() ) return;
       this->checkfornewrecorders();
 
@@ -468,9 +470,16 @@ void projectrtpchannel::readsomertp( void )
           if( !this->receivedrtp ) {
             this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
             this->receivedrtp = true;
+            this->ssrcin = buf->getssrc();
           } else {
             /* After the first packet - we only accept data from the verified source */
             if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint ) {
+              this->readsomertp();
+              return;
+            }
+
+            if( buf->getssrc() != this->ssrcin ) {
+              this->receivedpkskip++;
               this->readsomertp();
               return;
             }
@@ -498,23 +507,15 @@ channel. This will return the next one available.
 We assume this is called to send packets out in order, and at intervals
  required for each timestamp to be incremented in lou of it payload type.
 */
-rtppacket *projectrtpchannel::gettempoutbuf( uint32_t skipcount ) {
+rtppacket *projectrtpchannel::gettempoutbuf( void ) {
+
   uint16_t outindex = this->rtpoutindex++;
   rtppacket *buf = &this->outrtpdata[ ( outindex % OUTBUFFERPACKETCOUNT ) ];
 
   buf->init( this->ssrcout );
   buf->setpayloadtype( this->selectedcodec );
-
-  this->snout += skipcount;
   buf->setsequencenumber( this->snout );
-
-  if( skipcount > 0 ) {
-    this->tsout += ( buf->getticksperpacket() * skipcount );
-  }
-
   buf->settimestamp( this->tsout );
-  this->snout++;
-
   return buf;
 }
 
@@ -572,7 +573,7 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
   }
 
   if( this->receivedrtp || this->targetconfirmed ) {
-    this->tsout = pk->getnexttimestamp();
+    this->snout++;
 
     this->rtpsocket.async_send_to(
                       boost::asio::buffer( pk->pk, pk->length ),

@@ -53,6 +53,7 @@ private:
   rtppacketptrs orderedrtpdata;
   rtppacket *reserved;
 
+  int buffercount;
   int waterlevel;
   uint16_t outsn;
   uint64_t dropped;
