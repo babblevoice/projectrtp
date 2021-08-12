@@ -463,6 +463,24 @@ describe( "rtpchannel", function() {
     } )
   } )
 
+  it( `create channel echo and close on timeout`, function( done ) {
+
+    this.timeout( 21000 )
+    this.slow( 20000 )
+
+    let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": 20765 } }, function( d ) {
+
+      if( "close" === d.action ) {
+
+        expect( d.stats.in.count ).to.equal( 0 )
+        expect( d.stats.in.skip ).to.equal( 0 )
+        expect( d.stats.out.count ).to.equal( 0 )
+
+        done()
+      }
+    } )
+  } )
+
   before( () => {
     console.log("calling run")
     projectrtp.run()
