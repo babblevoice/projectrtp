@@ -170,8 +170,6 @@ void projectrtpchannel::requestclose( void ) {
 
   boost::asio::post( workercontext,
         boost::bind( &projectrtpchannel::doclose, shared_from_this() ) );
-
-  availableports.push( this->port );
 }
 
 void projectrtpchannel::doclose( void ) {
@@ -205,13 +203,10 @@ void projectrtpchannel::doclose( void ) {
   postdatabacktojsfromthread( "close", shared_from_this() );
 }
 
-bool projectrtpchannel::checkidlerecv( void )
-{
-  if( this->recv && this->active )
-  {
+bool projectrtpchannel::checkidlerecv( void ) {
+  if( this->recv && this->active ) {
     this->tickswithnortpcount++;
-    if( this->tickswithnortpcount > ( 50 * 20 ) ) /* 50 (@20mS ptime)/S */
-    {
+    if( this->tickswithnortpcount > ( 50 * 20 ) ) { /* 50 (@20mS ptime)/S = 20S */
       this->doclose();
       return true;
     }
@@ -885,6 +880,7 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
   /* our final call - allow js to clean up */
   if( "close" == ev->event ) {
     napi_release_threadsafe_function( p->cb, napi_tsfn_abort );
+    availableports.push( p->getport() );
   }
 
   delete ev;
