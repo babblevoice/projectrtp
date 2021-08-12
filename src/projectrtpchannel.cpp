@@ -14,6 +14,7 @@
 
 extern boost::asio::io_context workercontext;
 std::queue < unsigned short >availableports;
+uint32_t channelscreated = 0;
 
 /* The one function used by our channel */
 void postdatabacktojsfromthread( std::string event, projectrtpchannel::pointer p );
@@ -70,6 +71,8 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   newrecorders( MIXQUEUESIZE ),
   rtpdtls( nullptr ),
   rtpdtlshandshakeing( false ) {
+
+  channelscreated++;
 }
 
 
@@ -124,6 +127,7 @@ void projectrtpchannel::doopen( void ) {
 Clean up
 */
 projectrtpchannel::~projectrtpchannel( void ) {
+  channelscreated--;
 }
 
 /*!md
@@ -740,6 +744,20 @@ static napi_value channelclose( napi_env env, napi_callback_info info ) {
   return createnapibool( env, true );
 }
 
+static napi_value stats( napi_env env, napi_callback_info info ) {
+  napi_value result;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+
+  napi_value av, chcount;
+  if( napi_ok != napi_create_double( env, availableports.size(), &av ) ) return NULL;
+  if( napi_ok != napi_create_double( env, channelscreated, &chcount ) ) return NULL;
+
+  if( napi_ok != napi_set_named_property( env, result, "available", av ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "current", chcount ) ) return NULL;
+
+  return result;
+}
+
 static napi_value channelecho( napi_env env, napi_callback_info info ) {
 
   size_t argc = 1;
@@ -764,7 +782,8 @@ static napi_value channelecho( napi_env env, napi_callback_info info ) {
 }
 
 void channeldestroy( napi_env env, void* instance, void* /* hint */ ) {
-  delete ( ( hiddensharedptr * ) instance );
+  hiddensharedptr *pb = ( hiddensharedptr * ) instance;
+  delete pb;
 }
 
 void postdatabacktojsfromthread( std::string event, projectrtpchannel::pointer p ) {
@@ -855,6 +874,15 @@ napi_value createcloseobject( napi_env env, projectrtpchannel::pointer p ) {
 }
 
 /*
+In case the user doesn't supply a call back to be notified then
+we use this one so that we can pass data back into the threadsafe
+enviroment.
+*/
+static napi_value dummyclose( napi_env env, napi_callback_info info ) {
+  return NULL;
+}
+
+/*
 This function is called when we convert data into node types. This is called
 by the napi framework after the threadsafe function has been acquired and called.
 */
@@ -879,8 +907,8 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
 
   /* our final call - allow js to clean up */
   if( "close" == ev->event ) {
-    napi_release_threadsafe_function( p->cb, napi_tsfn_abort );
     availableports.push( p->getport() );
+    napi_release_threadsafe_function( p->cb, napi_tsfn_abort );
   }
 
   delete ev;
@@ -945,29 +973,34 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   projectrtpchannel::pointer p = projectrtpchannel::create( ourport );
   hiddensharedptr *pb = new hiddensharedptr( p );
 
-  if( argc > 1 ) {
-    napi_value workname;
-
-    if( napi_ok != napi_create_string_utf8( env, "projectrtp", NAPI_AUTO_LENGTH, &workname ) ) {
-      return NULL;
-    }
-
-    /*
-      We don't need to call napi_acquire_threadsafe_function as we are setting
-      the inital value of initial_thread_count to 1.
-    */
-    if( napi_ok != napi_create_threadsafe_function( env,
-                                         argv[ 1 ],
-                                         NULL,
-                                         workname,
-                                         0,
-                                         1,
-                                         NULL,
-                                         NULL,
-                                         NULL,
-                                         eventcallback,
-                                         &p->cb ) ) return NULL;
+  napi_value callback;
+  if( 1 == argc ) {
+    if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, dummyclose, nullptr, &callback ) ) return NULL;
+  } else {
+    callback = argv[ 1 ];
   }
+
+  napi_value workname;
+
+  if( napi_ok != napi_create_string_utf8( env, "projectrtp", NAPI_AUTO_LENGTH, &workname ) ) {
+    return NULL;
+  }
+
+  /*
+    We don't need to call napi_acquire_threadsafe_function as we are setting
+    the inital value of initial_thread_count to 1.
+  */
+  if( napi_ok != napi_create_threadsafe_function( env,
+                                       callback,
+                                       NULL,
+                                       workname,
+                                       0,
+                                       1,
+                                       NULL,
+                                       NULL,
+                                       NULL,
+                                       eventcallback,
+                                       &p->cb ) ) return NULL;
 
   if( napi_ok != napi_create_object( env, &result ) ) return NULL;
   if( napi_ok != napi_type_tag_object( env, result, &channelcreatetag ) ) return NULL;
@@ -994,7 +1027,7 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
 void initrtpchannel( napi_env env, napi_value &result ) {
   napi_value rtpchan;
-  napi_value ccreate;
+  napi_value ccreate, cstats;
 
   for( int i = 10000; i < 20000; i = i + 2 ) {
     availableports.push( i );
@@ -1004,6 +1037,9 @@ void initrtpchannel( napi_env env, napi_value &result ) {
   if( napi_ok != napi_set_named_property( env, result, "rtpchannel", rtpchan ) ) return;
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelcreate, nullptr, &ccreate ) ) return;
   if( napi_ok != napi_set_named_property( env, rtpchan, "create", ccreate ) ) return;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, stats, nullptr, &cstats ) ) return;
+  if( napi_ok != napi_set_named_property( env, rtpchan, "stats", cstats ) ) return;
 
 }
 
