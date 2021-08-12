@@ -48,6 +48,14 @@ function sendpk( sn, sendtime, dstport, server, ssrc = 25 ) {
 /* Tests */
 describe( "rtpchannel", function() {
 
+  it( `check channel stats at the start`, function( done ) {
+    let s = projectrtp.rtpchannel.stats()
+
+    expect( s.available ).to.equal( 5000 )
+    expect( s.current ).to.equal( 0 )
+    done()
+  } )
+
   it( `structure of rtpchannel is correct`, async function() {
 
     expect( projectrtp.rtpchannel ).to.be.an( "object" )
@@ -479,6 +487,17 @@ describe( "rtpchannel", function() {
         done()
       }
     } )
+  } )
+
+  it( `check channel stats at the end`, function( done ) {
+
+    let s = projectrtp.rtpchannel.stats()
+
+    expect( s.available ).to.equal( 5000 )
+    /* For now this might not be zero as the destructor is
+    call when the JS object is cleaned up */
+    //expect( s.current ).to.equal( 0 )
+    done()
   } )
 
   before( () => {
