@@ -100,11 +100,7 @@ void projectrtpchannel::doopen( void ) {
   this->rtcpsocket.bind( boost::asio::ip::udp::endpoint(
       boost::asio::ip::udp::v4(), this->port + 1 ) );
 
-  this->receivedrtp = false;
   this->active = true;
-  this->send = true;
-  this->recv = true;
-  this->havedata = false;
 
   this->codecs.clear();
   this->ssrcout = rand();
