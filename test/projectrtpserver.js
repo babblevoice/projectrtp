@@ -1,6 +1,5 @@
 
 
-const should = require( "chai" ).should()
 const expect = require( "chai" ).expect
 
 const projectrtp = require( "../src/build/Release/projectrtp" )
