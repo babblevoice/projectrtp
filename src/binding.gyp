@@ -9,6 +9,12 @@
         "-fstack-protector-all",
         "-std=c++17",
         "-fconcepts-ts" ],
+      "libraries": [
+            "-lrt",
+            "-lspandsp",
+            "-lilbc",
+            "-lgnutls"
+          ],
       "sources": [
         "firfilter.cpp",
         "projectrtpnodemain.cpp",
