@@ -367,101 +367,86 @@ If not ready return -1.
 
 We only support 1 channel. Anything else we need to look at.
 */
-bool soundfile::read( rawsound &out )
-{
+bool soundfile::read( rawsound &out ) {
+
   /* check */
-  if ( -1 == this->file )
-  {
+  if ( -1 == this->file ) {
+    fprintf( stderr, "No file for open wav sound\n" );
     return false;
   }
 
   if( false == this->headerread &&
-      aio_error( &this->cbwavheader ) == EINPROGRESS )
-  {
-    std::cerr << "Read of soundfile wav header has not completed" << std::endl;
+      aio_error( &this->cbwavheader ) == EINPROGRESS ) {
+    fprintf( stderr, "Read of soundfile wav header has not completed\n" );
     return false;
   }
 
   this->headerread = true;
 
-  if( aio_error( &this->cbwavblock[ this->currentreadindex ] ) == EINPROGRESS )
-  {
-    std::cerr << "Read of soundfile wav block has not completed" << std::endl;
+  if( aio_error( &this->cbwavblock[ this->currentreadindex ] ) == EINPROGRESS ) {
+    fprintf( stderr, "Read of soundfile wav block has not completed\n" );
     return false;
   }
 
   /* success? */
   int numbytes = aio_return( &this->cbwavblock[ this->currentreadindex ] );
 
-  if( -1 == numbytes || 0 == numbytes )
-  {
+  if( -1 == numbytes || 0 == numbytes ) {
     return false;
   }
 
   this->opened = true;
-  if( 'W' != this->ourwavheader.wave_header[ 0 ] )
-  {
+  if( 'W' != this->ourwavheader.wave_header[ 0 ] ) {
     this->badheader = true;
   }
   this->badheader = false;
 
-  switch( this->ourwavheader.sample_rate )
-  {
+  switch( this->ourwavheader.sample_rate ) {
     case 8000:
     case 16000:
       break;
     default:
+      fprintf( stderr, "Bad sample rate in wav\n" );
       return false;
   }
 
   int ploadtype = L168KPAYLOADTYPE;
   int blocksize = L16NARROWBANDBYTES;
-  switch( this->ourwavheader.audio_format )
-  {
-    case WAVE_FORMAT_PCM:
-    {
-      if( 8000 == this->ourwavheader.sample_rate )
-      {
+  switch( this->ourwavheader.audio_format ) {
+    case WAVE_FORMAT_PCM: {
+      if( 8000 == this->ourwavheader.sample_rate ) {
         ploadtype = L168KPAYLOADTYPE;
         blocksize = L16NARROWBANDBYTES;
-      }
-      else if( 16000 == this->ourwavheader.sample_rate )
-      {
+      } else if( 16000 == this->ourwavheader.sample_rate ) {
         ploadtype = L1616KPAYLOADTYPE;
         blocksize = L16WIDEBANDBYTES;
-      }
-      else
-      {
+      } else {
         return false;
       }
       break;
     }
-    case WAVE_FORMAT_ALAW:
-    {
+    case WAVE_FORMAT_ALAW: {
       ploadtype = PCMAPAYLOADTYPE;
       blocksize = G711PAYLOADBYTES;
       break;
     }
-    case WAVE_FORMAT_MULAW:
-    {
+    case WAVE_FORMAT_MULAW: {
       ploadtype = PCMUPAYLOADTYPE;
       blocksize = G711PAYLOADBYTES;
       break;
     }
-    case WAVE_FORMAT_POLYCOM_G722:
-    {
+    case WAVE_FORMAT_POLYCOM_G722: {
       ploadtype = G722PAYLOADTYPE;
       blocksize = G722PAYLOADBYTES;
       break;
     }
-    case WAVE_FORMAT_GLOBAL_IP_ILBC:
-    {
+    case WAVE_FORMAT_GLOBAL_IP_ILBC: {
       ploadtype = ILBCPAYLOADTYPE;
       blocksize = ILBC20PAYLOADBYTES;
       break;
     }
-    default:
-    {
+    default: {
+      fprintf( stderr, "Bad audio format in wav\n" );
       return false;
     }
   }
@@ -473,12 +458,9 @@ bool soundfile::read( rawsound &out )
   auto lastreadoffset = this->cbwavblock[ this->currentreadindex ].aio_offset;
   this->currentreadindex = ( this->currentreadindex + 1 ) % SOUNDFILENUMBUFFERS;
 
-  if( -1 == this->newposition )
-  {
+  if( -1 == this->newposition ) {
     this->cbwavblock[ this->currentreadindex ].aio_offset = lastreadoffset + blocksize;
-  }
-  else
-  {
+  } else {
     this->cbwavblock[ this->currentreadindex ].aio_offset = ( this->ourwavheader.bit_depth / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * this->newposition; /* bytes per sample */
     this->cbwavblock[ this->currentreadindex ].aio_offset = ( this->cbwavblock[ this->currentreadindex ].aio_offset / blocksize ) * blocksize; /* realign to the nearest block */
     this->cbwavblock[ this->currentreadindex ].aio_offset += sizeof( wavheader );
@@ -486,21 +468,18 @@ bool soundfile::read( rawsound &out )
 
   this->cbwavblock[ this->currentreadindex ].aio_nbytes = blocksize;
 
-  if( this->cbwavblock[ this->currentreadindex ].aio_offset > ( __off_t ) ( this->ourwavheader.chunksize + sizeof( wavheader ) ) )
-  {
+  if( this->cbwavblock[ this->currentreadindex ].aio_offset > ( __off_t ) ( this->ourwavheader.chunksize + sizeof( wavheader ) ) ) {
     this->cbwavblock[ this->currentreadindex ].aio_offset = sizeof( wavheader );
   }
 
   /* read next block */
-  if ( aio_read( &this->cbwavblock[ this->currentreadindex ] ) == -1 )
-  {
+  if ( aio_read( &this->cbwavblock[ this->currentreadindex ] ) == -1 ) {
     close( this->file );
     this->file = -1;
     return false;
   }
 
-  if( -1 != this->newposition )
-  {
+  if( -1 != this->newposition ) {
     this->newposition = -1;
     return false;
   }
@@ -612,14 +591,31 @@ bool soundfile::complete( void )
 ## wavinfo
 For test purposes only. Read and display the wav file header info.
 */
-void wavinfo( const char *file )
-{
+static napi_value wavinfo( napi_env env, napi_callback_info info ) {
+//const char *file
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  char file[ 256 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_type_error( env, "0", "Filename?" );
+    return NULL;
+  }
+
+  size_t copiedout;
+  if( napi_ok != napi_get_value_string_utf8( env, argv[ 0 ], file, sizeof( file ), &copiedout ) ) {
+    return NULL;
+  }
+
+  napi_value returnval = NULL;
   wavheader hd;
   int fd = open( file, O_RDONLY, 0 );
-  if( -1 == fd )
-  {
-    std::cerr << "Couldn't open file " << file << std::endl;
-    return;
+  if( -1 == fd ) {
+    napi_throw_type_error( env, "0", "Couldn't open file" );
+    return NULL;
   }
 
   read( fd, &hd, sizeof( wavheader ) );
@@ -627,40 +623,58 @@ void wavinfo( const char *file )
   if( 'R' != hd.riff_header[ 0 ] ||
       'I' != hd.riff_header[ 1 ] ||
       'F' != hd.riff_header[ 2 ] ||
-      'F' != hd.riff_header[ 3 ] )
-  {
-    std::cout << "Bad riff" << std::endl;
+      'F' != hd.riff_header[ 3 ] ) {
+    napi_throw_type_error( env, "0", "Bad RIFF" );
     goto done;
   }
 
   if( 'W' != hd.wave_header[ 0 ] ||
       'A' != hd.wave_header[ 1 ] ||
       'V' != hd.wave_header[ 2 ] ||
-      'E' != hd.wave_header[ 3 ] )
-  {
-    std::cout << "Bad wav" << std::endl;
+      'E' != hd.wave_header[ 3 ] ) {
+    napi_throw_type_error( env, "0", "Bad WAVE" );
     goto done;
   }
 
   if( 'f' != hd.fmt_header[ 0 ] ||
       'm' != hd.fmt_header[ 1 ] ||
       't' != hd.fmt_header[ 2 ] ||
-      ' ' != hd.fmt_header[ 3 ] )
-  {
-    std::cout << "Bad format" << std::endl;
+      ' ' != hd.fmt_header[ 3 ] ) {
+    napi_throw_type_error( env, "0", "Bad fmt" );
     goto done;
   }
 
   if( 'd' != hd.data_header[ 0 ] ||
       'a' != hd.data_header[ 1 ] ||
       't' != hd.data_header[ 2 ] ||
-      'a' != hd.data_header[ 3 ] )
-  {
-    std::cout << "Bad data header" << std::endl;
+      'a' != hd.data_header[ 3 ] ) {
+    napi_throw_type_error( env, "0", "Bad data" );
     goto done;
   }
 
-  std::cout << "Audio format: " << hd.audio_format << std::endl;
+  if( napi_ok != napi_create_object( env, &returnval ) ) return NULL;
+
+  napi_value val;
+  if( napi_ok != napi_create_double( env, hd.audio_format, &val ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, returnval, "audioformat", val ) ) return NULL;
+  if( napi_ok != napi_create_double( env, hd.num_channels, &val ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, returnval, "channelcount", val ) ) return NULL;
+  if( napi_ok != napi_create_double( env, hd.sample_rate, &val ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, returnval, "samplerate", val ) ) return NULL;
+  if( napi_ok != napi_create_double( env, hd.sample_alignment, &val ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, returnval, "samplealignment", val ) ) return NULL;
+  if( napi_ok != napi_create_double( env, hd.byte_rate, &val ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, returnval, "byterate", val ) ) return NULL;
+  if( napi_ok != napi_create_double( env, hd.bit_depth, &val ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, returnval, "bitdepth", val ) ) return NULL;
+  if( napi_ok != napi_create_double( env, hd.chunksize, &val ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, returnval, "chunksize", val ) ) return NULL;
+  if( napi_ok != napi_create_double( env, hd.fmt_chunk_size, &val ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, returnval, "fmtchunksize", val ) ) return NULL;
+  if( napi_ok != napi_create_double( env, hd.subchunksize, &val ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, returnval, "subchunksize", val ) ) return NULL;
+
+  /*std::cout << "Audio format: " << hd.audio_format << std::endl;
   std::cout << "Channel count: " << hd.num_channels << std::endl;
   std::cout << "Sample rate: " << hd.sample_rate << std::endl;
   std::cout << "Sample alignment: " << hd.sample_alignment << std::endl;
@@ -668,11 +682,11 @@ void wavinfo( const char *file )
   std::cout << "Bit depth: " << hd.bit_depth << std::endl;
   std::cout << "Chunk size: " << hd.chunksize << std::endl;
   std::cout << "Subchunk1Size (should be 16 for PCM): " << hd.fmt_chunk_size << std::endl;
-  std::cout << "Subchunk2Size: " << hd.subchunksize << std::endl;
-
+  std::cout << "Subchunk2Size: " << hd.subchunksize << std::endl;*/
 
 done:
   close( fd );
+  return returnval;
 }
 
 /*!md
@@ -711,4 +725,15 @@ void initwav( wavheader *w, int samplerate )
   w->chunksize = 0;
   w->subchunksize = 0;
 
+}
+
+void initrtpsoundfile( napi_env env, napi_value &result ) {
+  napi_value soundfile;
+  napi_value info;
+
+  if( napi_ok != napi_create_object( env, &soundfile ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "soundfile", soundfile ) ) return;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, wavinfo, nullptr, &info ) ) return;
+  if( napi_ok != napi_set_named_property( env, soundfile, "info", info ) ) return;
 }

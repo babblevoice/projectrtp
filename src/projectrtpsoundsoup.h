@@ -9,14 +9,18 @@
 
 #include <vector>
 
-#include "projectrtpsoundfile.h"
-#include "json.hpp"
+#include <node_api.h>
 
-class soundsoupfile
-{
+#include "projectrtpsoundfile.h"
+
+class soundsoupfile {
 public:
   soundsoupfile();
   ~soundsoupfile();
+
+  typedef std::shared_ptr< soundsoupfile > pointer;
+  static pointer create( void );
+
   int start;
   int stop;
   int loopcount;
@@ -25,7 +29,7 @@ public:
 };
 
 
-typedef std::vector< soundsoupfile > soundsoupfiles;
+typedef std::vector< soundsoupfile::pointer > soundsoupfiles;
 
 /*!md
 # soundsoup
@@ -54,27 +58,30 @@ When we receive an update - we don't want to abruptly end the playback - if poss
 So, if the current playback is in index file 1, this file has the same filename as the one in the incoming instruction then this is where we continue from. Otherwise we start at 0 again.
 */
 
-class soundsoup
-//  : std::enable_shared_from_this< soundsoup >
-{
+class soundsoup {
 public:
-  soundsoup( void );
+  soundsoup( size_t size );
   ~soundsoup();
 
   typedef std::shared_ptr< soundsoup > pointer;
-  static pointer create( void );
+  static pointer create( size_t size );
 
-  void config( JSON::Object &json, int format );
   bool read( rawsound &out );
 
+  void setloop( int l ) { this->loopcount = l; }
+  void addfile( soundsoupfile::pointer p, int index );
+  size_t size( void ) { return this->files.size(); }
+
 private:
-  std::string *getpreferredfilename( JSON::Object &file, int format );
-  void plusone( soundsoupfile &playing );
+  void plusone( soundsoupfile::pointer playing );
 
   /* This is used to choose the best format file */
   int loopcount;
   size_t currentfile;
   soundsoupfiles files;
 };
+
+
+soundsoup::pointer soundsoupcreate( napi_env env, napi_value obj, int channelcodec );
 
 #endif  /* PROJECTRTPSOUNDSOUP_H */

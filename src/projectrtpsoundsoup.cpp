@@ -1,305 +1,68 @@
 
 
 #include <iostream>
-
 #include "projectrtpsoundsoup.h"
 
 
-/*!md
+soundsoupfile::pointer soundsoupfile::create() {
+  return pointer( new soundsoupfile() );
+}
+
+soundsoupfile::soundsoupfile() :
+  start( 0 ),
+  stop( -1 ),
+  loopcount( -1 ),
+  maxloop( -1 ),
+  sf( nullptr ) {
+
+}
+
+soundsoupfile::~soundsoupfile() {
+  this->sf = nullptr;
+}
+
+/*
 # c'stor
 */
-soundsoup::soundsoup( void ) :
+soundsoup::soundsoup( size_t size ) :
   loopcount( -1 ),
-  currentfile( 0 )
-{
+  currentfile( 0 ) {
+
+  this->files.resize( size );
 }
 
-/*!md
+/*
 # d'stor
 */
-soundsoup::~soundsoup()
-{
+soundsoup::~soundsoup() {
 
 }
 
-/*!md
+/*
 # create
 Shared pointer version of us.
 */
-soundsoup::pointer soundsoup::create( void )
-{
-  return pointer( new soundsoup() );
+soundsoup::pointer soundsoup::create( size_t size ) {
+  return pointer( new soundsoup( size ) );
 }
 
-
-/*!md
-# getpreferredfilename
-Return the preferred filename based on the format we are sending data to.
-*/
-std::string *soundsoup::getpreferredfilename( JSON::Object &file, int format )
-{
-  switch( format )
-  {
-    case PCMUPAYLOADTYPE:
-    {
-      if( file.has_key( "pcmu" ) )
-      {
-        return &JSON::as_string( file[ "pcmu" ] );
-      }
-      if( file.has_key( "pcma" ) )
-      {
-        return &JSON::as_string( file[ "pcma" ] );
-      }
-      if( file.has_key( "l168k" ) )
-      {
-        return &JSON::as_string( file[ "l168k" ] );
-      }
-      if( file.has_key( "l1616k" ) )
-      {
-        return &JSON::as_string( file[ "l1616k" ] );
-      }
-      if( file.has_key( "ilbc" ) )
-      {
-        return &JSON::as_string( file[ "ilbc" ] );
-      }
-      if( file.has_key( "g722" ) )
-      {
-        return &JSON::as_string( file[ "g722" ] );
-      }
-      if( file.has_key( "wav" ) )
-      {
-        return &JSON::as_string( file[ "wav" ] );
-      }
-      break;
-    }
-    case PCMAPAYLOADTYPE:
-    {
-      if( file.has_key( "pcma" ) )
-      {
-        return &JSON::as_string( file[ "pcma" ] );
-      }
-      if( file.has_key( "pcmu" ) )
-      {
-        return &JSON::as_string( file[ "pcmu" ] );
-      }
-      if( file.has_key( "l168k" ) )
-      {
-        return &JSON::as_string( file[ "l168k" ] );
-      }
-      if( file.has_key( "l1616k" ) )
-      {
-        return &JSON::as_string( file[ "l1616k" ] );
-      }
-      if( file.has_key( "ilbc" ) )
-      {
-        return &JSON::as_string( file[ "ilbc" ] );
-      }
-      if( file.has_key( "g722" ) )
-      {
-        return &JSON::as_string( file[ "g722" ] );
-      }
-      if( file.has_key( "wav" ) )
-      {
-        return &JSON::as_string( file[ "wav" ] );
-      }
-      break;
-    }
-    case G722PAYLOADTYPE:
-    {
-      if( file.has_key( "g722" ) )
-      {
-        return &JSON::as_string( file[ "g722" ] );
-      }
-      if( file.has_key( "l1616k" ) )
-      {
-        return &JSON::as_string( file[ "l1616k" ] );
-      }
-      if( file.has_key( "l168k" ) )
-      {
-        return &JSON::as_string( file[ "l168k" ] );
-      }
-      if( file.has_key( "pcma" ) )
-      {
-        return &JSON::as_string( file[ "pcma" ] );
-      }
-      if( file.has_key( "pcmu" ) )
-      {
-        return &JSON::as_string( file[ "pcmu" ] );
-      }
-      if( file.has_key( "ilbc" ) )
-      {
-        return &JSON::as_string( file[ "ilbc" ] );
-      }
-      if( file.has_key( "wav" ) )
-      {
-        return &JSON::as_string( file[ "wav" ] );
-      }
-      break;
-    }
-    case ILBCPAYLOADTYPE:
-    {
-      if( file.has_key( "ilbc" ) )
-      {
-        return &JSON::as_string( file[ "ilbc" ] );
-      }
-      if( file.has_key( "l168k" ) )
-      {
-        return &JSON::as_string( file[ "l168k" ] );
-      }
-      if( file.has_key( "pcma" ) )
-      {
-        return &JSON::as_string( file[ "pcma" ] );
-      }
-      if( file.has_key( "pcmu" ) )
-      {
-        return &JSON::as_string( file[ "pcmu" ] );
-      }
-      if( file.has_key( "l1616k" ) )
-      {
-        return &JSON::as_string( file[ "l1616k" ] );
-      }
-      if( file.has_key( "g722" ) )
-      {
-        return &JSON::as_string( file[ "g722" ] );
-      }
-      if( file.has_key( "wav" ) )
-      {
-        return &JSON::as_string( file[ "wav" ] );
-      }
-      break;
-    }
-  }
-
-  return nullptr;
-}
-
-/*!md
-# config
-Config (or reconfig) this soup.
-*/
-void soundsoup::config( JSON::Object &json, int format )
-{
-  if( json.has_key( "files" ) )
-  {
-    /* This is the only reason for our existence! */
-    JSON::Array rfiles = JSON::as_array( json[ "files" ] );
-    this->files.resize( rfiles.values.size() );
-    size_t num = 0;
-
-    if( this->currentfile > this->files.size() )
-    {
-      this->currentfile = 0;
-    }
-
-    for( auto it = rfiles.values.begin(); it != rfiles.values.end(); it++ )
-    {
-      JSON::Object &inref = JSON::as_object( *it );
-      soundsoupfile &ref = this->files[ num ];
-
-      std::string *newfilename = this->getpreferredfilename( inref, format );
-
-      /* recreate soundfile object if there was no sound or if the filename has changed */
-      if( !ref.sf || *newfilename != ref.sf->geturl() )
-      {
-        this->currentfile = 0;
-        if( newfilename )
-        {
-          ref.sf = soundfile::create( *newfilename );
-          if( !ref.sf->isopen() )
-          {
-            std::cerr << "Problem with file: " << JSON::to_string( inref ) << std::endl;
-          }
-        }
-        else
-        {
-          ref.sf = nullptr;
-        }
-      }
-
-      /* Defaults */
-      ref.loopcount = 0;
-      ref.maxloop = 0;
-      ref.start = 0;
-      ref.stop = -1;
-
-      if( inref.has_key( "loop" ) )
-      {
-        switch( inref[ "loop" ].which() )
-        {
-          case 2: /* bool */
-          {
-            if( JSON::as_boolean( inref[ "loop" ] ) == JSON::Bool( true ) )
-            {
-              ref.loopcount = INT_MAX;
-            }
-            break;
-          }
-          case 6: /* int */
-          {
-            ref.loopcount = JSON::as_int64( inref[ "loop" ] );
-          }
-        }
-        ref.loopcount = JSON::as_int64( inref[ "loop" ] );
-        ref.maxloop = ref.loopcount;
-      }
-
-      if( inref.has_key( "start" ) )
-      {
-        ref.start = JSON::as_int64( inref[ "start" ] );
-        ref.sf->setposition( ref.start );
-      }
-
-      if( inref.has_key( "stop" ) )
-      {
-        ref.stop = JSON::as_int64( inref[ "stop" ] );
-      }
-      num++;
-    }
-  }
-
-  this->loopcount = 0;
-  if( json.has_key( "loop" ) )
-  {
-    switch( json[ "loop" ].which() )
-    {
-      case 2: /* bool */
-      {
-        if( JSON::as_boolean( json[ "loop" ] ) == JSON::Bool( true ) )
-        {
-          this->loopcount = INT_MAX;
-        }
-        break;
-      }
-      case 6: /* int */
-      {
-        this->loopcount = JSON::as_int64( json[ "loop" ] );
-      }
-    }
-  }
-}
-
-void soundsoup::plusone( soundsoupfile &playing )
-{
+void soundsoup::plusone( soundsoupfile::pointer playing ) {
   /* Do we loop this file? */
-  if( 0 != playing.loopcount )
-  {
-    playing.sf->setposition( playing.start );
-    playing.loopcount--;
+  if( 0 != playing->loopcount ) {
+    playing->sf->setposition( playing->start );
+    playing->loopcount--;
     return;
   }
 
   /* We have played the last file */
-  if( this->files.size() == this->currentfile + 1 )
-  {
+  if( this->files.size() == this->currentfile + 1 ) {
     if( 0 == this->loopcount ) return;
     this->loopcount--;
 
-    for( auto it = this->files.begin(); it != this->files.end(); it++ )
-    {
-      it->loopcount = it->maxloop;
-      if( it->sf )
-      {
-        it->sf->setposition( it->start );
+    for( auto it = this->files.begin(); it != this->files.end(); it++ ) {
+      (*it)->loopcount = (*it)->maxloop;
+      if( (*it)->sf ) {
+        (*it)->sf->setposition( (*it)->start );
       }
     }
     this->currentfile = 0;
@@ -309,52 +72,157 @@ void soundsoup::plusone( soundsoupfile &playing )
   this->currentfile++;
 }
 
-bool soundsoup::read( rawsound &out )
-{
-  if( 0 == this->files.size() )
-  {
+bool soundsoup::read( rawsound &out ) {
+  if( 0 == this->files.size() ) {
     return false;
   }
 
-  soundsoupfile &playing = this->files[ this->currentfile ];
+  soundsoupfile::pointer playing = this->files[ this->currentfile ];
 
-  if( !playing.sf )
-  {
+  if( !playing->sf ) {
     this->plusone( playing );
     return false;
-  }
-  else if ( playing.sf->complete() )
-  {
+  } else if ( playing->sf->complete() ) {
     this->plusone( playing );
     return false;
-  }
-  else if ( -1 != playing.stop && playing.sf->getposition() > playing.stop )
-  {
+  } else if ( -1 != playing->stop && playing->sf->getposition() > playing->stop ) {
     this->plusone( playing );
     return false;
   }
 
-  playing.sf->read( out );
+  playing->sf->read( out );
   return true;
 }
 
-/*!md
-# c'stor
-*/
-soundsoupfile::soundsoupfile() :
-  start( 0 ),
-  stop( -1 ),
-  loopcount( -1 ),
-  maxloop( -1 ),
-  sf( nullptr )
-{
-
+void soundsoup::addfile( soundsoupfile::pointer p, int index ) {
+  this->files[ index ] = p;
 }
 
-/*!md
-# d'stor
-*/
-soundsoupfile::~soundsoupfile()
-{
-  this->sf = nullptr;
+static std::string getfilenamefromobjectforcodec(
+                        napi_env env,
+                        napi_value obj,
+                        const char* first,
+                        const char* second,
+                        const char* third ) {
+
+  bool result;
+  size_t bytescopied;
+  char buf[ 256 ];
+  napi_value nwav;
+
+  if( napi_ok == napi_has_named_property( env, obj, first, &result ) && result ) {
+    if( napi_ok == napi_get_named_property( env, obj, first, &nwav ) ) {
+      napi_get_value_string_utf8( env, nwav, buf, sizeof( buf ), &bytescopied );
+      return std::string( buf );
+    }
+  }
+
+  if( napi_ok == napi_has_named_property( env, obj, second, &result ) && result ) {
+    if( napi_ok == napi_get_named_property( env, obj, second, &nwav ) ) {
+      napi_get_value_string_utf8( env, nwav, buf, sizeof( buf ), &bytescopied );
+      return std::string( buf );
+    }
+  }
+
+  if( napi_ok == napi_has_named_property( env, obj, third, &result ) && result ) {
+    if( napi_ok == napi_get_named_property( env, obj, third, &nwav ) ) {
+      napi_get_value_string_utf8( env, nwav, buf, sizeof( buf ), &bytescopied );
+      return std::string( buf );
+    }
+  }
+
+  return buf;
+}
+
+static soundsoupfile::pointer parsefileobj( soundsoup::pointer p, napi_env env, napi_value obj, int format ) {
+
+  soundsoupfile::pointer ssf = soundsoupfile::create();
+
+  napi_value nloop;
+
+  if( napi_ok == napi_get_named_property( env, obj, "loop", &nloop ) ) {
+
+    bool loop = false;
+    if( napi_ok == napi_get_value_bool( env, nloop, &loop ) && loop ) {
+      ssf->loopcount = INT_MAX;
+    }
+
+    uint32_t loopcount;
+    if( napi_ok == napi_get_value_uint32( env, nloop, &loopcount ) ) {
+      ssf->loopcount = loopcount;
+    }
+  }
+
+  std::string filename;
+  switch( format ) {
+    case PCMUPAYLOADTYPE: {
+      filename = getfilenamefromobjectforcodec( env, obj, "pcmu", "l168k", "wav" );
+      break;
+    }
+    case PCMAPAYLOADTYPE: {
+      filename = getfilenamefromobjectforcodec( env, obj, "pcma", "l168k", "wav" );
+      break;
+    }
+
+    case G722PAYLOADTYPE: {
+      filename = getfilenamefromobjectforcodec( env, obj, "g722", "l1616k", "wav" );
+      break;
+    }
+
+    case ILBCPAYLOADTYPE: {
+      filename = getfilenamefromobjectforcodec( env, obj, "ilbc", "l168k", "wav" );
+      break;
+    }
+
+    default: {
+      filename = getfilenamefromobjectforcodec( env, obj, "l168k", "l1616k", "wav" );
+      break;
+    }
+  }
+
+  ssf->sf = soundfile::create( filename );
+
+  if( !ssf->sf->isopen() ) {
+    return nullptr;
+  }
+
+  return ssf;
+}
+
+soundsoup::pointer soundsoupcreate( napi_env env, napi_value obj, int channelcodec ) {
+  soundsoup::pointer p = nullptr;
+  napi_value nfiles;
+
+  bool loop = false;
+  napi_get_value_bool( env, obj, &loop );
+
+  if( napi_ok == napi_get_named_property( env, obj, "files", &nfiles ) ) {
+    bool isarray;
+    napi_is_array( env, nfiles, &isarray );
+
+    if( !isarray ) {
+      return nullptr;
+    }
+
+    uint32_t numfiles;
+    napi_get_array_length( env, nfiles, &numfiles );
+
+    if( 0 == numfiles ) {
+      return nullptr;
+    }
+
+    p = soundsoup::create( numfiles );
+
+    for( uint32_t i = 0; i < numfiles; i ++ ) {
+      napi_value filei;
+      napi_get_element( env, nfiles, i, &filei );
+      soundsoupfile::pointer ssp = parsefileobj( p, env, filei, channelcodec );
+      if( nullptr == ssp ) return nullptr;
+      p->addfile( ssp, i );
+    }
+
+    return p;
+  }
+
+  return nullptr;
 }
