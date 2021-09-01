@@ -72,7 +72,7 @@ public:
   typedef std::shared_ptr< projectrtpchannel > pointer;
   static pointer create( unsigned short port );
 
-  void requestopen( std::string address, unsigned short port );
+  void requestopen( std::string address, unsigned short port, uint32_t codec );
   void requestclose( void );
   void requestecho( bool e = true );
 
@@ -85,13 +85,15 @@ public:
   void enabledtls( dtlssession::mode, std::string &fingerprint );
 
   void rfc2833( unsigned short pt );
-  void play( stringptr newdef ) { this->newplaydef = newdef; }
+  void requestplay( soundsoup::pointer newdef ) {
+    AQUIRESPINLOCK( this->newplaylock );
+    this->newplaydef = newdef;
+    RELEASESPINLOCK( this->newplaylock );
+  }
+
   inline void echo( void ) { this->doecho = true; }
 
   void record( channelrecorder::pointer rec ) { this->newrecorders.push( rec ); }
-
-  typedef std::vector< int > codeclist;
-  bool audio( codeclist codecs );
 
   inline void direction( bool send, bool recv ) { this->send = send; this->recv = recv; }
 
@@ -108,8 +110,7 @@ public:
 
   void unmix( void );
 
-  codeclist codecs;
-  int selectedcodec;
+  uint32_t codec;
   uint32_t ssrcin;
   uint32_t ssrcout;
   uint32_t tsout;
@@ -157,7 +158,7 @@ private:
 
   /* confirmation of where the other end of the RTP stream is */
   std::atomic_bool receivedrtp;
-  bool targetconfirmed;
+  std::atomic_bool targetconfirmed;
 
   void readsomertp( void );
   void readsomertcp( void );
@@ -178,7 +179,8 @@ private:
   codecx incodec;
 
   soundsoup::pointer player;
-  atomicstringptr newplaydef;
+  soundsoup::pointer newplaydef;
+  std::atomic_bool newplaylock;
 
   std::atomic_bool doecho;
   boost::asio::steady_timer tick;
@@ -186,9 +188,6 @@ private:
   /* do we send, do we receive */
   std::atomic_bool send;
   std::atomic_bool recv;
-
-  /* Track hysteresis in our receive window - which allows for timing wiggles between our tick and when we receive */
-  bool havedata;
 
   boost::lockfree::stack< boost::shared_ptr< channelrecorder > > newrecorders;
   std::list< boost::shared_ptr< channelrecorder > > recorders;

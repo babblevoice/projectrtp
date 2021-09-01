@@ -33,7 +33,7 @@ implimented) the address and port given to us when opening in the channel.
 */
 projectrtpchannel::projectrtpchannel( unsigned short port ):
   /* public */
-  selectedcodec( 0 ),
+  codec( 0 ),
   ssrcin( 0 ),
   ssrcout( 0 ),
   tsout( 0 ),
@@ -63,11 +63,11 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   others( nullptr ),
   player( nullptr ),
   newplaydef( nullptr ),
+  newplaylock( false ),
   doecho( false ),
   tick( workercontext ),
   send( true ),
   recv( true ),
-  havedata( false ),
   newrecorders( MIXQUEUESIZE ),
   rtpdtls( nullptr ),
   rtpdtlshandshakeing( false ) {
@@ -79,10 +79,11 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
 /*
 ## requestopen
 */
-void projectrtpchannel::requestopen( std::string address, unsigned short port ) {
+void projectrtpchannel::requestopen( std::string address, unsigned short port, uint32_t codec ) {
 
   this->targetaddress = address;
   this->targetport = port;
+  this->codec = codec;
 
   boost::asio::post( workercontext,
         boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
@@ -105,12 +106,13 @@ void projectrtpchannel::doopen( void ) {
 
   this->active = true;
 
-  this->codecs.clear();
   this->ssrcout = rand();
 
   /* anchor our out time to when the channel is opened */
   this->tsout = std::chrono::system_clock::to_time_t( std::chrono::system_clock::now() );
   this->snout = rand();
+
+  this->dotarget();
 
   this->readsomertp();
   this->readsomertcp();
@@ -229,9 +231,9 @@ void projectrtpchannel::checkfornewrecorders( void )
   {
     rec->sfile = soundfile::create(
         rec->file,
-        soundfile::wavformatfrompt( this->selectedcodec ),
+        soundfile::wavformatfrompt( this->codec ),
         rec->numchannels,
-        soundfile::getsampleratefrompt( this->selectedcodec ) );
+        soundfile::getsampleratefrompt( this->codec ) );
 #if 0
     rec->control = this->control;
 
@@ -283,21 +285,14 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
         this->incodec << *src;
       }
 
-      stringptr newplaydef = this->newplaydef.load();
-      if( newplaydef )
-      {
-#warning remove dependanciy on c++ json - node can handle this now
-        if( !this->player )
-        {
-          this->player = soundsoup::create();
-        }
-
-        JSON::Value ob = JSON::parse( *newplaydef );
-        this->player->config( JSON::as_object( ob ), selectedcodec );
-
+      AQUIRESPINLOCK( this->newplaylock );
+      if( nullptr != this->newplaydef ) {
+        this->player = this->newplaydef;
         this->newplaydef = nullptr;
       }
-      else if( this->player )
+      RELEASESPINLOCK( this->newplaylock );
+
+      if( this->player )
       {
         rtppacket *out = this->gettempoutbuf();
         rawsound r;
@@ -508,7 +503,7 @@ rtppacket *projectrtpchannel::gettempoutbuf( void ) {
   rtppacket *buf = &this->outrtpdata[ ( outindex % OUTBUFFERPACKETCOUNT ) ];
 
   buf->init( this->ssrcout );
-  buf->setpayloadtype( this->selectedcodec );
+  buf->setpayloadtype( this->codec );
   buf->setsequencenumber( this->snout );
   buf->settimestamp( this->tsout );
   return buf;
@@ -553,12 +548,12 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
   if( !this->active ) return;
 
   if( nullptr == pk ) {
-    std::cerr << "We have been given an nullptr RTP packet??" << std::endl;
+    fprintf( stderr, "We have been given an nullptr RTP packet??\n" );
     return;
   }
 
   if( 0 == pk->length ) {
-    std::cerr << "We have been given an RTP packet of zero length??" << std::endl;
+    fprintf( stderr, "We have been given an RTP packet of zero length??\n" );
     return;
   }
 
@@ -605,8 +600,7 @@ void projectrtpchannel::handletargetresolve (
             boost::asio::ip::udp::resolver::iterator it ) {
   boost::asio::ip::udp::resolver::iterator end;
 
-  if( it == end )
-  {
+  if( it == end ) {
     /* Failure - silent (the call will be as well!) */
     return;
   }
@@ -616,8 +610,6 @@ void projectrtpchannel::handletargetresolve (
 
   /* allow us to re-auto correct */
   this->receivedrtp = false;
-
-  this->dotarget();
 }
 
 void projectrtpchannel::rfc2833( unsigned short pt ) {
@@ -654,27 +646,6 @@ As it says.
 */
 void projectrtpchannel::unmix( void ) {
   this->others = nullptr;
-}
-
-/*!md
-## audio
-The CODECs on the other end which are acceptable. The first one should be the preferred. For now we keep hold of the list of codecs as we may be using them in the future. Filter out non-RTP streams (such as DTMF).
-*/
-bool projectrtpchannel::audio( codeclist codecs ) {
-  this->codecs = codecs;
-  codeclist::iterator it;
-  for( it = codecs.begin(); it != codecs.end(); it++ ) {
-    switch( *it ) {
-      case PCMAPAYLOADTYPE:
-      case PCMUPAYLOADTYPE:
-      case G722PAYLOADTYPE:
-      case ILBCPAYLOADTYPE: {
-        this->selectedcodec = *it;
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 /*!md
@@ -756,6 +727,37 @@ static napi_value stats( napi_env env, napi_callback_info info ) {
   if( napi_ok != napi_set_named_property( env, result, "current", chcount ) ) return NULL;
 
   return result;
+}
+
+
+static napi_value channelplay( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    return createnapibool( env, false );
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    return createnapibool( env, false );
+  }
+
+  soundsoup::pointer p = soundsoupcreate( env, argv[ 0 ], chan->codec );
+
+  if( nullptr == p ) {
+    return createnapibool( env, false );
+  }
+
+  if( 0 == p->size() ) {
+    return createnapibool( env, false );
+  }
+
+  chan->requestplay( p );
+
+  return createnapibool( env, true );
 }
 
 static napi_value channelecho( napi_env env, napi_callback_info info ) {
@@ -930,7 +932,7 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
   size_t argc = 2;
   napi_value argv[ 2 ];
-  napi_value ntarget, nport, naddress;
+  napi_value ntarget, nport, naddress, ncodec;
 
   napi_value result;
   auto ourport = availableports.front();
@@ -962,6 +964,14 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
     napi_throw_error( env, "1", "Missing address in target object" );
     return NULL;
   }
+
+  if( napi_ok != napi_get_named_property( env, ntarget, "codec", &ncodec ) ) {
+    napi_throw_error( env, "1", "Missing codec in target object" );
+    return NULL;
+  }
+
+  uint32_t codecval = 0;
+  napi_get_value_uint32( env, ncodec, &codecval );
 
   size_t bytescopied;
   napi_get_value_string_utf8( env, naddress, targetaddress, sizeof( targetaddress ), &bytescopied );
@@ -1007,15 +1017,18 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   if( napi_ok != napi_wrap( env, result, pb, channeldestroy, nullptr, nullptr ) ) return NULL;
 
   p->jsthis = result;
-  p->requestopen( targetaddress, targetport );
+  p->requestopen( targetaddress, targetport, codecval );
 
   /* methods */
-  napi_value mclose, mecho;
+  napi_value mclose, mecho, mplay;
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelclose, nullptr, &mclose ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "close", mclose ) ) return NULL;
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelecho, nullptr, &mecho ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "echo", mecho ) ) return NULL;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelplay, nullptr, &mplay ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "play", mplay ) ) return NULL;
 
   /* values */
   napi_value nourport;
