@@ -431,8 +431,11 @@ void projectrtpchannel::readsomertp( void )
   this->rtpsocket.async_receive_from(
     boost::asio::buffer( buf->pk, RTPMAXLENGTH ), this->rtpsenderendpoint,
       [ this, buf ]( boost::system::error_code ec, std::size_t bytes_recvd ) {
-        /* To be finished */
-        if ( !ec && bytes_recvd > 0 && bytes_recvd <= RTPMAXLENGTH ) {
+        /* TODO - check for expected size for RTP */
+        if ( !ec && bytes_recvd > 0 && bytes_recvd < RTPMAXLENGTH ) {
+
+          /* TODO - pull the DTLS handshake out into its own function */
+          /* To be finished */
           if( this->rtpdtlshandshakeing ) {
             this->rtpdtls->write( buf, bytes_recvd );
             auto dtlsstate = this->rtpdtls->handshake();
@@ -480,6 +483,9 @@ void projectrtpchannel::readsomertp( void )
           AQUIRESPINLOCK( this->rtpbufferlock );
           this->inbuff->push();
           RELEASESPINLOCK( this->rtpbufferlock );
+        } else if( !ec ) {
+          this->receivedpkcount++;
+          this->receivedpkskip++;
         }
 
         if( !ec && bytes_recvd && this->active ) {

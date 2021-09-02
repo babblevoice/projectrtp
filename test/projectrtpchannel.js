@@ -6,10 +6,10 @@ const projectrtp = require( "../src/build/Release/projectrtp" )
 const dgram = require( "dgram" )
 
 /* helper functions */
-function sendpk( sn, sendtime, dstport, server, ssrc = 25 ) {
+function sendpk( sn, sendtime, dstport, server, ssrc = 25, pklength = 172 ) {
 
   setTimeout( () => {
-    let payload = Buffer.alloc( 172 - 12 ).fill( sn & 0xff )
+    let payload = Buffer.alloc( pklength - 12 ).fill( sn & 0xff )
     let ts = sn * 160
     let tsparts = []
     /* portability? */
@@ -99,6 +99,9 @@ describe( "rtpchannel", function() {
 
           expect( receviedpkcount ).to.equal( 50 )
           expect( d.stats.in.count ).to.equal( 50 )
+          expect( d.stats.in.mos ).to.equal( 4.5 )
+          expect( d.stats.in.dropped ).to.equal( 0 )
+          expect( d.stats.in.skip ).to.equal( 0 )
           expect( d.stats.out.count ).to.equal( 50 )
 
           server.close()
@@ -463,6 +466,55 @@ describe( "rtpchannel", function() {
 
       for( ;  i < 100; i ++ ) {
         sendpk( i, i, channel.port, server, 77 )
+      }
+
+      setTimeout( () => channel.close(), 2100 )
+    } )
+  } )
+
+  it( `send oversized rtp packet`, function( done ) {
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+    var receviedpkcount = 0
+    server.on( "message", function( msg, rinfo ) {
+      receviedpkcount++
+    } )
+
+    this.timeout( 3000 )
+    this.slow( 2500 )
+
+    server.bind()
+    server.on( "listening", function() {
+
+      let ourport = server.address().port
+
+      let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+
+        if( "close" === d.action ) {
+
+          expect( receviedpkcount ).to.equal( 49 )
+          expect( d.stats.in.count ).to.equal( 50 )
+          expect( d.stats.in.skip ).to.equal( 1 )
+          expect( d.stats.out.count ).to.equal( 49 )
+
+          server.close()
+          done()
+        }
+      } )
+
+      expect( channel ).to.be.an( "object" )
+      expect( channel.close ).to.be.an( "function" )
+      expect( channel ).to.have.property( "port" ).that.is.a( "number" )
+      expect( channel.echo() ).to.be.true
+
+      /* send a packet every 20mS x 50 */
+      for( var i = 0 ;  i < 50; i ++ ) {
+        if( 40 == i ) {
+          /* an oversized packet */
+          sendpk( i, i, channel.port, server, 25, 1200 )
+        } else {
+          sendpk( i, i, channel.port, server, 25 )
+        }
       }
 
       setTimeout( () => channel.close(), 2100 )
