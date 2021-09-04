@@ -93,7 +93,8 @@ public:
 
   inline void echo( void ) { this->doecho = true; }
 
-  void record( channelrecorder::pointer rec ) { this->newrecorders.push( rec ); }
+  void requestrecord( channelrecorder::pointer rec ) { this->newrecorders.push( rec ); }
+  void recordevent( const std::string arg1, const std::string arg2 );
 
   inline void direction( bool send, bool recv ) { this->send = send; this->recv = recv; }
 
@@ -184,6 +185,7 @@ private:
 
   std::atomic_bool doecho;
   boost::asio::steady_timer tick;
+  std::chrono::high_resolution_clock::time_point nexttick;
 
   /* do we send, do we receive */
   std::atomic_bool send;
@@ -209,10 +211,13 @@ void initrtpchannel( napi_env env, napi_value &result );
 
 class jschannelevent {
 public:
-  jschannelevent( std::string event, projectrtpchannel::pointer p ):
-    event( event ), p( p ) {}
+  jschannelevent( projectrtpchannel::pointer p, std::string event, std::string arg1 = "", std::string arg2 = "" ):
+    event( event ), arg1( arg1 ), arg2( arg2 ), p( p ) {}
 
   std::string event;
+  std::string arg1;
+  std::string arg2;
+
   projectrtpchannel::pointer p;
 };
 

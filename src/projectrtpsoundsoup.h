@@ -73,11 +73,12 @@ public:
   size_t size( void ) { return this->files.size(); }
 
 private:
-  void plusone( soundsoupfile::pointer playing );
+  bool plusone( soundsoupfile::pointer playing );
 
   /* This is used to choose the best format file */
   int loopcount;
   size_t currentfile;
+  bool finished;
   soundsoupfiles files;
 };
 

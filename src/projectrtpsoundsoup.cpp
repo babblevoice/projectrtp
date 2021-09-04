@@ -11,8 +11,8 @@ soundsoupfile::pointer soundsoupfile::create() {
 soundsoupfile::soundsoupfile() :
   start( 0 ),
   stop( -1 ),
-  loopcount( -1 ),
-  maxloop( -1 ),
+  loopcount( 0 ),
+  maxloop( 0 ),
   sf( nullptr ) {
 
 }
@@ -25,8 +25,9 @@ soundsoupfile::~soundsoupfile() {
 # c'stor
 */
 soundsoup::soundsoup( size_t size ) :
-  loopcount( -1 ),
-  currentfile( 0 ) {
+  loopcount( 0 ),
+  currentfile( 0 ),
+  finished( false ) {
 
   this->files.resize( size );
 }
@@ -46,51 +47,55 @@ soundsoup::pointer soundsoup::create( size_t size ) {
   return pointer( new soundsoup( size ) );
 }
 
-void soundsoup::plusone( soundsoupfile::pointer playing ) {
+/*
+Move onto the next item in the sound soup. If there is no more to play
+return false otherwise return true.
+*/
+bool soundsoup::plusone( soundsoupfile::pointer playing ) {
   /* Do we loop this file? */
-  if( 0 != playing->loopcount ) {
+  if( playing->loopcount > 0 ) {
     playing->sf->setposition( playing->start );
     playing->loopcount--;
-    return;
+    return true;
   }
 
   /* We have played the last file */
   if( this->files.size() == this->currentfile + 1 ) {
-    if( 0 == this->loopcount ) return;
-    this->loopcount--;
+    if( this->loopcount > 0 ) {
+      this->loopcount--;
 
-    for( auto it = this->files.begin(); it != this->files.end(); it++ ) {
-      (*it)->loopcount = (*it)->maxloop;
-      if( (*it)->sf ) {
-        (*it)->sf->setposition( (*it)->start );
+      for( auto it = this->files.begin(); it != this->files.end(); it++ ) {
+        (*it)->loopcount = (*it)->maxloop;
+        if( (*it)->sf ) {
+          (*it)->sf->setposition( (*it)->start );
+        }
       }
+      this->currentfile = 0;
+
+      return true;
     }
-    this->currentfile = 0;
-    return;
+    this->finished = true;
+    return false;
   }
 
   this->currentfile++;
+  return true;
 }
 
 bool soundsoup::read( rawsound &out ) {
-  if( 0 == this->files.size() ) {
+  if( 0 == this->files.size() || this->finished ) {
     return false;
   }
 
   soundsoupfile::pointer playing = this->files[ this->currentfile ];
+  playing->sf->read( out );
 
-  if( !playing->sf ) {
+  if ( playing->sf->complete() ) {
     this->plusone( playing );
-    return false;
-  } else if ( playing->sf->complete() ) {
-    this->plusone( playing );
-    return false;
   } else if ( -1 != playing->stop && playing->sf->getposition() > playing->stop ) {
     this->plusone( playing );
-    return false;
   }
 
-  playing->sf->read( out );
   return true;
 }
 
@@ -138,18 +143,24 @@ static soundsoupfile::pointer parsefileobj( soundsoup::pointer p, napi_env env, 
 
   soundsoupfile::pointer ssf = soundsoupfile::create();
 
-  napi_value nloop;
+  bool hasit = false;
+  if( napi_ok == napi_has_named_property( env, obj, "loop", &hasit ) && hasit ) {
+    napi_value nloop;
 
-  if( napi_ok == napi_get_named_property( env, obj, "loop", &nloop ) ) {
-
-    bool loop = false;
-    if( napi_ok == napi_get_value_bool( env, nloop, &loop ) && loop ) {
-      ssf->loopcount = INT_MAX;
-    }
-
-    uint32_t loopcount;
-    if( napi_ok == napi_get_value_uint32( env, nloop, &loopcount ) ) {
-      ssf->loopcount = loopcount;
+    if( napi_ok == napi_get_named_property( env, obj, "loop", &nloop ) ) {
+      napi_valuetype typeresult;
+      napi_typeof( env, nloop, &typeresult );
+      if( napi_boolean == typeresult ) {
+        bool loop = false;
+        napi_get_value_bool( env, nloop, &loop );
+        if( loop ) {
+          ssf->loopcount = INT_MAX;
+        }
+      } else {
+        int32_t vloop;
+        napi_get_value_int32( env, nloop, &vloop );
+        if( vloop > 0 ) ssf->loopcount = vloop - 1;
+      }
     }
   }
 
@@ -193,9 +204,6 @@ soundsoup::pointer soundsoupcreate( napi_env env, napi_value obj, int channelcod
   soundsoup::pointer p = nullptr;
   napi_value nfiles;
 
-  bool loop = false;
-  napi_get_value_bool( env, obj, &loop );
-
   if( napi_ok == napi_get_named_property( env, obj, "files", &nfiles ) ) {
     bool isarray;
     napi_is_array( env, nfiles, &isarray );
@@ -219,6 +227,28 @@ soundsoup::pointer soundsoupcreate( napi_env env, napi_value obj, int channelcod
       soundsoupfile::pointer ssp = parsefileobj( p, env, filei, channelcodec );
       if( nullptr == ssp ) return nullptr;
       p->addfile( ssp, i );
+    }
+
+
+    bool hasit = false;
+    if( napi_ok == napi_has_named_property( env, obj, "loop", &hasit ) && hasit ) {
+      napi_value nloop;
+
+      if( napi_ok == napi_get_named_property( env, obj, "loop", &nloop ) ) {
+        napi_valuetype typeresult;
+        napi_typeof( env, nloop, &typeresult );
+        if( napi_boolean == typeresult ) {
+          bool loop = false;
+          napi_get_value_bool( env, nloop, &loop );
+          if( loop ) {
+            p->setloop( INT_MAX );
+          }
+        } else {
+          int32_t vloop;
+          napi_get_value_int32( env, nloop, &vloop );
+          if( vloop > 0 ) p->setloop( vloop - 1 );
+        }
+      }
     }
 
     return p;

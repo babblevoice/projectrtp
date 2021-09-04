@@ -16,6 +16,8 @@
 
 #include <stdint.h>
 
+#include <functional>
+
 #include <node_api.h>
 
 #include "projectrtppacket.h"
@@ -24,8 +26,7 @@
 /* min 2 for write buffers on 2 channel audio */
 #define SOUNDFILENUMBUFFERS 2
 
-typedef struct
-{
+typedef struct {
     /* RIFF Header */
     uint8_t riff_header[ 4 ]; /* Contains "RIFF" */
     uint32_t chunksize; /* Size of the wav portion of the file, which follows the first 8 bytes. File size - 8 */
@@ -58,16 +59,15 @@ typedef struct
 #define  WAVE_FORMAT_POLYCOM_G722 0xA112 /* Polycom - there are other versions */
 #define  WAVE_FORMAT_GLOBAL_IP_ILBC 0xA116 /* Global IP */
 
-class soundfile
-{
+class soundfile {
 public:
   soundfile( std::string &url );
   soundfile( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
   ~soundfile();
 
   typedef std::shared_ptr< soundfile > pointer;
-  static pointer create( std::string &url );
-  static pointer create( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
+  static pointer create( std::string url );
+  static pointer create( std::string url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
   std::string &geturl( void ) { return this->url; };
 
   bool read( rawsound &out );
@@ -97,11 +97,11 @@ private:
   aiocb cbwavheader;
   wavheader ourwavheader;
   aiocb cbwavblock[ SOUNDFILENUMBUFFERS ];
+  int blocksize;
 
   bool opened;
   bool badheader;
 
-  long newposition;
   bool headerread;
 
   /* For writing */

@@ -17,7 +17,7 @@ std::queue < unsigned short >availableports;
 uint32_t channelscreated = 0;
 
 /* The one function used by our channel */
-void postdatabacktojsfromthread( std::string event, projectrtpchannel::pointer p );
+void postdatabacktojsfromthread( projectrtpchannel::pointer p, std::string event, std::string arg1 = "", std::string arg2 = "" );
 
 /*
 # Project RTP Channel
@@ -117,7 +117,9 @@ void projectrtpchannel::doopen( void ) {
   this->readsomertp();
   this->readsomertcp();
 
-  this->tick.expires_after( std::chrono::milliseconds( 20 ) );
+  this->nexttick = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds( 20 );
+
+  this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
   this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
                                         shared_from_this(),
                                         boost::asio::placeholders::error ) );
@@ -184,6 +186,11 @@ void projectrtpchannel::doclose( void ) {
 
   this->active = false;
   this->tick.cancel();
+
+  if( nullptr != this->player ) {
+    postdatabacktojsfromthread( shared_from_this(), "play", "end", "channelclosed" );
+  }
+
   this->player = nullptr;
   this->newplaydef = nullptr;
 
@@ -196,7 +203,7 @@ void projectrtpchannel::doclose( void ) {
 
   /* close up any remaining recorders */
   for( auto& rec: this->recorders ) {
-    rec->finishreason = "channel closed";
+    rec->finishreason = "finished.channelclosed";
   }
 
   this->recorders.clear();
@@ -206,7 +213,7 @@ void projectrtpchannel::doclose( void ) {
   this->rtpsocket.close();
   this->rtcpsocket.close();
 
-  postdatabacktojsfromthread( "close", shared_from_this() );
+  postdatabacktojsfromthread( shared_from_this(), "close" );
 }
 
 bool projectrtpchannel::checkidlerecv( void ) {
@@ -234,42 +241,27 @@ void projectrtpchannel::checkfornewrecorders( void )
         soundfile::wavformatfrompt( this->codec ),
         rec->numchannels,
         soundfile::getsampleratefrompt( this->codec ) );
-#if 0
-    rec->control = this->control;
-
-    if( this->control )
-    {
-      JSON::Object v;
-      v[ "action" ] = "record";
-      v[ "id" ] = this->id;
-      v[ "uuid" ] = rec->uuid;
-      v[ "chaneluuid" ] = this->uuid;
-      v[ "file" ] = rec->file;
-      v[ "state" ] = "recording";
-
-      this->control->sendmessage( v );
-    }
-#endif
 
     this->recorders.push_back( rec );
   }
+}
+
+void projectrtpchannel::recordevent( const std::string arg1, const std::string arg2 ) {
+  postdatabacktojsfromthread( shared_from_this(), "record", arg1, arg2 );
 }
 
 /*!md
 ## handletick
 Our timer to send data - use this for when we are a single channel. Mixing tick is done in mux.
 */
-void projectrtpchannel::handletick( const boost::system::error_code& error )
-{
-  if ( error != boost::asio::error::operation_aborted )
-  {
+void projectrtpchannel::handletick( const boost::system::error_code& error ) {
+  if ( error != boost::asio::error::operation_aborted ) {
     /* calc a timer */
     boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
 
     /* only us */
     projectchannelmux::pointer mux = this->others;
-    if( nullptr == mux || 0 == mux->size() )
-    {
+    if( nullptr == mux || 0 == mux->size() ) {
       this->tsout += G711PAYLOADBYTES;
 
       if( this->checkidlerecv() ) return;
@@ -279,35 +271,40 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
       rtppacket *src = this->inbuff->pop();
       RELEASESPINLOCK( this->rtpbufferlock );
 
-      if( nullptr != src )
-      {
+      if( nullptr != src ) {
         this->incodec << codecx::next;
         this->incodec << *src;
       }
 
       AQUIRESPINLOCK( this->newplaylock );
       if( nullptr != this->newplaydef ) {
+        if( nullptr != this->player ) {
+          postdatabacktojsfromthread( shared_from_this(), "play", "end", "replaced" );
+        }
+
         this->player = this->newplaydef;
         this->newplaydef = nullptr;
+
+        postdatabacktojsfromthread( shared_from_this(), "play", "start", "new" );
       }
       RELEASESPINLOCK( this->newplaylock );
 
-      if( this->player )
-      {
+      if( this->player ) {
         rtppacket *out = this->gettempoutbuf();
         rawsound r;
-        if( this->player->read( r ) && r.size() > 0 )
-        {
-          this->outcodec << codecx::next;
-          this->outcodec << r;
-          out << this->outcodec;
-          this->writepacket( out );
+        if( this->player->read( r ) ) {
+          if( r.size() > 0 ) {
+            this->outcodec << codecx::next;
+            this->outcodec << r;
+            out << this->outcodec;
+            this->writepacket( out );
+          }
+        } else {
+          this->player = nullptr;
+          postdatabacktojsfromthread( shared_from_this(), "play", "end", "completed" );
         }
-      }
-      else if( this->doecho )
-      {
-        if( nullptr != src )
-        {
+      } else if( this->doecho ) {
+        if( nullptr != src ) {
           this->outcodec << codecx::next;
           this->outcodec << *src;
 
@@ -327,7 +324,9 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
     if( tms > this->maxticktime ) this->maxticktime = tms;
 
     /* The last thing we do */
-    this->tick.expires_at( this->tick.expiry() + boost::asio::chrono::milliseconds( 20 ) );
+    this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
+
+    this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
     this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
                                         shared_from_this(),
                                         boost::asio::placeholders::error ) );
@@ -339,65 +338,52 @@ void projectrtpchannel::handletick( const boost::system::error_code& error )
 If our codecs (in and out) have data then write to recorded files.
 */
 
-static bool recorderfinished( boost::shared_ptr<channelrecorder> rec )
-{
+static bool recorderfinished( boost::shared_ptr<channelrecorder> rec ) {
   boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
   boost::posix_time::time_duration const diff = ( nowtime - rec->created );
 
-  if( diff.total_milliseconds() < rec->minduration  )
-  {
+  if( diff.total_milliseconds() < rec->minduration  ) {
     return false;
   }
 
-  if( rec->active && rec->lastpowercalc < rec->finishbelowpower )
-  {
-    rec->finishreason = "finishbelowpower";
+  if( rec->isactive() && rec->lastpowercalc < rec->finishbelowpower ) {
+    rec->finishreason = "finished.belowpower";
     return true;
   }
 
-  //std::cout << diff.total_milliseconds() << ":" << rec->maxduration << std::endl;
-  if( diff.total_milliseconds() > rec->maxduration )
-  {
-    rec->finishreason = "timeout";
+  if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
+    rec->finishreason = "finished.timeout";
     return true;
   }
 
   return false;
 }
 
-void projectrtpchannel::writerecordings( void )
-{
-  if( 0 == this->recorders.size() ) return;
+void projectrtpchannel::writerecordings( void ) {
 
+  if( 0 == this->recorders.size() ) return;
   uint16_t power = 0;
 
   /* Decide if we need to calc power as it is expensive */
-  for( auto& rec: this->recorders )
-  {
-    if( ( !rec->active && 0 != rec->startabovepower ) || 0 != rec->finishbelowpower )
-    {
+  for( auto& rec: this->recorders ) {
+    if( ( !rec->isactive() && 0 != rec->startabovepower ) || 0 != rec->finishbelowpower ) {
       power = this->incodec.power();
       break;
     }
   }
 
-  for( auto& rec: this->recorders )
-  {
-    auto pav = rec->poweravg( power );
-    if( 0 == rec->startabovepower && 0 == rec->finishbelowpower )
-    {
-      rec->active = true;
-    }
-    else
-    {
-      if( !rec->active && pav > rec->startabovepower )
-      {
-        rec->active = true;
+  for( auto& rec: this->recorders ) {
+
+    if( 0 == rec->startabovepower && 0 == rec->finishbelowpower ) {
+      rec->active();
+    } else {
+      auto pav = rec->poweravg( power );
+      if( !rec->isactive() && pav > rec->startabovepower ) {
+        rec->active();
       }
     }
 
-    if( rec->active )
-    {
+    if( rec->isactive() ) {
       rec->sfile->write( this->incodec, this->outcodec );
     }
   }
@@ -661,7 +647,10 @@ What is called once we have sent something.
 void projectrtpchannel::handlesend(
       const boost::system::error_code& error,
       std::size_t bytes_transferred) {
-  this->outpkcount++;
+
+  if( !error && bytes_transferred > 0 ) {
+    this->outpkcount++;
+  }
 }
 
 /*!md
@@ -735,6 +724,87 @@ static napi_value stats( napi_env env, napi_callback_info info ) {
   return result;
 }
 
+/*
+We receive an object like:
+{
+   "file": "filename",
+   // optional
+   "startabovepower": 250,
+   "finishbelowpower": 200,
+   "minduration": 2000,
+   "maxduration": 15000,
+   "poweraverageduration": 1
+}
+*/
+static napi_value channelrecord( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) {
+    return createnapibool( env, false );
+  }
+
+  if( 1 != argc ) {
+    return createnapibool( env, false );
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    return createnapibool( env, false );
+  }
+
+  napi_value mfile;
+  if( napi_ok != napi_get_named_property( env, argv[ 0 ], "file", &mfile ) ) {
+    return createnapibool( env, false );
+  }
+
+  size_t bytescopied;
+  char buf[ 256 ];
+
+  if( napi_ok != napi_get_value_string_utf8( env, mfile, buf, sizeof( buf ), &bytescopied ) ) {
+    return createnapibool( env, false );
+  }
+
+  channelrecorder::pointer p = channelrecorder::create( buf, std::bind( &projectrtpchannel::recordevent, chan, std::placeholders::_1, std::placeholders::_2 ) );
+
+  /* optional */
+  napi_value mtmp;
+  int32_t vtmp;
+
+  bool hasit;
+  napi_has_named_property( env, argv[ 0 ], "startabovepower", &hasit );
+  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "startabovepower", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    p->startabovepower = vtmp;
+  }
+
+  napi_has_named_property( env, argv[ 0 ], "finishbelowpower", &hasit );
+  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "finishbelowpower", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    p->finishbelowpower = vtmp;
+  }
+
+  napi_has_named_property( env, argv[ 0 ], "minduration", &hasit );
+  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "minduration", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    p->minduration = vtmp;
+  }
+
+  napi_has_named_property( env, argv[ 0 ], "maxduration", &hasit );
+  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "maxduration", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    p->maxduration = vtmp;
+  }
+
+  napi_has_named_property( env, argv[ 0 ], "poweraverageduration", &hasit );
+  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "poweraverageduration", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    p->poweraverageduration = vtmp;
+  }
+  chan->requestrecord( p );
+
+  return createnapibool( env, true );
+}
 
 static napi_value channelplay( napi_env env, napi_callback_info info ) {
   size_t argc = 1;
@@ -794,7 +864,7 @@ void channeldestroy( napi_env env, void* instance, void* /* hint */ ) {
   delete pb;
 }
 
-void postdatabacktojsfromthread( std::string event, projectrtpchannel::pointer p ) {
+void postdatabacktojsfromthread( projectrtpchannel::pointer p, std::string event, std::string arg1, std::string arg2 ) {
 
   if( NULL == p->cb ) return;
   /*
@@ -802,7 +872,7 @@ void postdatabacktojsfromthread( std::string event, projectrtpchannel::pointer p
     with a max_queue_size with no limit. Can this still hit a limit?
   */
   switch( napi_call_threadsafe_function( p->cb,
-                                         new jschannelevent( event, p ),
+                                         new jschannelevent( p, event, arg1, arg2 ),
                                          napi_tsfn_nonblocking ) ) {
 
   case napi_queue_full:
@@ -881,6 +951,41 @@ napi_value createcloseobject( napi_env env, projectrtpchannel::pointer p ) {
   return result;
 }
 
+
+
+napi_value createrecordobject( napi_env env, projectrtpchannel::pointer p, jschannelevent *ev ) {
+
+  napi_value result, tmp;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, "record", NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "action", tmp ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, ev->arg1.c_str(), NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "file", tmp ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, ev->arg2.c_str(), NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "event", tmp ) ) return NULL;
+
+  return result;
+}
+
+napi_value createplayobject( napi_env env, projectrtpchannel::pointer p, jschannelevent *ev ) {
+  napi_value result, tmp;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, "play", NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "action", tmp ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, ev->arg1.c_str(), NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "event", tmp ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, ev->arg2.c_str(), NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "reason", tmp ) ) return NULL;
+
+  return result;
+}
+
 /*
 In case the user doesn't supply a call back to be notified then
 we use this one so that we can pass data back into the threadsafe
@@ -902,6 +1007,10 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
 
   if( "close" == ev->event ) {
     ourdata = createcloseobject( env, p );
+  } else if( "record" == ev->event ) {
+    ourdata = createrecordobject( env, p, ev );
+  } else if( "play" == ev->event ) {
+    ourdata = createplayobject( env, p, ev );
   }
 
   napi_value undefined;
@@ -1026,7 +1135,7 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   p->requestopen( targetaddress, targetport, codecval );
 
   /* methods */
-  napi_value mclose, mecho, mplay;
+  napi_value mclose, mecho, mplay, mrecord;
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelclose, nullptr, &mclose ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "close", mclose ) ) return NULL;
 
@@ -1035,6 +1144,10 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelplay, nullptr, &mplay ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "play", mplay ) ) return NULL;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelrecord, nullptr, &mrecord ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "record", mrecord ) ) return NULL;
+
 
   /* values */
   napi_value nourport;
