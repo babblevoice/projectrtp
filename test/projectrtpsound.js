@@ -2,7 +2,7 @@
 /*
 Note, timing in Node doesn't appear that accurate. This requires more work if
 we can measure jitter. The pcap traces show 0.01 mS jitter but we are getting 4mS
-when playing in node.
+when playing in node. For now, leave checking of timing.
 */
 
 const expect = require( "chai" ).expect
@@ -67,24 +67,10 @@ describe( "rtpsound", function() {
       const server = dgram.createSocket( "udp4" )
       var receviedpkcount = 0
       var channel
-      var thistime = Date.now() /* mS */
 
       server.on( "message", function( msg, rinfo ) {
-
-        var nowtime = Date.now()
-        var difftime = nowtime - thistime
-        thistime = nowtime
-
-        if( receviedpkcount < 2 ) {
-          /* start up time allow more drift */
-          expect( difftime ).to.be.within( 15, 60 )
-        } else {
-          expect( difftime ).to.be.within( 18, 22 )
-        }
-
         /* This is PCMA encoded data from our flat file */
         expect( msg[ 16 ] ).to.equal( 0x99 )
-
         receviedpkcount++
       } )
 
@@ -97,7 +83,6 @@ describe( "rtpsound", function() {
         let ourport = server.address().port
 
         channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
-          console.log(d)
         } )
 
         expect( channel.play( {
@@ -124,24 +109,11 @@ describe( "rtpsound", function() {
       const server = dgram.createSocket( "udp4" )
       var receviedpkcount = 0
       var channel
-      var thistime = Date.now() /* mS */
 
       server.on( "message", function( msg, rinfo ) {
 
-        var nowtime = Date.now()
-        var difftime = nowtime - thistime
-        thistime = nowtime
-
-        if( 0 === receviedpkcount ) {
-          /* start up time as well */
-          expect( difftime ).to.be.within( 18, 60 )
-        } else {
-          expect( difftime ).to.be.within( 18, 22 )
-        }
-
         /* This is PCMA encoded data from our flat file */
         expect( msg[ 16 ] ).to.equal( 0x99 )
-
         receviedpkcount++
         /*
         flat.wav has 1 S of audio (8000 samples). 160 per packet compressed = 320 PCM.
@@ -150,7 +122,6 @@ describe( "rtpsound", function() {
         if( receviedpkcount > 220 ) {
           channel.close()
         }
-
       } )
 
       server.bind()
@@ -185,20 +156,8 @@ describe( "rtpsound", function() {
       const server = dgram.createSocket( "udp4" )
       var receviedpkcount = 0
       var channel
-      var thistime = Date.now() /* mS */
 
       server.on( "message", function( msg, rinfo ) {
-
-        var nowtime = Date.now()
-        var difftime = nowtime - thistime
-        thistime = nowtime
-
-        if( 0 === receviedpkcount ) {
-          /* start up time as well */
-          expect( difftime ).to.be.within( 18, 60 )
-        } else {
-          expect( difftime ).to.be.within( 18, 22 )
-        }
 
         /* This is PCMA encoded data from our flat file */
         expect( msg[ 16 ] ).to.equal( 0x99 )
@@ -245,22 +204,10 @@ describe( "rtpsound", function() {
       const server = dgram.createSocket( "udp4" )
       var receviedpkcount = 0
       var channel
-      var thistime = Date.now() /* mS */
 
       server.on( "message", function( msg, rinfo ) {
 
         receviedpkcount++
-
-        var nowtime = Date.now()
-        var difftime = nowtime - thistime
-        thistime = nowtime
-
-        if( receviedpkcount < 2 ) {
-          /* allow it to settle */
-          expect( difftime ).to.be.within( 16, 60 )
-        } else {
-          expect( difftime ).to.be.within( 16, 22 )
-        }
 
         /* This is PCMA encoded data from our flat file */
         expect( msg[ 17 ] ).to.equal( 153 /* 0x99 */ )
@@ -299,22 +246,10 @@ describe( "rtpsound", function() {
       const server = dgram.createSocket( "udp4" )
       var receviedpkcount = 0
       var channel
-      var thistime = Date.now() /* mS */
 
       server.on( "message", function( msg, rinfo ) {
 
         receviedpkcount++
-
-        var nowtime = Date.now()
-        var difftime = nowtime - thistime
-        thistime = nowtime
-
-        if( receviedpkcount < 2 ) {
-          /* allow it to settle */
-          expect( difftime ).to.be.within( 16, 60 )
-        } else {
-          expect( difftime ).to.be.within( 16, 25 )
-        }
 
         /* This is PCMA encoded data from our soundsoup:
         { "loop": 2, "files": [
@@ -392,21 +327,8 @@ describe( "rtpsound", function() {
       const server = dgram.createSocket( "udp4" )
       var receviedpkcount = 0
       var channel
-      var thistime = Date.now() /* mS */
 
       server.on( "message", function( msg, rinfo ) {
-
-        var nowtime = Date.now()
-        var difftime = nowtime - thistime
-        thistime = nowtime
-
-        if( 0 === receviedpkcount ) {
-          /* start up time as well */
-          expect( difftime ).to.be.within( 18, 60 )
-        } else {
-          expect( difftime ).to.be.within( 18, 22 )
-        }
-
         /* This is PCMA encoded data from our flat file */
         expect( msg[ 16 ] ).to.equal( 0x99 )
 
