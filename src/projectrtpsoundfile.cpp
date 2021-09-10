@@ -36,7 +36,8 @@ soundfile::soundfile( std::string &url ) :
   headerread( false ),
   writebuffer( nullptr ),
   currentwriteindex( 0 ),
-  tickcount( 0 ) {
+  tickcount( 0 ),
+  initseekmseconds( 0 ) {
   int mode = O_RDONLY;
   std::string filenfullpath = mediachroot + url;
 
@@ -352,6 +353,21 @@ bool soundfile::read( rawsound &out ) {
 
   this->headerread = true;
 
+  if( this->initseekmseconds > 0 ) {
+    off_t init_aio_offset = 0;
+    init_aio_offset = ( this->ourwavheader.bit_depth / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * this->initseekmseconds;
+    init_aio_offset = ( this->cbwavblock[ this->currentreadindex ].aio_offset / this->blocksize ) * this->blocksize;
+    this->cbwavblock[ this->currentreadindex ].aio_offset = sizeof( wavheader ) + init_aio_offset;
+    this->initseekmseconds = 0;
+
+    if ( aio_read( &this->cbwavblock[ this->currentreadindex ] ) == -1 ) {
+      close( this->file );
+      this->file = -1;
+    }
+
+    return false;
+  }
+
   if( aio_error( &this->cbwavblock[ this->currentreadindex ] ) == EINPROGRESS ) {
     fprintf( stderr, "Read of soundfile wav block has not completed\n" );
     return false;
@@ -446,19 +462,39 @@ bool soundfile::read( rawsound &out ) {
 
 /*!md
 # setposition and getposition
-Gets and sets the position in terms of mS.
+Gets and sets the position in terms of mS. This can only be called after the header
+has been read.
 */
 void soundfile::setposition( long mseconds ) {
-  this->currentreadindex = ( this->currentreadindex + 1 ) % SOUNDFILENUMBUFFERS;
 
-  this->cbwavblock[ this->currentreadindex ].aio_offset = ( this->ourwavheader.bit_depth / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * mseconds; /* bytes per sample */
-  this->cbwavblock[ this->currentreadindex ].aio_offset = ( this->cbwavblock[ this->currentreadindex ].aio_offset / this->blocksize ) * this->blocksize; /* realign to the nearest block */
-  this->cbwavblock[ this->currentreadindex ].aio_offset += sizeof( wavheader );
+  /* check */
+  if ( -1 == this->file ) {
+    this->initseekmseconds = mseconds;
+    return;
+  }
 
-  /* read ahead */
-  if ( aio_read( &this->cbwavblock[ this->currentreadindex ] ) == -1 ) {
-    close( this->file );
-    this->file = -1;
+  if( !this->headerread && aio_error( &this->cbwavheader ) == 0 ) {
+    this->headerread = true;
+  }
+
+
+  if( this->headerread ) {
+    this->currentreadindex = ( this->currentreadindex + 1 ) % SOUNDFILENUMBUFFERS;
+
+    off_t our_aio_offset = ( this->ourwavheader.bit_depth /*16*/ / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * mseconds; /* bytes per sample */
+    our_aio_offset = ( our_aio_offset / this->blocksize ) * this->blocksize; /* realign to the nearest block */
+    our_aio_offset += sizeof( wavheader );
+    this->cbwavblock[ this->currentreadindex ].aio_offset = our_aio_offset;
+
+    /* read ahead */
+    if ( aio_read( &this->cbwavblock[ this->currentreadindex ] ) == -1 ) {
+      close( this->file );
+      this->file = -1;
+    }
+
+    this->initseekmseconds = 0;
+  } else {
+    this->initseekmseconds = mseconds;
   }
 }
 

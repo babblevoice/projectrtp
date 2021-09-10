@@ -21,10 +21,10 @@ public:
   typedef std::shared_ptr< soundsoupfile > pointer;
   static pointer create( void );
 
-  int start;
-  int stop;
-  int loopcount;
-  int maxloop;
+  int32_t start;
+  int32_t stop;
+  int32_t loopcount;
+  int32_t maxloop;
   soundfile::pointer sf;
 };
 

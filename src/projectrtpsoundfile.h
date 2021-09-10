@@ -108,6 +108,7 @@ private:
   uint8_t *writebuffer;
   int currentwriteindex;
   int32_t tickcount;
+  long initseekmseconds;
 };
 
 

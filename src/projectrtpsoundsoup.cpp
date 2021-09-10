@@ -59,7 +59,7 @@ bool soundsoup::plusone( soundsoupfile::pointer playing ) {
     return true;
   }
 
-  /* We have played the last file */
+  /* Have we have played the last file */
   if( this->files.size() == this->currentfile + 1 ) {
     if( this->loopcount > 0 ) {
       this->loopcount--;
@@ -79,6 +79,9 @@ bool soundsoup::plusone( soundsoupfile::pointer playing ) {
   }
 
   this->currentfile++;
+  soundsoupfile::pointer next = this->files[ this->currentfile ];
+  next->sf->setposition( next->start );
+
   return true;
 }
 
@@ -155,16 +158,41 @@ static soundsoupfile::pointer parsefileobj( soundsoup::pointer p, napi_env env, 
         napi_get_value_bool( env, nloop, &loop );
         if( loop ) {
           ssf->loopcount = INT_MAX;
+          ssf->maxloop = ssf->loopcount;
         }
       } else {
         int32_t vloop;
         napi_get_value_int32( env, nloop, &vloop );
-        if( vloop > 0 ) ssf->loopcount = vloop - 1;
+        if( vloop > 0 ) {
+          ssf->loopcount = vloop - 1;
+          ssf->maxloop = ssf->loopcount;
+        }
       }
     }
   }
 
+  if( napi_ok == napi_has_named_property( env, obj, "start", &hasit ) && hasit ) {
+    napi_value nstart;
+
+    if( napi_ok == napi_get_named_property( env, obj, "start", &nstart ) ) {
+      int32_t vstart;
+      napi_get_value_int32( env, nstart, &vstart );
+      ssf->start = vstart;
+    }
+  }
+
+  if( napi_ok == napi_has_named_property( env, obj, "stop", &hasit ) && hasit ) {
+    napi_value nstop;
+
+    if( napi_ok == napi_get_named_property( env, obj, "stop", &nstop ) ) {
+      int32_t vstop;
+      napi_get_value_int32( env, nstop, &vstop );
+      ssf->stop = vstop;
+    }
+  }
+
   std::string filename;
+  /* TODO - currently untested */
   switch( format ) {
     case PCMUPAYLOADTYPE: {
       filename = getfilenamefromobjectforcodec( env, obj, "pcmu", "l168k", "wav" );
@@ -192,9 +220,12 @@ static soundsoupfile::pointer parsefileobj( soundsoup::pointer p, napi_env env, 
   }
 
   ssf->sf = soundfile::create( filename );
-
   if( !ssf->sf->isopen() ) {
     return nullptr;
+  }
+
+  if( ssf->start > 0 ) {
+    ssf->sf->setposition( ssf->start );
   }
 
   return ssf;

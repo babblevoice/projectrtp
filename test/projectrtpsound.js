@@ -1,5 +1,9 @@
 
-
+/*
+Note, timing in Node doesn't appear that accurate. This requires more work if
+we can measure jitter. The pcap traces show 0.01 mS jitter but we are getting 4mS
+when playing in node.
+*/
 
 const expect = require( "chai" ).expect
 const fs = require( "fs" )
@@ -286,6 +290,102 @@ describe( "rtpsound", function() {
       expect( receviedpkcount ).to.equal( 100 )
     } )
 
+    it( `slightly more complex soundsoup file and check udp data`, async function() {
+
+      this.timeout( 10000 )
+      this.slow( 9500 )
+
+      /* create our RTP/UDP endpoint */
+      const server = dgram.createSocket( "udp4" )
+      var receviedpkcount = 0
+      var channel
+      var thistime = Date.now() /* mS */
+
+      server.on( "message", function( msg, rinfo ) {
+
+        receviedpkcount++
+
+        var nowtime = Date.now()
+        var difftime = nowtime - thistime
+        thistime = nowtime
+
+        if( receviedpkcount < 2 ) {
+          /* allow it to settle */
+          expect( difftime ).to.be.within( 16, 60 )
+        } else {
+          expect( difftime ).to.be.within( 16, 25 )
+        }
+
+        /* This is PCMA encoded data from our soundsoup:
+        { "loop": 2, "files": [
+          { "wav": "/tmp/flat.wav", "loop": 2 },
+          { "wav": "/tmp/flat2.wav" },
+          { "wav": "/tmp/flat.wav" },
+          { "wav": "/tmp/flat3.wav", "start": 40, "stop": 60 },  should be 2 packets
+        ] }
+        */
+        if( receviedpkcount <= 100 ) {
+          /* flat.wav */
+          expect( msg[ 17 ] ).to.equal( 153 /* 0x99 */ )
+          expect( msg[ 150 ] ).to.equal( 153 /* 0x99 */ )
+        } else if( receviedpkcount > 100 && receviedpkcount <= 150 ) {
+          /* flat2.wav */
+          expect( msg[ 17 ] ).to.equal( 3 )
+          expect( msg[ 150 ] ).to.equal( 3 )
+        } else if( receviedpkcount > 150 && receviedpkcount <= 200 ) {
+          /* flat.wav */
+          expect( msg[ 17 ] ).to.equal( 153 /* 0x99 */ )
+          expect( msg[ 150 ] ).to.equal( 153 /* 0x99 */ )
+        } else if( receviedpkcount > 200 && receviedpkcount <= 202 ) {
+          /* flat3.wav */
+          expect( msg[ 17 ] ).to.equal( 54 )
+          expect( msg[ 150 ] ).to.equal( 54 )
+        } else if( receviedpkcount > 202 && receviedpkcount <= 302 ) {
+          /* flat.wav */
+          expect( msg[ 17 ] ).to.equal( 153 )
+          expect( msg[ 150 ] ).to.equal( 153 )
+        } else if( receviedpkcount > 302 && receviedpkcount <= 352 ) {
+          /* flat2.wav */
+          expect( msg[ 17 ] ).to.equal( 3 )
+          expect( msg[ 150 ] ).to.equal( 3 )
+        } else if( receviedpkcount > 352 && receviedpkcount <= 402 ) {
+          /* flat.wav */
+          expect( msg[ 17 ] ).to.equal( 153 )
+          expect( msg[ 150 ] ).to.equal( 153 )
+        } else if( receviedpkcount > 402 && receviedpkcount <= 404 ) {
+          /* flat3.wav */
+          expect( msg[ 17 ] ).to.equal( 54 )
+          expect( msg[ 150 ] ).to.equal( 54 )
+        }
+      } )
+
+      server.bind()
+      server.on( "listening", function() {
+
+        let ourport = server.address().port
+
+        channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+        } )
+
+        expect( channel.play( { "loop": 2, "files": [
+          { "wav": "/tmp/flat.wav", "loop": 2 },
+          { "wav": "/tmp/flat2.wav" },
+          { "wav": "/tmp/flat.wav" },
+          { "wav": "/tmp/flat3.wav", "start": 40, "stop": 60 }, /* should be 2 packets */
+        ] } ) ).to.be.true
+      } )
+
+      await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 9000 ) } )
+      channel.close()
+      server.close()
+
+      /*
+        8000 samples looped twice with 3 sections to play. 400 packets (50 packets/S).
+      */
+      expect( receviedpkcount ).to.equal( 404 )
+    } )
+
+
     /* not finished */
     it( `record to file`, async function() {
       /* create our RTP/UDP endpoint */
@@ -361,14 +461,31 @@ describe( "rtpsound", function() {
     let samples = 8000
     let bytespersample = 2 /* 16 bit audio */
     let wavheader = createwavheader( samples )
-    const zeros = Buffer.alloc( samples * bytespersample )
+    const values = Buffer.alloc( samples * bytespersample )
     for( let i = 0; i < samples; i++ ) {
-      zeros.writeUInt16BE( 300, i * 2 )
+      values.writeUInt16BE( 300, i * 2 )
     }
     /* Put a marker at the start of the file */
-    zeros.writeUInt16BE( 1000, 50 )
+    values.writeUInt16BE( 1000, 50 )
 
-    await fs.writeFile( "/tmp/flat.wav", Buffer.concat( [ wavheader, zeros ] ), function() {} )
+    await fs.writeFile( "/tmp/flat.wav", Buffer.concat( [ wavheader, values ] ), function() {} )
+
+    for( let i = 0; i < samples; i++ ) {
+      values.writeUInt16BE( 400, i * 2 )
+    }
+
+    await fs.writeFile( "/tmp/flat2.wav", Buffer.concat( [ wavheader, values ] ), function() {} )
+
+    for( let i = 0; i < samples; i++ ) {
+      values.writeUInt16BE( 0, i * 2 )
+    }
+
+
+    for( let i = 0; i < 320; i++ ) {
+      values.writeUInt16BE( 500, 640 + ( i * 2 ) )
+    }
+
+    await fs.writeFile( "/tmp/flat3.wav", Buffer.concat( [ wavheader, values ] ), function() {} )
 
     projectrtp.run()
   } )
@@ -376,5 +493,7 @@ describe( "rtpsound", function() {
   after( async () => {
     await projectrtp.shutdown()
     //await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/flat.wav", ( err ) => { resolve() } ) } )
+    //await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/flat2.wav", ( err ) => { resolve() } ) } )
+    //await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/flat3.wav", ( err ) => { resolve() } ) } )
   } )
 } )
