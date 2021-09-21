@@ -34,7 +34,6 @@ function sendpk( sn, sendtime, dstport, server, ssrc = 25, pklength = 172 ) {
 describe( "rtpsound", function() {
   describe( "record", function() {
 
-    /* not finished */
     it( `record to file`, async function() {
       /* create our RTP/UDP endpoint */
       const server = dgram.createSocket( "udp4" )
