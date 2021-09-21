@@ -319,64 +319,7 @@ describe( "rtpsound", function() {
       */
       expect( receviedpkcount ).to.equal( 404 )
     } )
-
-
-    /* not finished */
-    it( `record to file`, async function() {
-      /* create our RTP/UDP endpoint */
-      const server = dgram.createSocket( "udp4" )
-      var receviedpkcount = 0
-      var channel
-
-      server.on( "message", function( msg, rinfo ) {
-        /* This is PCMA encoded data from our flat file */
-        expect( msg[ 16 ] ).to.equal( 0x99 )
-
-        receviedpkcount++
-        if( receviedpkcount > 20 ) {
-          channel.close()
-        }
-
-      } )
-
-      this.timeout( 15000 )
-      this.slow( 12000 )
-
-      server.bind()
-      server.on( "listening", function() {
-
-        let ourport = server.address().port
-
-        channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
-
-          if( "close" === d.action ) {
-            server.close()
-            done()
-          }
-        } )
-
-        expect( channel.record( {
-          "file": "/tmp/ourrecording.wav"
-        } ) ).to.be.true
-
-        /* something to record */
-        expect( channel.play( {
-          "loop": true,
-          "files": [
-            { "wav": "/tmp/flat.wav" }
-          ]
-        } ) ).to.be.true
-
-      } )
-
-      await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10000 ) } )
-      channel.close()
-
-
-    } )
   } )
-
-
 
   before( async () => {
 
