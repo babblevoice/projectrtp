@@ -834,6 +834,115 @@ void codectests( void )
     std::cout << static_cast<int16_t>( pl16[ i ] ) << " ";
   }
   std::cout << std::endl;
+}
 
+/*
+Support single number just for now - but TODO detect Buffer input to convert whole bufffer.
+*/
+static napi_value linear2pcma( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+  int32_t inval;
 
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_type_error( env, "0", "Data required" );
+    return NULL;
+  }
+
+  if( napi_ok != napi_get_value_int32( env, argv[ 0 ], &inval ) ) return NULL;
+  inval = inval + 32768 /* ( 2^16 ) / 2 */;
+
+  if ( inval > 65536 /* ( 2^16 ) */ ) return NULL;
+  if ( inval < 0 ) return NULL;
+
+  napi_value returnval = NULL;
+  if( napi_ok != napi_create_int32( env, _l16topcma[ inval ], &returnval ) ) return NULL;
+  return returnval;
+}
+
+static napi_value pcma2linear( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+  int32_t inval;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_type_error( env, "0", "Data required" );
+    return NULL;
+  }
+
+  if( napi_ok != napi_get_value_int32( env, argv[ 0 ], &inval ) ) return NULL;
+  if ( inval > 256 /* 2 ^ 8 */ ) return NULL;
+  if ( inval < 0 ) return NULL;
+
+  napi_value returnval = NULL;
+  if( napi_ok != napi_create_int32( env, _pcmatol16[ inval ], &returnval ) ) return NULL;
+  return returnval;
+}
+
+static napi_value linear2pcmu( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+  int32_t inval;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_type_error( env, "0", "Data required" );
+    return NULL;
+  }
+
+  if( napi_ok != napi_get_value_int32( env, argv[ 0 ], &inval ) ) return NULL;
+  inval = inval + 32768 /* ( 2^16 ) / 2 */;
+
+  if ( inval > 65536 /* ( 2^16 ) */ ) return NULL;
+  if ( inval < 0 ) return NULL;
+
+  napi_value returnval = NULL;
+  if( napi_ok != napi_create_int32( env, _l16topcmu[ inval ], &returnval ) ) return NULL;
+  return returnval;
+}
+
+static napi_value pcmu2linear( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+  int32_t inval;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_type_error( env, "0", "Data required" );
+    return NULL;
+  }
+
+  if( napi_ok != napi_get_value_int32( env, argv[ 0 ], &inval ) ) return NULL;
+  if ( inval > 256 /* 2 ^ 8 */ ) return NULL;
+  if ( inval < 0 ) return NULL;
+
+  napi_value returnval = NULL;
+  if( napi_ok != napi_create_int32( env, _pcmutol16[ inval ], &returnval ) ) return NULL;
+  return returnval;
+}
+
+void initrtpcodecx( napi_env env, napi_value &result ) {
+  napi_value codecx;
+  napi_value funct;
+
+  if( napi_ok != napi_create_object( env, &codecx ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "codecx", codecx ) ) return;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, linear2pcma, nullptr, &funct ) ) return;
+  if( napi_ok != napi_set_named_property( env, codecx, "linear162pcma", funct ) ) return;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, pcma2linear, nullptr, &funct ) ) return;
+  if( napi_ok != napi_set_named_property( env, codecx, "pcma2linear16", funct ) ) return;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, linear2pcmu, nullptr, &funct ) ) return;
+  if( napi_ok != napi_set_named_property( env, codecx, "linear162pcmu", funct ) ) return;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, pcmu2linear, nullptr, &funct ) ) return;
+  if( napi_ok != napi_set_named_property( env, codecx, "pcmu2linear16", funct ) ) return;
 }

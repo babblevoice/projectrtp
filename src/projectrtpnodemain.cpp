@@ -134,6 +134,7 @@ napi_value init( napi_env env, napi_value exports ) {
   initrtpbuffer( env, result );
   initrtpchannel( env, result );
   initrtpsoundfile( env, result );
+  initrtpcodecx( env, result );
 
   gen711convertdata();
 

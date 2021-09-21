@@ -7,6 +7,8 @@
 #include <ilbc.h>
 #include <spandsp.h>
 
+#include <node_api.h>
+
 #include "projectrtppacket.h"
 #include "projectrtppacket.h"
 #include "projectrtprawsound.h"
@@ -174,6 +176,9 @@ auto* operator << ( auto *pk, codecx& c )
   c.getref( outpayloadtype );
   return pk;
 }
+
+
+void initrtpcodecx( napi_env env, napi_value &result );
 
 
 #endif /* PROJECTRTPCODECX_H */
