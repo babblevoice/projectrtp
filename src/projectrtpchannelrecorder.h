@@ -46,7 +46,7 @@ public:
 private:
 
   /* Rolling average of power reads */
-  ma_filer powerfilter;
+  ma_filter powerfilter;
   bool _active;
 
 };

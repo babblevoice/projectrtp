@@ -10,13 +10,11 @@
 
 #include "firfilter.h"
 
-lowpass3_4k16k::lowpass3_4k16k()
-{
+lowpass3_4k16k::lowpass3_4k16k() {
   this->reset();
 }
 
-void lowpass3_4k16k::reset( void )
-{
+void lowpass3_4k16k::reset( void ) {
   memset( this->history, 0, sizeof( this->history ) );
   this->round = 0;
 }
@@ -68,24 +66,21 @@ static float lp3_4k16kcoeffs[ lowpass3_4k16kfl ] = {
                   0.000519,
                   -0.002102 };
 
-int16_t lowpass3_4k16k::execute( int16_t val )
-{
+int16_t lowpass3_4k16k::execute( int16_t val ) {
   float runtot = 0;
   int j = this->round;
 
   this->history[ j ] = val;
 
   int i = 0;
-  for ( j = ( j + 1 ) % lowpass3_4k16kfl;  j < lowpass3_4k16kfl;  j++ )
-  {
+  for ( j = ( j + 1 ) % lowpass3_4k16kfl;  j < lowpass3_4k16kfl;  j++ ) {
     runtot += lp3_4k16kcoeffs[ i ] * this->history[ j ];
     i++;
   }
 
   j = 0;
 
-  for ( ;  i < lowpass3_4k16kfl;  i++ )
-  {
+  for ( ;  i < lowpass3_4k16kfl;  i++ ) {
     runtot += lp3_4k16kcoeffs[ i ] * this->history[ j ];
     j++;
   }
@@ -95,15 +90,13 @@ int16_t lowpass3_4k16k::execute( int16_t val )
 }
 
 /* Moving Average filter */
-ma_filer::ma_filer():
+ma_filter::ma_filter():
   l( ma_length ),
-  rtotal( 0 )
-{
+  rtotal( 0 ) {
   this->reset( ma_length );
 }
 
-void ma_filer::reset( int seconds )
-{
+void ma_filter::reset( int seconds ) {
   this->l = seconds * 50;
   if( this->l >= ma_length ) this->l = ma_length;
 
@@ -111,8 +104,7 @@ void ma_filer::reset( int seconds )
   memset( this->history, 0, sizeof( this->history ) );
 }
 
-int16_t ma_filer::execute( int16_t val )
-{
+int16_t ma_filter::execute( int16_t val ) {
   this->rtotal -= this->history[ this->round ];
   this->rtotal += val;
   this->history[ this->round ] = val;
@@ -125,26 +117,22 @@ int16_t ma_filer::execute( int16_t val )
 ## testma
 
 */
-void testma( void )
-{
+void testma( void ) {
   std::cout << "Moving average test" << std::endl;
-  ma_filer ourma;
+  ma_filter ourma;
 
-  for( auto i = 0; i < ma_length; i++ )
-  {
+  for( auto i = 0; i < ma_length; i++ ) {
     ourma.execute( 1 );
   }
 
   std::cout << "Latest val after pumping in 1: " << ourma.get() << std::endl;
 
-  for( auto i = 0; i < ( ma_length / 2 ); i++ )
-  {
+  for( auto i = 0; i < ( ma_length / 2 ); i++ ) {
     ourma.execute( 100 );
   }
   std::cout << "Latest val after half filling with 100: " << ourma.get() << std::endl;
 
-  for( auto i = 0; i < ( ma_length / 2 ); i++ )
-  {
+  for( auto i = 0; i < ( ma_length / 2 ); i++ ) {
     ourma.execute( 100 );
   }
   std::cout << "Latest val after half filling with 100: " << ourma.get() << std::endl;
@@ -154,8 +142,7 @@ void testma( void )
 ## testlofir
 Call with frequency to generate a frequency then apply the filter to see the responce.
 */
-void testlofir( int frequency )
-{
+void testlofir( int frequency ) {
   lowpass3_4k16k filter;
   /* 1 seconds worth - 16K sampling */
 
@@ -164,8 +151,7 @@ void testlofir( int frequency )
     angle += (2 * M_PI) / 16000;
   */
 
-  for( int i = 0; i < 16000; i++ )
-  {
+  for( int i = 0; i < 16000; i++ ) {
     int16_t amp = sin( ( ( 2.0 * M_PI ) / 16000.0 ) * i * frequency ) * 20000;
     //std::cout << amp << std::endl;
     std::cout << filter.execute( amp ) << std::endl;

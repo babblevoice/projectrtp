@@ -26,10 +26,10 @@ private:
 /* Moving Average filter */
 /* Based on 20mS history - 50 = 1S - */
 #define ma_length (50*5)
-class ma_filer
+class ma_filter
 {
 public:
-  ma_filer();
+  ma_filter();
   void reset( int seconds );
   int16_t execute( int16_t val );
   inline int getlength( void ) { return this->l / 50; } /* seconds */
