@@ -11,8 +11,7 @@ Fixed FIR filter. everything fixed for speed.
 16K sampling, 3.4K low pass.
 */
 #define lowpass3_4k16kfl 17
-class lowpass3_4k16k
-{
+class lowpass3_4k16k {
 public:
   lowpass3_4k16k();
   void reset( void );
@@ -26,8 +25,7 @@ private:
 /* Moving Average filter */
 /* Based on 20mS history - 50 = 1S - */
 #define ma_length (50*5)
-class ma_filter
-{
+class ma_filter {
 public:
   ma_filter();
   void reset( int seconds );
