@@ -215,7 +215,7 @@ describe( "record", function() {
         "finishbelowpower": 200,
         "minduration": 2000,
         "maxduration": 15000,
-        "poweraverageduration": 1
+        "poweraveragepackets": 50
       } ) ).to.be.true
 
       /* something to record */
@@ -288,7 +288,7 @@ describe( "record", function() {
         "finishbelowpower": 200,
         "minduration": 200,
         "maxduration": 500,
-        "poweraverageduration": 1
+        "poweraveragepackets": 50
       } ) ).to.be.true
 
       /* something to record */
@@ -302,6 +302,114 @@ describe( "record", function() {
     } )
   } )
 
+
+  it( `dual recording one with power detect one ongoing`, function( done ) {
+
+    this.timeout( 5000 )
+    this.slow( 4000 )
+
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+    var receviedpkcount = 0
+    var channel
+
+    /* generate our data */
+    const startsilenceseconds = 1
+    const tonedurationseconds = 1
+    const endsilnceseconds = 2
+    const totalseconds = startsilenceseconds + tonedurationseconds + endsilnceseconds
+    const amplitude = 20000
+    const frequescyhz = 50
+    const samplingrate = 8000
+    const lowamplitude = 500
+
+    let sendbuffer = Buffer.concat( [
+      Buffer.alloc( samplingrate*startsilenceseconds, projectrtp.codecx.linear162pcmu( 0 ) ),
+      genpcmutone( tonedurationseconds, frequescyhz, samplingrate, amplitude ),
+      genpcmutone( endsilnceseconds, frequescyhz, samplingrate, lowamplitude )
+    ] )
+
+    server.on( "message", function( msg, rinfo ) {
+      receviedpkcount++
+    } )
+
+    server.bind()
+    delayedjobs = []
+
+    /*
+      Messages we receive in this order:
+    */
+    const expectedmessages = [
+      { action: 'record', file: '/tmp/dualrecording.wav', event: 'recording' },
+      { action: 'record', file: '/tmp/dualrecordingpower.wav', event: 'recording' },
+      { action: 'record', file: '/tmp/dualrecordingpower.wav', event: 'finished.belowpower' },
+      { action: 'record', file: '/tmp/dualrecording.wav', event: 'finished.channelclosed' },
+      { action: 'close', stats: { in: { mos: 4.5, count: 200, dropped: 0, skip: 0 }, out: { count: 189 } } }
+    ]
+    let expectedmessagecount = 0
+
+    server.on( "listening", function() {
+
+      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+
+        /* this stat can vary */
+        if( "close" === d.action ) {
+          delete d.stats.tick
+        }
+
+        expect( d ).to.deep.equal( expectedmessages[ expectedmessagecount ] )
+        expectedmessagecount++
+
+        if( "record" === d.action && "finished.timeout" == d.event ) {
+
+          expect( d.file ).to.equal( "/tmp/dualrecording.wav" )
+          let stats = fs.statSync( "/tmp/dualrecording.wav" )
+          expect( stats.size ).to.be.within( 128000, 129000 )
+
+        } else if( "record" === d.action && "finished.belowpower" == d.event ) {
+          expect( d.file ).to.equal( "/tmp/dualrecordingpower.wav" )
+
+          let stats = fs.statSync( "/tmp/dualrecordingpower.wav" )
+          expect( stats.size ).to.be.within( 37000, 38000 )
+
+        } else if( "close" === d.action ) {
+          delayedjobs.every( ( id ) => {
+            clearTimeout( id )
+            return true
+          } )
+          server.close()
+
+          expect( expectedmessagecount ).to.equal( expectedmessages.length )
+          done()
+        }
+      } )
+
+      expect( channel.record( {
+        "file": "/tmp/dualrecording.wav"
+      } ) ).to.be.true
+
+      expect( channel.record( {
+        "file": "/tmp/dualrecordingpower.wav",
+        "startabovepower": 800,
+        "finishbelowpower": 600,
+        "minduration": 200,
+        "maxduration": 1500,
+        "poweraveragepackets": 10 /* faster response */
+      } ) ).to.be.true
+
+      /* something to record */
+      expect( channel.echo() ).to.be.true
+
+      for( let i = 0;  i < 50*totalseconds; i ++ ) {
+        delayedjobs.push(
+          sendpk( i, i, channel.port, server, sendbuffer )
+        )
+      }
+    } )
+
+    setTimeout( () => channel.close(), 4000 )
+  } )
+
   before( async () => {
     projectrtp.run()
   } )
@@ -311,5 +419,7 @@ describe( "record", function() {
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourrecording.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourpowerrecording.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourtimeoutpowerrecording.wav", ( err ) => { resolve() } ) } )
+    await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/dualrecordingpower.wav", ( err ) => { resolve() } ) } )
+    await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/dualrecording.wav", ( err ) => { resolve() } ) } )
   } )
 } )
