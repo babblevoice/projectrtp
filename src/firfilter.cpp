@@ -97,8 +97,8 @@ ma_filter::ma_filter():
   this->reset( ma_length );
 }
 
-void ma_filter::reset( int seconds ) {
-  this->l = seconds * 50;
+void ma_filter::reset( int packets ) {
+  this->l = packets;
   if( this->l >= ma_length ) this->l = ma_length;
 
   this->rtotal = 0;

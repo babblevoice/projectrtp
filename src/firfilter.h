@@ -30,9 +30,9 @@ private:
 class ma_filter {
 public:
   ma_filter();
-  void reset( int seconds );
+  void reset( int packets );
   int16_t execute( int16_t val );
-  inline int getlength( void ) { return this->l / 50; } /* seconds */
+  inline int getlength( void ) { return this->l; } /* seconds */
   inline int get( void ) { return this->rtotal / this->l; }
 
 private:
