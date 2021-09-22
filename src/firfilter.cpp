@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include <string.h>
+#include <arpa/inet.h> /* htons etc */
 
 /* tests */
 #define _USE_MATH_DEFINES
@@ -139,21 +140,74 @@ void testma( void ) {
 }
 
 /*
-## testlofir
-Call with frequency to generate a frequency then apply the filter to see the responce.
+Node interface
+Notes:
+
+I don't intend these functions to be used in production enviroments. I have added
+them so that I can test the filter implimentations. They could be useful for other
+purposes but I haven't thought much about the performance of this interface.
+
+To ensure portability I have used network byte order of the buffer array so
+values should be set in the array using writeInt16BE
 */
-void testlofir( int frequency ) {
-  lowpass3_4k16k filter;
-  /* 1 seconds worth - 16K sampling */
 
-  /*
-    1Hz = (2pi/16000)
-    angle += (2 * M_PI) / 16000;
-  */
+static napi_value createnapibool( napi_env env, bool v ) {
+  napi_value result;
+  napi_create_uint32( env, v == true? 1 : 0, &result );
+  napi_coerce_to_bool( env, result, &result );
+  return result;
+}
 
-  for( int i = 0; i < 16000; i++ ) {
-    int16_t amp = sin( ( ( 2.0 * M_PI ) / 16000.0 ) * i * frequency ) * 20000;
-    //std::cout << amp << std::endl;
-    std::cout << filter.execute( amp ) << std::endl;
+/* Take a buffer of data then pass through a low pass fir filter */
+static napi_value filterlowfir( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) {
+    napi_throw_error( env, "0", "Unable to get argv" );
+    return NULL;
   }
+
+  if( argc != 1 ) {
+    napi_throw_error( env, "1", "Incorrect # of arguments" );
+    return NULL;
+  }
+
+  bool isarray;
+  if( napi_ok != napi_is_buffer( env, argv[ 0 ], &isarray ) || !isarray ) {
+    napi_throw_error( env, "2", "argv[0] must be a buffer" );
+    return NULL;
+  }
+
+  size_t bufferlength;
+  uint8_t *bufferdata;
+
+  if( napi_ok != napi_get_buffer_info( env, argv[ 0 ], ( void ** ) &bufferdata, &bufferlength ) ) {
+    napi_throw_type_error( env, "3", "Couldn't get buffer data" );
+    return NULL;
+  }
+
+  {
+    uint16_t *indata = ( uint16_t * ) bufferdata;
+    lowpass3_4k16k filter;
+
+    for( size_t i = 0; i < bufferlength/2; i++ ) {
+      indata[ i ] = htons( filter.execute( ntohs( indata[ i ] ) ) );
+    }
+  }
+
+  return createnapibool( env, true );
+}
+
+void initfilter( napi_env env, napi_value &result ) {
+
+  napi_value rtpfilter;
+  napi_value nfunction;
+
+  if( napi_ok != napi_create_object( env, &rtpfilter ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "rtpfilter", rtpfilter ) ) return;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, filterlowfir, nullptr, &nfunction ) ) return;
+  if( napi_ok != napi_set_named_property( env, rtpfilter, "filterlowfir", nfunction ) ) return;
+
 }
