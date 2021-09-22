@@ -325,7 +325,7 @@ uuid = <string> - channel uuid to record
 
 In seconds up to MA max size (5 seconds?), default is 1 second
 RMS power is calculated from each packet then averaged using a moving average filter.
-poweraverageduration = <int> moving average window to average power over
+poweraveragepackets = <int> moving average window to average power over
 
 must have started for this to kick in - if left out will just start
 startabovepower = <int>
