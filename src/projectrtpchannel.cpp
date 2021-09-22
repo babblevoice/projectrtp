@@ -267,12 +267,14 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
       if( this->checkidlerecv() ) return;
       this->checkfornewrecorders();
 
+      this->incodec << codecx::next;
+      this->outcodec << codecx::next;
+
       AQUIRESPINLOCK( this->rtpbufferlock );
       rtppacket *src = this->inbuff->pop();
       RELEASESPINLOCK( this->rtpbufferlock );
 
       if( nullptr != src ) {
-        this->incodec << codecx::next;
         this->incodec << *src;
       }
 
@@ -294,7 +296,6 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
         rawsound r;
         if( this->player->read( r ) ) {
           if( r.size() > 0 ) {
-            this->outcodec << codecx::next;
             this->outcodec << r;
             out << this->outcodec;
             this->writepacket( out );
@@ -305,7 +306,6 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
         }
       } else if( this->doecho ) {
         if( nullptr != src ) {
-          this->outcodec << codecx::next;
           this->outcodec << *src;
 
           rtppacket *dst = this->gettempoutbuf();
