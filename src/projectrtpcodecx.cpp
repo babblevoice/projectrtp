@@ -627,6 +627,11 @@ rawsound& codecx::getref( int pt )
 ## Calculate the power in a packet
 Rely on compiler to use SSE + rsqrtss for sqrt. If this ever gets ported to a different
 processor with limited functions like this then fast inverse sqrt should be implemented.
+
+Do we need to filter out DC?
+int16_t y = x - this->xm1 + 0.995 * this->ym1;
+this->xm1 = x;
+this->ym1 = y;
 */
 uint16_t codecx::power( void )
 {
