@@ -45,6 +45,7 @@ channelrecorder::pointer channelrecorder::create( std::string file, std::functio
 void channelrecorder::active( void ) {
 
   if( this->_active ) return;
+  this->activeat = boost::posix_time::microsec_clock::local_time();
 
   this->_active = true;
 

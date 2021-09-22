@@ -340,20 +340,22 @@ If our codecs (in and out) have data then write to recorded files.
 
 static bool recorderfinished( boost::shared_ptr<channelrecorder> rec ) {
   boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
-  boost::posix_time::time_duration const diff = ( nowtime - rec->created );
+  boost::posix_time::time_duration const diff = ( nowtime - rec->activeat );
 
-  if( diff.total_milliseconds() < rec->minduration  ) {
-    return false;
-  }
+  if( rec->isactive() ) {
+    if( diff.total_milliseconds() < rec->minduration  ) {
+      return false;
+    }
 
-  if( rec->isactive() && rec->lastpowercalc < rec->finishbelowpower ) {
-    rec->finishreason = "finished.belowpower";
-    return true;
-  }
+    if( rec->lastpowercalc < rec->finishbelowpower ) {
+      rec->finishreason = "finished.belowpower";
+      return true;
+    }
 
-  if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
-    rec->finishreason = "finished.timeout";
-    return true;
+    if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
+      rec->finishreason = "finished.timeout";
+      return true;
+    }
   }
 
   return false;

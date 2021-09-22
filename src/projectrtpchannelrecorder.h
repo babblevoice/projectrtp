@@ -39,6 +39,7 @@ public:
 
   uint16_t lastpowercalc;
   boost::posix_time::ptime created;
+  boost::posix_time::ptime activeat;
   std::string finishreason;
 
   std::function<void( const std::string, const std::string )> f;
