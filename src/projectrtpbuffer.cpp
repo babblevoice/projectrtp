@@ -216,8 +216,7 @@ static napi_value bufferpush( napi_env env, napi_callback_info info ) {
   }
 
   bool isbuffer = false;
-  if( napi_ok != napi_is_buffer( env, payload, &
-    isbuffer ) ) {
+  if( napi_ok != napi_is_buffer( env, payload, &isbuffer ) ) {
     napi_throw_error( env, "2", "NAPI Error" );
     return NULL;
   }
