@@ -25,8 +25,8 @@ public:
 
   std::string file;
 
-  /* In seconds up to MA max size (5 seconds?) */
-  uint16_t poweraverageduration;
+  /* In packets up to MA max size (5 seconds?) */
+  uint16_t poweraveragepackets;
   /* must have started for this to kick in */
   uint16_t startabovepower;
   /* must have started for this to kick in */

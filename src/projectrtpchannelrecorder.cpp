@@ -10,7 +10,7 @@ Track files we are recording to.
 */
 channelrecorder::channelrecorder( std::string file, std::function<void( const std::string, const std::string )> f ) :
   file( file ),
-  poweraverageduration( 1 ),
+  poweraveragepackets( 50 ),
   startabovepower( 0 ),
   finishbelowpower( 0 ),
   minduration( 0 ),
@@ -30,9 +30,9 @@ channelrecorder::~channelrecorder() {
 }
 
 uint16_t channelrecorder::poweravg( uint16_t power ) {
-  if( this->poweraverageduration != this->powerfilter.getlength() )
+  if( this->poweraveragepackets != this->powerfilter.getlength() )
   {
-    this->powerfilter.reset( this->poweraverageduration );
+    this->powerfilter.reset( this->poweraveragepackets );
   }
   this->lastpowercalc = this->powerfilter.execute( power );
   return this->lastpowercalc;

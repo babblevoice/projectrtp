@@ -735,7 +735,7 @@ We receive an object like:
    "finishbelowpower": 200,
    "minduration": 2000,
    "maxduration": 15000,
-   "poweraverageduration": 1
+   "poweraveragepackets": 50
 }
 */
 static napi_value channelrecord( napi_env env, napi_callback_info info ) {
@@ -798,10 +798,10 @@ static napi_value channelrecord( napi_env env, napi_callback_info info ) {
     p->maxduration = vtmp;
   }
 
-  napi_has_named_property( env, argv[ 0 ], "poweraverageduration", &hasit );
-  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "poweraverageduration", &mtmp ) ) {
+  napi_has_named_property( env, argv[ 0 ], "poweraveragepackets", &hasit );
+  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "poweraveragepackets", &mtmp ) ) {
     napi_get_value_int32( env, mtmp, &vtmp );
-    p->poweraverageduration = vtmp;
+    p->poweraveragepackets = vtmp;
   }
   chan->requestrecord( p );
 
