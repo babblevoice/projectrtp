@@ -8,7 +8,7 @@ c'stor and create
 
 Track files we are recording to.
 */
-channelrecorder::channelrecorder( std::string file, std::function<void( const std::string, const std::string )> f ) :
+channelrecorder::channelrecorder( std::string file ) :
   file( file ),
   poweraveragepackets( 50 ),
   startabovepower( 0 ),
@@ -18,15 +18,11 @@ channelrecorder::channelrecorder( std::string file, std::function<void( const st
   numchannels( 2 ),
   lastpowercalc( 0 ),
   created( boost::posix_time::microsec_clock::local_time() ),
-  f( f ),
   _active( false )
 {
 }
 
 channelrecorder::~channelrecorder() {
-  if( this->f ) {
-    this->f( this->file, this->finishreason );
-  }
 }
 
 uint16_t channelrecorder::poweravg( uint16_t power ) {
@@ -38,8 +34,8 @@ uint16_t channelrecorder::poweravg( uint16_t power ) {
   return this->lastpowercalc;
 }
 
-channelrecorder::pointer channelrecorder::create( std::string file, std::function<void( const std::string, const std::string )> f ) {
-  return pointer( new channelrecorder( file, f ) );
+channelrecorder::pointer channelrecorder::create( std::string file ) {
+  return pointer( new channelrecorder( file ) );
 }
 
 void channelrecorder::active( void ) {
@@ -48,8 +44,4 @@ void channelrecorder::active( void ) {
   this->activeat = boost::posix_time::microsec_clock::local_time();
 
   this->_active = true;
-
-  if( this->f ) {
-    this->f( this->file, "recording" );
-  }
 }

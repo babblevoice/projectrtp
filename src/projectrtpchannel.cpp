@@ -203,7 +203,7 @@ void projectrtpchannel::doclose( void ) {
 
   /* close up any remaining recorders */
   for( auto& rec: this->recorders ) {
-    rec->finishreason = "finished.channelclosed";
+    postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.channelclosed" );
   }
 
   this->recorders.clear();
@@ -244,10 +244,6 @@ void projectrtpchannel::checkfornewrecorders( void )
 
     this->recorders.push_back( rec );
   }
-}
-
-void projectrtpchannel::recordevent( const std::string arg1, const std::string arg2 ) {
-  postdatabacktojsfromthread( shared_from_this(), "record", arg1, arg2 );
 }
 
 /*!md
@@ -348,12 +344,10 @@ static bool recorderfinished( boost::shared_ptr<channelrecorder> rec ) {
     }
 
     if( rec->lastpowercalc < rec->finishbelowpower ) {
-      rec->finishreason = "finished.belowpower";
       return true;
     }
 
     if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
-      rec->finishreason = "finished.timeout";
       return true;
     }
   }
@@ -378,15 +372,37 @@ void projectrtpchannel::writerecordings( void ) {
 
     if( 0 == rec->startabovepower && 0 == rec->finishbelowpower ) {
       rec->active();
+      postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording" );
     } else {
       auto pav = rec->poweravg( power );
       if( !rec->isactive() && pav > rec->startabovepower ) {
         rec->active();
+        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording" );
       }
     }
 
     if( rec->isactive() ) {
       rec->sfile->write( this->incodec, this->outcodec );
+    }
+  }
+
+  for ( auto const& rec : this->recorders ) {
+    if( rec->isactive() ) {
+
+      boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
+      boost::posix_time::time_duration const diff = ( nowtime - rec->activeat );
+
+      if( diff.total_milliseconds() < rec->minduration  ) {
+        continue;
+      }
+
+      if( rec->lastpowercalc < rec->finishbelowpower ) {
+        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.belowpower" );
+      }
+
+      if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
+        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.timeout" );
+      }
     }
   }
 
@@ -767,7 +783,7 @@ static napi_value channelrecord( napi_env env, napi_callback_info info ) {
     return createnapibool( env, false );
   }
 
-  channelrecorder::pointer p = channelrecorder::create( buf, std::bind( &projectrtpchannel::recordevent, chan, std::placeholders::_1, std::placeholders::_2 ) );
+  channelrecorder::pointer p = channelrecorder::create( buf );
 
   /* optional */
   napi_value mtmp;

@@ -94,7 +94,6 @@ public:
   inline void echo( void ) { this->doecho = true; }
 
   void requestrecord( channelrecorder::pointer rec ) { this->newrecorders.push( rec ); }
-  void recordevent( const std::string arg1, const std::string arg2 );
 
   inline void direction( bool send, bool recv ) { this->send = send; this->recv = recv; }
 

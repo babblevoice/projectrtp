@@ -15,10 +15,10 @@ class channelrecorder:
 public:
   typedef boost::shared_ptr< channelrecorder > pointer;
 
-  channelrecorder( std::string file, std::function<void( const std::string, const std::string )> );
+  channelrecorder( std::string file );
   ~channelrecorder();
 
-  static pointer create( std::string file, std::function<void( const std::string, const std::string )> );
+  static pointer create( std::string file );
   uint16_t poweravg( uint16_t power );
   void active( void );
   bool isactive( void ) { return this->_active; }
@@ -40,9 +40,6 @@ public:
   uint16_t lastpowercalc;
   boost::posix_time::ptime created;
   boost::posix_time::ptime activeat;
-  std::string finishreason;
-
-  std::function<void( const std::string, const std::string )> f;
 
 private:
 
