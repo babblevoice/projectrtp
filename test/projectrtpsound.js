@@ -46,284 +46,283 @@ function createwavheader( samples = 8000 ) {
 
 
 describe( "rtpsound", function() {
-  describe( "play with soundsoup", function() {
+  //describe( "play with soundsoup", function() {
 
-    it( `call create channel with zero or none exsisting files and check failure`, async function() {
+  it( `play file with zero or none exsisting files and check failure`, async function() {
 
-      this.timeout( 800 )
-      this.slow( 600 )
+    this.timeout( 800 )
+    this.slow( 600 )
 
-      let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": 20000, "codec": 0 } } )
+    let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": 20000, "codec": 0 } } )
 
-      expect( channel.close ).to.be.an( "function" )
-      expect( channel.play ).to.be.an( "function" )
+    expect( channel.close ).to.be.an( "function" )
+    expect( channel.play ).to.be.an( "function" )
 
-      expect( channel.play( { "files": [] } ) ).to.equal( false )
-      expect( channel.play( {} ) ).to.equal( false )
-      expect( channel.play( { "files": [ { "wav": "doesntexsist.wav" } ] } ) ).to.equal( false )
+    expect( channel.play( { "files": [] } ) ).to.equal( false )
+    expect( channel.play( {} ) ).to.equal( false )
+    expect( channel.play( { "files": [ { "wav": "doesntexsist.wav" } ] } ) ).to.equal( false )
 
-      await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 200 ) } )
-      channel.close()
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 200 ) } )
+    channel.close()
+
+  } )
+
+  it( `play simple soundsoup and check udp data`, async function() {
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+    var receviedpkcount = 0
+    var channel
+
+    server.on( "message", function( msg, rinfo ) {
+      /* This is PCMA encoded data from our flat file */
+      expect( msg[ 16 ] ).to.equal( 0x99 )
+      receviedpkcount++
+    } )
+
+    this.timeout( 3000 )
+    this.slow( 2000 )
+
+    server.bind()
+    server.on( "listening", function() {
+
+      let ourport = server.address().port
+
+      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      } )
+
+      expect( channel.play( {
+        "files": [
+          { "wav": "/tmp/flat.wav" }
+        ]
+      } ) ).to.be.true
 
     } )
 
-    it( `play simple soundsoup and check udp data`, async function() {
-      /* create our RTP/UDP endpoint */
-      const server = dgram.createSocket( "udp4" )
-      var receviedpkcount = 0
-      var channel
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1100 ) } )
+    channel.close()
+    server.close()
 
-      server.on( "message", function( msg, rinfo ) {
-        /* This is PCMA encoded data from our flat file */
-        expect( msg[ 16 ] ).to.equal( 0x99 )
-        receviedpkcount++
-      } )
+    expect( receviedpkcount ).to.equal( 50 )
+  } )
 
-      this.timeout( 3000 )
-      this.slow( 2000 )
+  it( `loop in soundsoup and check udp data`, function( done ) {
 
-      server.bind()
-      server.on( "listening", function() {
+    this.timeout( 6000 )
+    this.slow( 5000 )
 
-        let ourport = server.address().port
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+    var receviedpkcount = 0
+    var channel
 
-        channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
-        } )
+    server.on( "message", function( msg, rinfo ) {
 
-        expect( channel.play( {
-          "files": [
-            { "wav": "/tmp/flat.wav" }
-          ]
-        } ) ).to.be.true
-
-      } )
-
-      await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1100 ) } )
-      channel.close()
-      server.close()
-
-      expect( receviedpkcount ).to.equal( 50 )
+      /* This is PCMA encoded data from our flat file */
+      expect( msg[ 16 ] ).to.equal( 0x99 )
+      receviedpkcount++
+      /*
+      flat.wav has 1 S of audio (8000 samples). 160 per packet compressed = 320 PCM.
+      200 packets is 64000 samples so this must have looped to work.
+      */
+      if( receviedpkcount > 220 ) {
+        channel.close()
+      }
     } )
 
-    it( `loop in soundsoup and check udp data`, function( done ) {
+    server.bind()
+    server.on( "listening", function() {
 
-      this.timeout( 6000 )
-      this.slow( 5000 )
+      let ourport = server.address().port
 
-      /* create our RTP/UDP endpoint */
-      const server = dgram.createSocket( "udp4" )
-      var receviedpkcount = 0
-      var channel
+      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
-      server.on( "message", function( msg, rinfo ) {
-
-        /* This is PCMA encoded data from our flat file */
-        expect( msg[ 16 ] ).to.equal( 0x99 )
-        receviedpkcount++
-        /*
-        flat.wav has 1 S of audio (8000 samples). 160 per packet compressed = 320 PCM.
-        200 packets is 64000 samples so this must have looped to work.
-        */
-        if( receviedpkcount > 220 ) {
-          channel.close()
+        if( "close" === d.action ) {
+          server.close()
+          done()
         }
       } )
 
-      server.bind()
-      server.on( "listening", function() {
+      expect( channel.play( {
+        "loop": true,
+        "files": [
+          { "wav": "/tmp/flat.wav" }
+        ]
+      } ) ).to.be.true
 
-        let ourport = server.address().port
+    } )
+  } )
 
-        channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+  it( `loop in soundsoup file and check udp data`, function( done ) {
 
-          if( "close" === d.action ) {
-            server.close()
-            done()
-          }
-        } )
+    this.timeout( 6000 )
+    this.slow( 5000 )
 
-        expect( channel.play( {
-          "loop": true,
-          "files": [
-            { "wav": "/tmp/flat.wav" }
-          ]
-        } ) ).to.be.true
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+    var receviedpkcount = 0
+    var channel
 
-      } )
+    server.on( "message", function( msg, rinfo ) {
+
+      /* This is PCMA encoded data from our flat file */
+      expect( msg[ 16 ] ).to.equal( 0x99 )
+
+      receviedpkcount++
+      /*
+      flat.wav has 1 S of audio (8000 samples). 160 per packet compressed = 320 PCM.
+      200 packets is 64000 samples so this must have looped to work.
+      */
+      if( receviedpkcount > 220 ) {
+        channel.close()
+      }
+
     } )
 
-    it( `loop in soundsoup file and check udp data`, function( done ) {
+    server.bind()
+    server.on( "listening", function() {
 
-      this.timeout( 6000 )
-      this.slow( 5000 )
+      let ourport = server.address().port
 
-      /* create our RTP/UDP endpoint */
-      const server = dgram.createSocket( "udp4" )
-      var receviedpkcount = 0
-      var channel
+      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
-      server.on( "message", function( msg, rinfo ) {
-
-        /* This is PCMA encoded data from our flat file */
-        expect( msg[ 16 ] ).to.equal( 0x99 )
-
-        receviedpkcount++
-        /*
-        flat.wav has 1 S of audio (8000 samples). 160 per packet compressed = 320 PCM.
-        200 packets is 64000 samples so this must have looped to work.
-        */
-        if( receviedpkcount > 220 ) {
-          channel.close()
+        if( "close" === d.action ) {
+          server.close()
+          done()
         }
-
       } )
 
-      server.bind()
-      server.on( "listening", function() {
+      expect( channel.play( {
+        "files": [
+          { "loop": true, "wav": "/tmp/flat.wav" }
+        ]
+      } ) ).to.be.true
 
-        let ourport = server.address().port
+    } )
+  } )
 
-        channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+  it( `loop soup twice in soundsoup file and check udp data`, async function() {
 
-          if( "close" === d.action ) {
-            server.close()
-            done()
-          }
-        } )
+    this.timeout( 4000 )
+    this.slow( 3000 )
 
-        expect( channel.play( {
-          "files": [
-            { "loop": true, "wav": "/tmp/flat.wav" }
-          ]
-        } ) ).to.be.true
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+    var receviedpkcount = 0
+    var channel
 
-      } )
+    server.on( "message", function( msg, rinfo ) {
+
+      receviedpkcount++
+
+      /* This is PCMA encoded data from our flat file */
+      expect( msg[ 17 ] ).to.equal( 153 /* 0x99 */ )
+      expect( msg[ 150 ] ).to.equal( 153 /* 0x99 */ )
     } )
 
-    it( `loop soup twice in soundsoup file and check udp data`, async function() {
+    server.bind()
+    server.on( "listening", function() {
 
-      this.timeout( 4000 )
-      this.slow( 3000 )
+      let ourport = server.address().port
 
-      /* create our RTP/UDP endpoint */
-      const server = dgram.createSocket( "udp4" )
-      var receviedpkcount = 0
-      var channel
+      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      } )
 
-      server.on( "message", function( msg, rinfo ) {
+      expect( channel.play( { "loop": 2, "files": [ { "wav": "/tmp/flat.wav" } ] } ) ).to.be.true
 
-        receviedpkcount++
+    } )
 
-        /* This is PCMA encoded data from our flat file */
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 2200 ) } )
+    channel.close()
+    server.close()
+
+    /*
+      8000 samples looped twice. 100 packets (50 packets/S).
+    */
+
+    expect( receviedpkcount ).to.equal( 100 )
+  } )
+
+  it( `slightly more complex soundsoup file and check udp data`, async function() {
+
+    this.timeout( 10000 )
+    this.slow( 9500 )
+
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+    var receviedpkcount = 0
+    var channel
+
+    server.on( "message", function( msg, rinfo ) {
+
+      receviedpkcount++
+
+      /* This is PCMA encoded data from our soundsoup:
+      { "loop": 2, "files": [
+        { "wav": "/tmp/flat.wav", "loop": 2 },
+        { "wav": "/tmp/flat2.wav" },
+        { "wav": "/tmp/flat.wav" },
+        { "wav": "/tmp/flat3.wav", "start": 40, "stop": 60 },  should be 2 packets
+      ] }
+      */
+      if( receviedpkcount <= 100 ) {
+        /* flat.wav */
         expect( msg[ 17 ] ).to.equal( 153 /* 0x99 */ )
         expect( msg[ 150 ] ).to.equal( 153 /* 0x99 */ )
-      } )
-
-      server.bind()
-      server.on( "listening", function() {
-
-        let ourport = server.address().port
-
-        channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
-        } )
-
-        expect( channel.play( { "loop": 2, "files": [ { "wav": "/tmp/flat.wav" } ] } ) ).to.be.true
-
-      } )
-
-      await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 2200 ) } )
-      channel.close()
-      server.close()
-
-      /*
-        8000 samples looped twice. 100 packets (50 packets/S).
-      */
-
-      expect( receviedpkcount ).to.equal( 100 )
+      } else if( receviedpkcount > 100 && receviedpkcount <= 150 ) {
+        /* flat2.wav */
+        expect( msg[ 17 ] ).to.equal( 3 )
+        expect( msg[ 150 ] ).to.equal( 3 )
+      } else if( receviedpkcount > 150 && receviedpkcount <= 200 ) {
+        /* flat.wav */
+        expect( msg[ 17 ] ).to.equal( 153 /* 0x99 */ )
+        expect( msg[ 150 ] ).to.equal( 153 /* 0x99 */ )
+      } else if( receviedpkcount > 200 && receviedpkcount <= 202 ) {
+        /* flat3.wav */
+        expect( msg[ 17 ] ).to.equal( 54 )
+        expect( msg[ 150 ] ).to.equal( 54 )
+      } else if( receviedpkcount > 202 && receviedpkcount <= 302 ) {
+        /* flat.wav */
+        expect( msg[ 17 ] ).to.equal( 153 )
+        expect( msg[ 150 ] ).to.equal( 153 )
+      } else if( receviedpkcount > 302 && receviedpkcount <= 352 ) {
+        /* flat2.wav */
+        expect( msg[ 17 ] ).to.equal( 3 )
+        expect( msg[ 150 ] ).to.equal( 3 )
+      } else if( receviedpkcount > 352 && receviedpkcount <= 402 ) {
+        /* flat.wav */
+        expect( msg[ 17 ] ).to.equal( 153 )
+        expect( msg[ 150 ] ).to.equal( 153 )
+      } else if( receviedpkcount > 402 && receviedpkcount <= 404 ) {
+        /* flat3.wav */
+        expect( msg[ 17 ] ).to.equal( 54 )
+        expect( msg[ 150 ] ).to.equal( 54 )
+      }
     } )
 
-    it( `slightly more complex soundsoup file and check udp data`, async function() {
+    server.bind()
+    server.on( "listening", function() {
 
-      this.timeout( 10000 )
-      this.slow( 9500 )
+      let ourport = server.address().port
 
-      /* create our RTP/UDP endpoint */
-      const server = dgram.createSocket( "udp4" )
-      var receviedpkcount = 0
-      var channel
-
-      server.on( "message", function( msg, rinfo ) {
-
-        receviedpkcount++
-
-        /* This is PCMA encoded data from our soundsoup:
-        { "loop": 2, "files": [
-          { "wav": "/tmp/flat.wav", "loop": 2 },
-          { "wav": "/tmp/flat2.wav" },
-          { "wav": "/tmp/flat.wav" },
-          { "wav": "/tmp/flat3.wav", "start": 40, "stop": 60 },  should be 2 packets
-        ] }
-        */
-        if( receviedpkcount <= 100 ) {
-          /* flat.wav */
-          expect( msg[ 17 ] ).to.equal( 153 /* 0x99 */ )
-          expect( msg[ 150 ] ).to.equal( 153 /* 0x99 */ )
-        } else if( receviedpkcount > 100 && receviedpkcount <= 150 ) {
-          /* flat2.wav */
-          expect( msg[ 17 ] ).to.equal( 3 )
-          expect( msg[ 150 ] ).to.equal( 3 )
-        } else if( receviedpkcount > 150 && receviedpkcount <= 200 ) {
-          /* flat.wav */
-          expect( msg[ 17 ] ).to.equal( 153 /* 0x99 */ )
-          expect( msg[ 150 ] ).to.equal( 153 /* 0x99 */ )
-        } else if( receviedpkcount > 200 && receviedpkcount <= 202 ) {
-          /* flat3.wav */
-          expect( msg[ 17 ] ).to.equal( 54 )
-          expect( msg[ 150 ] ).to.equal( 54 )
-        } else if( receviedpkcount > 202 && receviedpkcount <= 302 ) {
-          /* flat.wav */
-          expect( msg[ 17 ] ).to.equal( 153 )
-          expect( msg[ 150 ] ).to.equal( 153 )
-        } else if( receviedpkcount > 302 && receviedpkcount <= 352 ) {
-          /* flat2.wav */
-          expect( msg[ 17 ] ).to.equal( 3 )
-          expect( msg[ 150 ] ).to.equal( 3 )
-        } else if( receviedpkcount > 352 && receviedpkcount <= 402 ) {
-          /* flat.wav */
-          expect( msg[ 17 ] ).to.equal( 153 )
-          expect( msg[ 150 ] ).to.equal( 153 )
-        } else if( receviedpkcount > 402 && receviedpkcount <= 404 ) {
-          /* flat3.wav */
-          expect( msg[ 17 ] ).to.equal( 54 )
-          expect( msg[ 150 ] ).to.equal( 54 )
-        }
+      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
       } )
 
-      server.bind()
-      server.on( "listening", function() {
-
-        let ourport = server.address().port
-
-        channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
-        } )
-
-        expect( channel.play( { "loop": 2, "files": [
-          { "wav": "/tmp/flat.wav", "loop": 2 },
-          { "wav": "/tmp/flat2.wav" },
-          { "wav": "/tmp/flat.wav" },
-          { "wav": "/tmp/flat3.wav", "start": 40, "stop": 60 }, /* should be 2 packets */
-        ] } ) ).to.be.true
-      } )
-
-      await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 9000 ) } )
-      channel.close()
-      server.close()
-
-      /*
-        8000 samples looped twice with 3 sections to play. 400 packets (50 packets/S).
-      */
-      expect( receviedpkcount ).to.equal( 404 )
+      expect( channel.play( { "loop": 2, "files": [
+        { "wav": "/tmp/flat.wav", "loop": 2 },
+        { "wav": "/tmp/flat2.wav" },
+        { "wav": "/tmp/flat.wav" },
+        { "wav": "/tmp/flat3.wav", "start": 40, "stop": 60 }, /* should be 2 packets */
+      ] } ) ).to.be.true
     } )
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 9000 ) } )
+    channel.close()
+    server.close()
+
+    /*
+      8000 samples looped twice with 3 sections to play. 400 packets (50 packets/S).
+    */
+    expect( receviedpkcount ).to.equal( 404 )
   } )
 
   before( async () => {
