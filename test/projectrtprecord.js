@@ -192,7 +192,7 @@ describe( "record", function() {
     } )
 
     server.bind()
-    delayedjobs = []
+    let delayedjobs = []
     server.on( "listening", function() {
 
       channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
@@ -208,7 +208,7 @@ describe( "record", function() {
           server.close()
 
           let stats = fs.statSync( "/tmp/ourpowerrecording.wav" )
-          expect( stats.size ).to.be.within( 90000, 100000 )
+          expect( stats.size ).to.be.within( 70000, 80000 )
 
           done()
         }
@@ -220,7 +220,7 @@ describe( "record", function() {
         "finishbelowpower": 200,
         "minduration": 2000,
         "maxduration": 15000,
-        "poweraveragepackets": 50
+        "poweraveragepackets": 20
       } ) ).to.be.true
 
       /* something to record */
@@ -265,7 +265,7 @@ describe( "record", function() {
     } )
 
     server.bind()
-    delayedjobs = []
+    let delayedjobs = []
     server.on( "listening", function() {
 
       channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
@@ -310,8 +310,8 @@ describe( "record", function() {
 
   it( `dual recording one with power detect one ongoing`, function( done ) {
 
-    this.timeout( 5000 )
-    this.slow( 4000 )
+    this.timeout( 7000 )
+    this.slow( 6000 )
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
@@ -339,7 +339,7 @@ describe( "record", function() {
     } )
 
     server.bind()
-    delayedjobs = []
+    let delayedjobs = []
 
     /*
       Messages we receive in this order:
@@ -349,7 +349,7 @@ describe( "record", function() {
       { action: 'record', file: '/tmp/dualrecordingpower.wav', event: 'recording' },
       { action: 'record', file: '/tmp/dualrecordingpower.wav', event: 'finished.belowpower' },
       { action: 'record', file: '/tmp/dualrecording.wav', event: 'finished.channelclosed' },
-      { action: 'close', stats: { in: { mos: 4.5, count: 200, dropped: 0, skip: 0 }, out: { count: 189 } } }
+      { action: 'close' }
     ]
     let expectedmessagecount = 0
 
@@ -357,12 +357,7 @@ describe( "record", function() {
 
       channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
 
-        /* this stat can vary */
-        if( "close" === d.action ) {
-          delete d.stats.tick
-        }
-
-        expect( d ).to.deep.equal( expectedmessages[ expectedmessagecount ] )
+        expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
 
         if( "record" === d.action && "finished.timeout" == d.event ) {
