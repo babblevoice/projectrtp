@@ -415,12 +415,7 @@ describe( "record", function() {
     setTimeout( () => channel.close(), 4000 )
   } )
 
-  before( async () => {
-    projectrtp.run()
-  } )
-
   after( async () => {
-    await projectrtp.shutdown()
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourrecording.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourpowerrecording.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourtimeoutpowerrecording.wav", ( err ) => { resolve() } ) } )

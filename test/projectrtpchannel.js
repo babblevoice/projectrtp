@@ -555,13 +555,4 @@ describe( "rtpchannel", function() {
     done()
   } )
 
-  before( () => {
-    console.log("calling run")
-    projectrtp.run()
-  } )
-
-  after( async () => {
-    console.log("calling shutdown")
-    await projectrtp.shutdown()
-  } )
 } )

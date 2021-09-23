@@ -357,11 +357,9 @@ describe( "rtpsound", function() {
 
     await fs.writeFile( "/tmp/flat3.wav", Buffer.concat( [ wavheader, values ] ), function() {} )
 
-    projectrtp.run()
   } )
 
   after( async () => {
-    await projectrtp.shutdown()
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/flat.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/flat2.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/flat3.wav", ( err ) => { resolve() } ) } )
