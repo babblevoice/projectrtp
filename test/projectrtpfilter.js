@@ -7,7 +7,13 @@ node ./projectrtpfilter.js plot
 */
 
 
-const projectrtp = require( "../src/build/Release/projectrtp" )
+let projectrtp
+if( "debug" === process.env.build ) {
+  projectrtp = require( "../src/build/Debug/projectrtp" )
+} else {
+  projectrtp = require( "../src/build/Release/projectrtp" )
+}
+
 const expect = require( "chai" ).expect
 
 function int16bebuffer2array( inbuffer ) {

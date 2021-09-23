@@ -10,7 +10,12 @@ const fs = require( "fs" )
 
 const dgram = require( "dgram" )
 
-const projectrtp = require( "../src/build/Release/projectrtp" )
+let projectrtp
+if( "debug" === process.env.build ) {
+  projectrtp = require( "../src/build/Debug/projectrtp" )
+} else {
+  projectrtp = require( "../src/build/Release/projectrtp" )
+}
 
 function createwavheader( samples = 8000 ) {
   let audioformat = 1 /* 1 for PCM | 3 for IEEE Float | 6 a law | 7 u law | 0xA112 722 | 0xA116 ilbc */

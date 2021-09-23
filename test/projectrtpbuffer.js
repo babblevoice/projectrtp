@@ -1,7 +1,13 @@
 
 const expect = require( "chai" ).expect
 
-const projectrtp = require( "../src/build/Release/projectrtp" )
+let projectrtp
+if( "debug" === process.env.build ) {
+  projectrtp = require( "../src/build/Debug/projectrtp" )
+} else {
+  projectrtp = require( "../src/build/Release/projectrtp" )
+}
+
 
 /* From RFC 1889
   0                   1                   2                   3
