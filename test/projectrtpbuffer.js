@@ -25,6 +25,10 @@ if( "debug" === process.env.build ) {
 */
 
 describe( "rtpbuffer", function() {
+  if( `Check functions exist`, async function() {
+    expect( projectrtp.rtpbuffer.create ).to.be.an( "function" )
+  } )
+  
   it( `push data and check pops and peek happen at the right time`, async function() {
 
     let b = projectrtp.rtpbuffer.create()
