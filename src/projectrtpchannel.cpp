@@ -209,6 +209,7 @@ void projectrtpchannel::doclose( void ) {
   this->recorders.clear();
   this->rtpsocket.close();
   this->rtcpsocket.close();
+  this->resolver.cancel();
 
   postdatabacktojsfromthread( shared_from_this(), "close" );
 }
@@ -607,7 +608,8 @@ void projectrtpchannel::handletargetresolve (
             boost::asio::ip::udp::resolver::iterator it ) {
   boost::asio::ip::udp::resolver::iterator end;
 
-  if( it == end ) {
+  if( e == boost::asio::error::operation_aborted ||
+      it == end ) {
     /* Failure - silent (the call will be as well!) */
     return;
   }
