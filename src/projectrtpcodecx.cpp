@@ -77,8 +77,6 @@ void gen711convertdata( void ) {
     _pcmatol16[ i ] = alaw_to_linear( i );
     _pcmutol16[ i ] = ulaw_to_linear( i );
   }
-
-  std::cout << " - completed." << std::endl;
 }
 
 codecx::codecx() :
