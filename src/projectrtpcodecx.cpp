@@ -66,18 +66,14 @@ static const uint8_t alaw_to_ulaw_table[256] =
     214, 215, 212, 213, 218, 219, 216, 217, 207, 207, 206, 206, 210, 211, 208, 209
 };
 
-void gen711convertdata( void )
-{
-  std::cout << "Pre generating G711 tables";
-  for( int32_t i = 0; i != 65535; i++ )
-  {
+void gen711convertdata( void ) {
+  for( int32_t i = 0; i != 65535; i++ ) {
     int16_t l16val = i - 32768;
     _l16topcmu[ i ] = linear_to_ulaw( l16val );
     _l16topcma[ i ] = linear_to_alaw( l16val );
   }
 
-  for( uint8_t i = 0; i != 255; i++ )
-  {
+  for( uint8_t i = 0; i != 255; i++ ) {
     _pcmatol16[ i ] = alaw_to_linear( i );
     _pcmutol16[ i ] = ulaw_to_linear( i );
   }
