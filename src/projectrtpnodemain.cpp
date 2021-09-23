@@ -14,6 +14,7 @@
 #include "projectrtpbuffer.h"
 #include "projectrtpchannel.h"
 #include "projectrtpsoundfile.h"
+#include "projectrtptonegen.h"
 
 std::string mediachroot;
 boost::asio::io_context workercontext;
@@ -137,6 +138,7 @@ napi_value init( napi_env env, napi_value exports ) {
   initrtpsoundfile( env, result );
   initrtpcodecx( env, result );
   initfilter( env, result );
+  inittonegen( env, result );
 
   gen711convertdata();
 

@@ -4,8 +4,8 @@
 
 #include <vector>
 
-typedef std::vector< std::string > vectorofstrings;
+#include <node_api.h>
 
-void gentone( const char *tone, const char *file );
+void inittonegen( napi_env env, napi_value &result );
 
-#endif /* PROJECTRTPTONEGEN_H */ 
+#endif /* PROJECTRTPTONEGEN_H */

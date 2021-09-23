@@ -11,11 +11,12 @@
 #include "projectrtpsoundfile.h"
 #include "projectrtptonegen.h"
 
+typedef std::vector< std::string > vectorofstrings;
 
-/*!md
+/*
 We need to be able to generate tones. This is following the standard: https://www.itu.int/dms_pub/itu-t/opb/sp/T-SP-E.180-2010-PDF-E.pdf. Looping will be handled by soundsoup. So this section only needs to handle one cycle of the tone. We allocate memory required to generate the tone at the sample rate but not completley!
 
-Our goal is to be efficient, so we do not generate tis on the fly - most tones will be generated into wav files and played when required.
+Our goal is to be efficient, so we do not generate this on the fly - most tones will be generated into wav files and played when required.
 
 If we want to play a tone continuously we should find a nicely looped file (e.g 1S will mean all frequencies in the file will hit zero at the end of the file). This would simplify our generation.
 
@@ -269,11 +270,55 @@ continueloop:
   close( file );
 }
 
-/*!md
-## gentone
-For test purposes only. Generate a tone into a wav file base on the 2 params.
+/*
+Our node functions.
 */
-void gentone( const char *tone, const char *file )
-{
-  gen( tone, file );
+static napi_value createnapibool( napi_env env, bool v ) {
+  napi_value result;
+  napi_create_uint32( env, v == true? 1 : 0, &result );
+  napi_coerce_to_bool( env, result, &result );
+  return result;
+}
+
+static napi_value tonegen( napi_env env, napi_callback_info info ) {
+  size_t argc = 2;
+  napi_value argv[ 2 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 2 != argc ) {
+    napi_throw_error( env, "0", "You must provide tone.generate( toneformat /*e.g. 350+440*0.5:1000*/, filename )" );
+    return NULL;
+  }
+
+  size_t bytescopied;
+  char tonedcescription[ 256 ];
+  char filename[ 256 ];
+
+  napi_get_value_string_utf8( env, argv[ 0 ], tonedcescription, sizeof( tonedcescription ), &bytescopied );
+  if( 0 == bytescopied || bytescopied >= sizeof( tonedcescription ) ) {
+    napi_throw_error( env, "1", "Tone definition bad or too long" );
+    return NULL;
+  }
+
+  napi_get_value_string_utf8( env, argv[ 1 ], filename, sizeof( filename ), &bytescopied );
+  if( 0 == bytescopied || bytescopied >= sizeof( filename ) ) {
+    napi_throw_error( env, "1", "Filename too long" );
+    return NULL;
+  }
+
+  gen( tonedcescription, filename );
+
+  return createnapibool( env, true );
+}
+
+void inittonegen( napi_env env, napi_value &result ) {
+  napi_value tonegenobj;
+  napi_value nfunction;
+
+  if( napi_ok != napi_create_object( env, &tonegenobj ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "tone", tonegenobj ) ) return;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, tonegen, nullptr, &nfunction ) ) return;
+  if( napi_ok != napi_set_named_property( env, tonegenobj, "generate", nfunction ) ) return;
+
 }
