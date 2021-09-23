@@ -39,6 +39,7 @@ static void workerbee( void ) {
 
 static void runwork( napi_env env, void *data ) {
 
+  if( running ) return;
   running = true;
 
   auto numcpus = std::thread::hardware_concurrency();
