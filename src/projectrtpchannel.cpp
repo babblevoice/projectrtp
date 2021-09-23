@@ -207,9 +207,6 @@ void projectrtpchannel::doclose( void ) {
   }
 
   this->recorders.clear();
-
-  RELEASESPINLOCK( this->rtpbufferlock );
-
   this->rtpsocket.close();
   this->rtcpsocket.close();
 
