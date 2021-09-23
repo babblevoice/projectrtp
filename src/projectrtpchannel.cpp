@@ -874,8 +874,8 @@ static napi_value channelecho( napi_env env, napi_callback_info info ) {
   return createnapibool( env, true );
 }
 
-void channeldestroy( napi_env env, void* instance, void* /* hint */ ) {
-  hiddensharedptr *pb = ( hiddensharedptr * ) instance;
+void channeldestroy( napi_env env, void* /* data */, void* hint ) {
+  hiddensharedptr *pb = ( hiddensharedptr * ) hint;
   delete pb;
 }
 
@@ -1144,7 +1144,7 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
   if( napi_ok != napi_create_object( env, &result ) ) return NULL;
   if( napi_ok != napi_type_tag_object( env, result, &channelcreatetag ) ) return NULL;
-  if( napi_ok != napi_wrap( env, result, pb, channeldestroy, nullptr, nullptr ) ) return NULL;
+  if( napi_ok != napi_wrap( env, result, pb, channeldestroy, pb, nullptr ) ) return NULL;
 
   p->jsthis = result;
   p->requestopen( targetaddress, targetport, codecval );

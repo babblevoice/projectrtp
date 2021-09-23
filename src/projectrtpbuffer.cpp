@@ -255,8 +255,8 @@ static napi_value bufferpush( napi_env env, napi_callback_info info ) {
   return NULL;
 }
 
-void bufferdestroy( napi_env env, void* instance, void* /* hint */ ) {
-  delete ( ( hiddensharedptr * ) instance );
+void bufferdestroy( napi_env env, void* /* data */, void* hint ) {
+  delete ( ( hiddensharedptr * ) hint );
 }
 
 static napi_value buffercreate( napi_env env, napi_callback_info info ) {
@@ -287,7 +287,7 @@ static napi_value buffercreate( napi_env env, napi_callback_info info ) {
 
   if( napi_ok != napi_create_object( env, &result ) ) return NULL;
   if( napi_ok != napi_type_tag_object( env, result, &buffercreatetag ) ) return NULL;
-  if( napi_ok != napi_wrap( env, result, pb, bufferdestroy, nullptr, nullptr ) ) return NULL;
+  if( napi_ok != napi_wrap( env, result, pb, bufferdestroy, pb, nullptr ) ) return NULL;
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, bufferpush, nullptr, &npush ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "push", npush ) ) return NULL;
