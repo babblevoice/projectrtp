@@ -34,6 +34,9 @@ public:
   /* used in conjunction with finishbelowpower */
   uint32_t minduration; /* mSeconds */
   uint32_t maxduration; /* mSeconds */
+
+  bool pause;
+
   int numchannels;
   soundfile::pointer sfile;
 

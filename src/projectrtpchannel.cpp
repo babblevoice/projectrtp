@@ -33,6 +33,7 @@ implimented) the address and port given to us when opening in the channel.
 */
 projectrtpchannel::projectrtpchannel( unsigned short port ):
   /* public */
+  requestclose( false ),
   codec( 0 ),
   ssrcin( 0 ),
   ssrcout( 0 ),
@@ -126,7 +127,7 @@ void projectrtpchannel::doopen( void ) {
 
 }
 
-/*!md
+/*
 ## projectrtpchannel destructor
 Clean up
 */
@@ -134,7 +135,7 @@ projectrtpchannel::~projectrtpchannel( void ) {
   channelscreated--;
 }
 
-/*!md
+/*
 # create
 
 */
@@ -168,16 +169,6 @@ unsigned short projectrtpchannel::getport( void ) {
 
 void projectrtpchannel::requestecho( bool e ) {
   this->doecho = e;
-}
-
-/*
-## requestclose
-Closes the channel.
-*/
-void projectrtpchannel::requestclose( void ) {
-
-  boost::asio::post( workercontext,
-        boost::bind( &projectrtpchannel::doclose, shared_from_this() ) );
 }
 
 void projectrtpchannel::doclose( void ) {
@@ -226,30 +217,18 @@ bool projectrtpchannel::checkidlerecv( void ) {
   return false;
 }
 
-/*
-Check for new channels to add to the mix in our own thread.
-*/
-void projectrtpchannel::checkfornewrecorders( void )
-{
-  boost::shared_ptr< channelrecorder > rec;
-  while( this->newrecorders.pop( rec ) )
-  {
-    rec->sfile = soundfile::create(
-        rec->file,
-        soundfile::wavformatfrompt( this->codec ),
-        rec->numchannels,
-        soundfile::getsampleratefrompt( this->codec ) );
-
-    this->recorders.push_back( rec );
-  }
-}
-
 /*!md
 ## handletick
 Our timer to send data - use this for when we are a single channel. Mixing tick is done in mux.
 */
 void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   if ( error != boost::asio::error::operation_aborted ) {
+
+    if( this->requestclose ) {
+      this->doclose();
+      return;
+    }
+
     /* calc a timer */
     boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
 
@@ -353,36 +332,34 @@ static bool recorderfinished( boost::shared_ptr<channelrecorder> rec ) {
   return false;
 }
 
-void projectrtpchannel::writerecordings( void ) {
+/*
+Check for new channels to add to the mix in our own thread.
+*/
+void projectrtpchannel::checkfornewrecorders( void ) {
+  channelrecorder::pointer rec;
+  while( this->newrecorders.pop( rec ) ) {
 
-  if( 0 == this->recorders.size() ) return;
-  uint16_t power = 0;
-
-  /* Decide if we need to calc power as it is expensive */
-  for( auto& rec: this->recorders ) {
-    if( ( !rec->isactive() && 0 != rec->startabovepower ) || 0 != rec->finishbelowpower ) {
-      power = this->incodec.power();
-      break;
-    }
-  }
-
-  for( auto& rec: this->recorders ) {
-
-    if( 0 == rec->startabovepower && 0 == rec->finishbelowpower ) {
-      rec->active();
-      postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording" );
-    } else {
-      auto pav = rec->poweravg( power );
-      if( !rec->isactive() && pav > rec->startabovepower ) {
-        rec->active();
-        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording" );
+    /* if we have an identicle  file name - we allow some param to be updated */
+    for( auto& currentrec: this->recorders ) {
+      if( currentrec->file == rec->file ) {
+        currentrec->pause = rec->pause;
+        goto endofwhileloop;
       }
     }
 
-    if( rec->isactive() ) {
-      rec->sfile->write( this->incodec, this->outcodec );
-    }
+    rec->sfile = soundfile::create(
+        rec->file,
+        soundfile::wavformatfrompt( this->codec ),
+        rec->numchannels,
+        soundfile::getsampleratefrompt( this->codec ) );
+
+    this->recorders.push_back( rec );
+
+endofwhileloop:;
   }
+}
+
+void projectrtpchannel::removeoldrecorders( void ) {
 
   for ( auto const& rec : this->recorders ) {
     if( rec->isactive() ) {
@@ -407,7 +384,44 @@ void projectrtpchannel::writerecordings( void ) {
   this->recorders.remove_if( recorderfinished );
 }
 
-/*!md
+void projectrtpchannel::writerecordings( void ) {
+
+  if( 0 == this->recorders.size() ) return;
+  uint16_t power = 0;
+
+  /* Decide if we need to calc power as it is expensive */
+  for( auto& rec: this->recorders ) {
+    if( ( !rec->isactive() && 0 != rec->startabovepower ) || 0 != rec->finishbelowpower ) {
+      power = this->incodec.power();
+      break;
+    }
+  }
+
+  /* Check if we need to trigger the start of any recordings and write */
+  for( auto& rec: this->recorders ) {
+
+    if( 0 == rec->startabovepower && 0 == rec->finishbelowpower ) {
+      if( !rec->isactive() ) {
+        rec->active();
+        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording" );
+      }
+    } else {
+      auto pav = rec->poweravg( power );
+      if( !rec->isactive() && pav > rec->startabovepower ) {
+        rec->active();
+        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording" );
+      }
+    }
+
+    if( rec->isactive() && !rec->pause ) {
+      rec->sfile->write( this->incodec, this->outcodec );
+    }
+  }
+
+  this->removeoldrecorders();
+}
+
+/*
 ## handlereadsomertp
 Wait for RTP data. We have to re-order when required. Look after all of the round robin memory here.
 We should have enough time to deal with the in data before it gets overwritten.
@@ -722,7 +736,7 @@ static napi_value channelclose( napi_env env, napi_callback_info info ) {
   projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
   if( nullptr == chan ) createnapibool( env, false );
 
-  chan->requestclose();
+  chan->requestclose = true;
 
   return createnapibool( env, true );
 }
@@ -818,6 +832,15 @@ static napi_value channelrecord( napi_env env, napi_callback_info info ) {
     napi_get_value_int32( env, mtmp, &vtmp );
     p->poweraveragepackets = vtmp;
   }
+
+  napi_has_named_property( env, argv[ 0 ], "pause", &hasit );
+  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "pause", &mtmp ) ) {
+    bool vpause;
+    if( napi_ok == napi_get_value_bool( env, mtmp, &vpause ) ) {
+      p->pause = vpause;
+    }
+  }
+
   chan->requestrecord( p );
 
   return createnapibool( env, true );

@@ -73,7 +73,7 @@ public:
   static pointer create( unsigned short port );
 
   void requestopen( std::string address, unsigned short port, uint32_t codec );
-  void requestclose( void );
+  std::atomic_bool requestclose;
   void requestecho( bool e = true );
 
   void dotarget( void );
@@ -165,6 +165,7 @@ private:
 
   bool checkidlerecv( void );
   void checkfornewrecorders( void );
+  void removeoldrecorders( void );
   void writerecordings( void );
 
   void handlertcpdata( void );
@@ -190,8 +191,8 @@ private:
   std::atomic_bool send;
   std::atomic_bool recv;
 
-  boost::lockfree::stack< boost::shared_ptr< channelrecorder > > newrecorders;
-  std::list< boost::shared_ptr< channelrecorder > > recorders;
+  boost::lockfree::stack< channelrecorder::pointer > newrecorders;
+  std::list< channelrecorder::pointer > recorders;
 
   /* DTLS Session */
   dtlssession::pointer rtpdtls;
