@@ -9,6 +9,8 @@
 
 #include <boost/smart_ptr/atomic_shared_ptr.hpp>
 #include <boost/enable_shared_from_this.hpp>
+#include <boost/lockfree/stack.hpp>
+#include <boost/smart_ptr/atomic_shared_ptr.hpp>
 
 #include "projectrtpchannel.h"
 

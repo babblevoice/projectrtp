@@ -69,7 +69,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   tick( workercontext ),
   send( true ),
   recv( true ),
-  newrecorders( MIXQUEUESIZE ),
+  newrecorderslock( false ),
   rtpdtls( nullptr ),
   rtpdtlshandshakeing( false ) {
 
@@ -306,57 +306,56 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   }
 }
 
-/*
-# writerecordings
-If our codecs (in and out) have data then write to recorded files.
-*/
+void projectrtpchannel::requestplay( soundsoup::pointer newdef ) {
+  AQUIRESPINLOCK( this->newplaylock );
+  this->newplaydef = newdef;
+  RELEASESPINLOCK( this->newplaylock );
+}
 
-static bool recorderfinished( boost::shared_ptr<channelrecorder> rec ) {
-  boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
-  boost::posix_time::time_duration const diff = ( nowtime - rec->activeat );
 
-  if( rec->isactive() ) {
-    if( diff.total_milliseconds() < rec->minduration  ) {
-      return false;
-    }
-
-    if( rec->lastpowercalc < rec->finishbelowpower ) {
-      return true;
-    }
-
-    if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
-      return true;
-    }
-  }
-
-  return false;
+static bool recorderfinished( channelrecorder::pointer rec ) {
+  return rec->completed;
 }
 
 /*
-Check for new channels to add to the mix in our own thread.
+Post a request to record (or modify a param of a record). This function is typically
+called from a control thread (i.e. node).
+*/
+void projectrtpchannel::requestrecord( channelrecorder::pointer rec ) {
+  AQUIRESPINLOCK( this->newrecorderslock );
+  this->newrecorders.push_back( rec );
+  RELEASESPINLOCK( this->newrecorderslock );
+}
+
+/*
+Check for new channels to add to the mix in our own thread. This will be a different thread
+to requestrecord.
 */
 void projectrtpchannel::checkfornewrecorders( void ) {
   channelrecorder::pointer rec;
-  while( this->newrecorders.pop( rec ) ) {
+  AQUIRESPINLOCK( this->newrecorderslock );
 
-    /* if we have an identicle  file name - we allow some param to be updated */
+  for ( auto const& newrec : this->newrecorders ) {
+
     for( auto& currentrec: this->recorders ) {
-      if( currentrec->file == rec->file ) {
-        currentrec->pause = rec->pause;
+      if( currentrec->file == newrec->file ) {
+        currentrec->pause = newrec->pause;
         goto endofwhileloop;
       }
     }
 
-    rec->sfile = soundfile::create(
-        rec->file,
+    newrec->sfile = soundfile::create(
+        newrec->file,
         soundfile::wavformatfrompt( this->codec ),
-        rec->numchannels,
+        newrec->numchannels,
         soundfile::getsampleratefrompt( this->codec ) );
 
-    this->recorders.push_back( rec );
+    this->recorders.push_back( newrec );
 
 endofwhileloop:;
   }
+
+  RELEASESPINLOCK( this->newrecorderslock );
 }
 
 void projectrtpchannel::removeoldrecorders( void ) {
@@ -372,10 +371,12 @@ void projectrtpchannel::removeoldrecorders( void ) {
       }
 
       if( rec->lastpowercalc < rec->finishbelowpower ) {
+        rec->completed = true;
         postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.belowpower" );
       }
 
       if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
+        rec->completed = true;
         postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.timeout" );
       }
     }
@@ -384,6 +385,11 @@ void projectrtpchannel::removeoldrecorders( void ) {
   this->recorders.remove_if( recorderfinished );
 }
 
+
+/*
+# writerecordings
+If our codecs (in and out) have data then write to recorded files.
+*/
 void projectrtpchannel::writerecordings( void ) {
 
   if( 0 == this->recorders.size() ) return;

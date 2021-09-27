@@ -17,9 +17,6 @@
 #include <vector>
 #include <unordered_map>
 
-#include <boost/enable_shared_from_this.hpp>
-#include <boost/lockfree/stack.hpp>
-#include <boost/smart_ptr/atomic_shared_ptr.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 
 /* CODECs */
@@ -85,18 +82,10 @@ public:
   void enabledtls( dtlssession::mode, std::string &fingerprint );
 
   void rfc2833( unsigned short pt );
-  void requestplay( soundsoup::pointer newdef ) {
-    AQUIRESPINLOCK( this->newplaylock );
-    this->newplaydef = newdef;
-    RELEASESPINLOCK( this->newplaylock );
-  }
-
+  void requestplay( soundsoup::pointer newdef );
+  void requestrecord( channelrecorder::pointer rec );
   inline void echo( void ) { this->doecho = true; }
-
-  void requestrecord( channelrecorder::pointer rec ) { this->newrecorders.push( rec ); }
-
   inline void direction( bool send, bool recv ) { this->send = send; this->recv = recv; }
-
   void writepacket( rtppacket * );
   void handlesend(
         const boost::system::error_code& error,
@@ -191,7 +180,8 @@ private:
   std::atomic_bool send;
   std::atomic_bool recv;
 
-  boost::lockfree::stack< channelrecorder::pointer > newrecorders;
+  std::list< channelrecorder::pointer > newrecorders;
+  std::atomic_bool newrecorderslock;
   std::list< channelrecorder::pointer > recorders;
 
   /* DTLS Session */

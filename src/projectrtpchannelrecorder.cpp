@@ -19,6 +19,7 @@ channelrecorder::channelrecorder( std::string file ) :
   numchannels( 2 ),
   lastpowercalc( 0 ),
   created( boost::posix_time::microsec_clock::local_time() ),
+  completed( false ),
   _active( false )
 {
 }

@@ -10,10 +10,10 @@
 #include "projectrtpsoundfile.h"
 
 class channelrecorder:
-  public boost::enable_shared_from_this< channelrecorder >
+  public std::enable_shared_from_this< channelrecorder >
 {
 public:
-  typedef boost::shared_ptr< channelrecorder > pointer;
+  typedef std::shared_ptr< channelrecorder > pointer;
 
   channelrecorder( std::string file );
   ~channelrecorder();
@@ -43,6 +43,7 @@ public:
   uint16_t lastpowercalc;
   boost::posix_time::ptime created;
   boost::posix_time::ptime activeat;
+  bool completed; /* indicate clean up required */
 
 private:
 
