@@ -7,7 +7,7 @@
         "-O3",
         "-Wall",
         "-fstack-protector-all",
-        "-std=c++17",
+        "-std=c++20",
         "-fconcepts-ts" ],
       "libraries": [
             "-lrt",
