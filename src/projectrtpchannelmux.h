@@ -7,11 +7,6 @@
 #include <memory>
 #include <atomic>
 
-#include <boost/smart_ptr/atomic_shared_ptr.hpp>
-#include <boost/enable_shared_from_this.hpp>
-#include <boost/lockfree/stack.hpp>
-#include <boost/smart_ptr/atomic_shared_ptr.hpp>
-
 #include "projectrtpchannel.h"
 
 /*
@@ -22,23 +17,25 @@ firing - we want only one to mix all. A channel will maintain its own timer (whe
 for things like playing a sound file (on single channels) or echo.
 */
 
+typedef std::shared_ptr< projectrtpchannel > projectrtpchannelptr;
+
 class projectchannelmux:
-  public boost::enable_shared_from_this< projectchannelmux >
+  public std::enable_shared_from_this< projectchannelmux >
 {
 public:
   projectchannelmux( boost::asio::io_context &iocontext );
   ~projectchannelmux();
-  typedef boost::shared_ptr< projectchannelmux > pointer;
+  typedef std::shared_ptr< projectchannelmux > pointer;
   static pointer create( boost::asio::io_context &iocontext );
 
   void handletick( const boost::system::error_code& error );
-  void checkfordtmf( std::shared_ptr< projectrtpchannel > chan, rtppacket *src );
-  void postrtpdata( std::shared_ptr< projectrtpchannel > srcchan, std::shared_ptr< projectrtpchannel > dstchan, rtppacket *src, uint32_t skipcount );
+  void checkfordtmf( projectrtpchannelptr chan, rtppacket *src );
+  void postrtpdata( projectrtpchannelptr srcchan, projectrtpchannelptr dstchan, rtppacket *src );
   inline size_t size() { return this->channels.size(); }
-  void addchannel( std::shared_ptr< projectrtpchannel > chan );
+  void addchannel( projectrtpchannelptr chan );
   void go( void );
 
-  std::list< std::shared_ptr< projectrtpchannel > > channels;
+  std::list< projectrtpchannelptr > channels;
 
 private:
 
@@ -48,13 +45,15 @@ private:
 
   boost::asio::io_context &iocontext;
   boost::asio::steady_timer tick;
+  std::chrono::high_resolution_clock::time_point nexttick;
 
-  boost::lockfree::stack< std::shared_ptr< projectrtpchannel > > newchannels;
+  std::list< projectrtpchannelptr > newchannels;
+  std::atomic_bool newchannelslock;
+
+  std::atomic_bool mixing;
 
   rawsound added;
   rawsound subtracted;
 };
-
-typedef boost::atomic_shared_ptr< projectchannelmux > atomicmuxptr;
 
 #endif /* PROJECTRTPCHANNELMUX_H */

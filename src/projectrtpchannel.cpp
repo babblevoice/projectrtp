@@ -61,7 +61,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   rtcpsocket( workercontext ),
   receivedrtp( false ),
   targetconfirmed( false ),
-  others( nullptr ),
+  mixing( false ),
   player( nullptr ),
   newplaydef( nullptr ),
   newplaylock( false ),
@@ -185,8 +185,11 @@ void projectrtpchannel::doclose( void ) {
   this->player = nullptr;
   this->newplaydef = nullptr;
 
-  /* remove oursevelse from our list of mixers */
-  this->others = nullptr;
+  if( this->mixing ) {
+#warning signal close to mixer and unmix
+    this->mixer = nullptr;
+    this->mixing = false;
+  }
 
   /* close our session if we have one */
   this->rtpdtls = nullptr;
@@ -232,9 +235,7 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
     /* calc a timer */
     boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
 
-    /* only us */
-    projectchannelmux::pointer mux = this->others;
-    if( nullptr == mux || 0 == mux->size() ) {
+    if( !this->mixing ) {
       this->tsout += G711PAYLOADBYTES;
 
       if( this->checkidlerecv() ) return;
@@ -288,21 +289,21 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
       }
 
       this->writerecordings();
+
+      boost::posix_time::time_duration const diff = ( boost::posix_time::microsec_clock::local_time() - nowtime );
+      uint64_t tms = diff.total_microseconds();
+      this->totalticktime += tms;
+      this->totaltickcount++;
+      if( tms > this->maxticktime ) this->maxticktime = tms;
+
+      /* The last thing we do */
+      this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
+
+      this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
+      this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
+                                          shared_from_this(),
+                                          boost::asio::placeholders::error ) );
     }
-
-    boost::posix_time::time_duration const diff = ( boost::posix_time::microsec_clock::local_time() - nowtime );
-    uint64_t tms = diff.total_microseconds();
-    this->totalticktime += tms;
-    this->totaltickcount++;
-    if( tms > this->maxticktime ) this->maxticktime = tms;
-
-    /* The last thing we do */
-    this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
-
-    this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
-    this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
-                                        shared_from_this(),
-                                        boost::asio::placeholders::error ) );
   }
 }
 
@@ -310,11 +311,6 @@ void projectrtpchannel::requestplay( soundsoup::pointer newdef ) {
   AQUIRESPINLOCK( this->newplaylock );
   this->newplaydef = newdef;
   RELEASESPINLOCK( this->newplaylock );
-}
-
-
-static bool recorderfinished( channelrecorder::pointer rec ) {
-  return rec->completed;
 }
 
 /*
@@ -373,16 +369,18 @@ void projectrtpchannel::removeoldrecorders( void ) {
       if( rec->lastpowercalc < rec->finishbelowpower ) {
         rec->completed = true;
         postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.belowpower" );
+        continue;
       }
 
       if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
         rec->completed = true;
         postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.timeout" );
+        continue;
       }
     }
   }
 
-  this->recorders.remove_if( recorderfinished );
+  this->recorders.remove_if( []( channelrecorder::pointer rec ) { return rec->completed; } );
 }
 
 
@@ -645,39 +643,54 @@ void projectrtpchannel::rfc2833( unsigned short pt ) {
   this->rfc2833pt = pt;
 }
 
-/*!md
+/*
 ## mix
-Add the other to our list of others. n way relationship. Adds to queue for when our main thread calls into us.
+Add the other to a mixer - both channels have access to the same mixer.
+n way relationship. Adds to queue for when our main thread calls into us.
 */
 bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
-  projectrtpchannel::pointer tmpother;
   if( this == other.get() ) {
     return true;
   }
 
-  projectchannelmux::pointer m = this->others.load( std::memory_order_relaxed );
-  if( nullptr == m ) {
-    m = projectchannelmux::create( workercontext );
-    m->addchannel( shared_from_this() );
-    m->addchannel( other );
-    /* We don't need our channel timer */
-    m->go();
-  } else {
-    m->addchannel( other );
+  AQUIRESPINLOCK( this->mixerlock );
+
+  if( nullptr == this->mixer && nullptr != other->mixer ) {
+    this->mixer = other->mixer;
+  } else if ( nullptr != this->mixer && nullptr == other->mixer ) {
+    other->mixer = this->mixer;
   }
+
+  if( nullptr == this->mixer && nullptr == other->mixer  ) {
+    this->mixer = projectchannelmux::create( workercontext );
+    other->mixer = this->mixer;
+  } else {
+    /* If we get here this and other are already mixing and should be cleaned up first */
+    RELEASESPINLOCK( this->mixerlock );
+    return false;
+  }
+
+  this->mixer->addchannel( shared_from_this() );
+  this->mixer->addchannel( other );
+
+  this->mixer->go();
+
+  RELEASESPINLOCK( this->mixerlock );
+
+  this->mixing = true;
 
   return true;
 }
 
-/*!md
+/*
 ## unmix
 As it says.
 */
 void projectrtpchannel::unmix( void ) {
-  this->others = nullptr;
+#warning - TODO
 }
 
-/*!md
+/*
 ## handlesend
 What is called once we have sent something.
 */

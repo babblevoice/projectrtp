@@ -1,4 +1,6 @@
 
+#include <boost/bind/bind.hpp>
+#include <boost/chrono.hpp>
 
 #include "projectrtpchannelmux.h"
 
@@ -8,7 +10,8 @@
 projectchannelmux::projectchannelmux( boost::asio::io_context &iocontext ):
   iocontext( iocontext ),
   tick( iocontext ),
-  newchannelslock( false ) {
+  newchannelslock( false ),
+  mixing( false ) {
 }
 
 projectchannelmux::~projectchannelmux() {
@@ -26,7 +29,7 @@ void projectchannelmux::mixall( void ) {
   size_t insize = L16PAYLOADSAMPLES;
 
   for( auto& chan: this->channels ) {
-    switch( chan->selectedcodec ) {
+    switch( chan->codec ) {
       case G722PAYLOADTYPE:
       case L1616KPAYLOADTYPE: {
         l16krequired = L1616KPAYLOADTYPE;
@@ -42,7 +45,10 @@ void projectchannelmux::mixall( void ) {
 
   /* We first have to add them all up */
   for( auto& chan: this->channels ) {
-    rtppacket *src = chan->getrtpbottom();
+    AQUIRESPINLOCK( chan->rtpbufferlock );
+    rtppacket *src = chan->inbuff->peek();
+    RELEASESPINLOCK( chan->rtpbufferlock );
+
     if( nullptr != src ) {
       chan->incodec << codecx::next;
       chan->incodec << *src;
@@ -57,7 +63,10 @@ void projectchannelmux::mixall( void ) {
      We will get a little noise as a result. We could get rid of this by marking the
      channel somehow?
     */
-    rtppacket *src = chan->getrtpbottom();
+    AQUIRESPINLOCK( chan->rtpbufferlock );
+    rtppacket *src = chan->inbuff->pop();
+    RELEASESPINLOCK( chan->rtpbufferlock );
+
     if( nullptr != src ) {
       rtppacket *dst = chan->gettempoutbuf();
 
@@ -69,7 +78,6 @@ void projectchannelmux::mixall( void ) {
       chan->outcodec << this->subtracted;
       dst << chan->outcodec;
       chan->writepacket( dst );
-      chan->incrrtpbottom( src );
     }
   }
 }
@@ -83,26 +91,24 @@ void projectchannelmux::mix2( void ) {
   auto chans = this->channels.begin();
   auto chan1 = *chans++;
   auto chan2 = *chans;
-
   rtppacket *src;
-  if( ( src = chan1->getrtpbottom() ) != nullptr ) {
-    uint16_t workingonaheadby = src->getsequencenumber() - chan1->lastworkedonsn - 1;
 
-    chan1->receivedpkskip += workingonaheadby;
+  AQUIRESPINLOCK( chan1->rtpbufferlock );
+  src = chan1->inbuff->pop();
+  RELEASESPINLOCK( chan1->rtpbufferlock );
+
+  if( src != nullptr ) {
     this->checkfordtmf( chan1, src );
-
-    this->postrtpdata( chan1, chan2, src, workingonaheadby );
-    chan1->incrrtpbottom( src );
+    this->postrtpdata( chan1, chan2, src );
   }
 
-  if( ( src = chan2->getrtpbottom() ) != nullptr ) {
-    uint16_t workingonaheadby = src->getsequencenumber() - chan2->lastworkedonsn - 1;
+  AQUIRESPINLOCK( chan2->rtpbufferlock );
+  src = chan2->inbuff->pop();
+  RELEASESPINLOCK( chan2->rtpbufferlock );
 
-    chan2->receivedpkskip += workingonaheadby;
+  if( src != nullptr ) {
     this->checkfordtmf( chan2, src );
-
-    this->postrtpdata( chan2, chan1, src, workingonaheadby );
-    chan2->incrrtpbottom( src );
+    this->postrtpdata( chan2, chan1, src );
   }
 }
 
@@ -121,42 +127,17 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
     }
 
     /* Check for channels which have request removal */
-    {
-      bool anyremoved = false;
-      repeatremove:
-      for( auto& chan: this->channels ) {
-        projectchannelmux::pointer tmp = chan->others.load( std::memory_order_relaxed );
-        if( nullptr == tmp ) {
-          this->channels.remove( chan );
-          anyremoved = true;
-          goto repeatremove;
-        }
-      }
-
-      if( anyremoved ) {
-        if( this->channels.size() <= 1 ) {
-          if( 1 == this->channels.size() ) {
-            auto chan = this->channels.begin();
-            this->channels.erase( chan );
-          }
-          /* As we use auto pointers returning from this function without
-          readding a new pointer to a timer will clean things up */
-          return;
-        }
-      }
-    }
+    this->channels.remove_if( []( projectrtpchannelptr chan ) { return !chan->mixing; } );
 
     if( 2 == this->channels.size() ) {
       this->mix2();
-    }
-    else if( this->channels.size() > 2 ) {
+    } else if( this->channels.size() > 2 ) {
       this->mixall();
     }
 
     for( auto& chan: this->channels ) {
       chan->writerecordings();
       chan->checkidlerecv();
-      chan->checkandfixoverrun();
     }
 
     /* calc our timer */
@@ -169,7 +150,10 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
     }
 
 
-    this->tick.expires_at( this->tick.expiry() + boost::asio::chrono::milliseconds( 20 ) );
+    /* The last thing we do */
+    this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
+
+    this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
     this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
                                         shared_from_this(),
                                         boost::asio::placeholders::error ) );
@@ -178,7 +162,11 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
 
 void projectchannelmux::go( void ) {
 
-  this->tick.expires_after( std::chrono::milliseconds( 20 ) );
+  if( this->mixing.exchange( true ) ) return;
+
+  this->nexttick = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds( 20 );
+
+  this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
   this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
                                         shared_from_this(),
                                         boost::asio::placeholders::error ) );
@@ -188,28 +176,34 @@ void projectchannelmux::go( void ) {
 Check for new channels to add to the mix in our own thread.
 */
 void projectchannelmux::checkfornewmixes( void ) {
-  std::shared_ptr< projectrtpchannel > chan;
-  while( this->newchannels.pop( chan ) ) {
+
+  AQUIRESPINLOCK( this->newchannelslock );
+
+  for ( auto const& newchan : this->newchannels ) {
+
+    /* Don't add duplicates */
     for( auto& checkchan: this->channels ) {
-      if( checkchan == chan ) goto contin;
+      if( checkchan.get() == newchan.get() ) goto contin;
     }
 
-    this->channels.push_back( chan );
-    this->channels.unique();
-    chan->others.exchange( shared_from_this() );
+    this->channels.push_back( newchan );
 
     contin:;
   }
+
+  RELEASESPINLOCK( this->newchannelslock );
 }
 
-void projectchannelmux::addchannel( std::shared_ptr< projectrtpchannel > chan ) {
-  this->newchannels.push( chan );
+void projectchannelmux::addchannel( projectrtpchannelptr chan ) {
+  AQUIRESPINLOCK( this->newchannelslock );
+  this->newchannels.push_back( chan );
+  RELEASESPINLOCK( this->newchannelslock );
 }
 
 /*
 ## checkfordtmf
 */
-void projectchannelmux::checkfordtmf( std::shared_ptr< projectrtpchannel > chan, rtppacket *src ) {
+void projectchannelmux::checkfordtmf( projectrtpchannelptr chan, rtppacket *src ) {
   /* The next section is sending to our recipient(s) */
   if( 0 != chan->rfc2833pt && src->getpayloadtype() == chan->rfc2833pt ) {
     /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
@@ -233,6 +227,8 @@ void projectchannelmux::checkfordtmf( std::shared_ptr< projectrtpchannel > chan,
     }
 
     if( pm ) {
+#warning finish me - how to we signal back DTMF
+#if 0
       if( chan->control ) {
         JSON::Object v;
         v[ "action" ] = "telephone-event";
@@ -242,6 +238,7 @@ void projectchannelmux::checkfordtmf( std::shared_ptr< projectrtpchannel > chan,
 
         chan->control->sendmessage( v );
       }
+#endif
     }
 
     if( endbit ) {
@@ -256,8 +253,8 @@ void projectchannelmux::checkfordtmf( std::shared_ptr< projectrtpchannel > chan,
 ## postrtpdata
 Send the data somewhere.
 */
-void projectchannelmux::postrtpdata( std::shared_ptr< projectrtpchannel > srcchan,  std::shared_ptr< projectrtpchannel > dstchan, rtppacket *src, uint32_t skipcount ) {
-  rtppacket *dst = dstchan->gettempoutbuf( skipcount );
+void projectchannelmux::postrtpdata( projectrtpchannelptr srcchan, projectrtpchannelptr dstchan, rtppacket *src ) {
+  rtppacket *dst = dstchan->gettempoutbuf();
 
   if( nullptr == dst ) {
     std::cerr << "We have a null out buffer" << std::endl;

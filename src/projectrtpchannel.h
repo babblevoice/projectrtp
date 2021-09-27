@@ -42,20 +42,18 @@ class projectchannelmux;
 /* The level we start dropping packets to clear backlog */
 #define BUFFERPACKETCAP 10  /* 200mS @ a ptime of 20mS */
 
-/* The size of our message queue where we send info about new channels added
-to the mixr to be added */
-#define MIXQUEUESIZE 50
-
 /* Must be to the power 2 */
 #define OUTBUFFERPACKETCOUNT 16
 
 
-/*!md
+/*
 # projectrtpchannel
 Purpose: RTP Channel - which represents RTP and RTCP. This is here we include our jitter buffer. We create a cyclic window to write data into and then read out of.
 
 RTP on SIP channels should be able to switch between CODECS during a session so we have to make sure we have space for that.
 */
+
+typedef std::shared_ptr< projectchannelmux > projectchannelmuxptr;
 
 
 class projectrtpchannel :
@@ -162,7 +160,9 @@ private:
               boost::system::error_code e,
               boost::asio::ip::udp::resolver::iterator it );
 
-  atomicmuxptr others;
+  std::atomic_bool mixerlock;
+  projectchannelmuxptr mixer;
+  std::atomic_bool mixing;
 
   /* CODECs  */
   codecx outcodec;
