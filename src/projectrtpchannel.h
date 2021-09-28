@@ -149,6 +149,7 @@ private:
 
   void readsomertp( void );
   void readsomertcp( void );
+  void incrtsout( void );
 
   bool checkidlerecv( void );
   void checkfornewrecorders( void );

@@ -185,11 +185,8 @@ void projectrtpchannel::doclose( void ) {
   this->player = nullptr;
   this->newplaydef = nullptr;
 
-  if( this->mixing ) {
-#warning signal close to mixer and unmix
-    this->mixer = nullptr;
-    this->mixing = false;
-  }
+  this->mixer = nullptr;
+  this->mixing = false;
 
   /* close our session if we have one */
   this->rtpdtls = nullptr;
@@ -220,6 +217,10 @@ bool projectrtpchannel::checkidlerecv( void ) {
   return false;
 }
 
+void projectrtpchannel::incrtsout( void ) {
+  this->tsout += G711PAYLOADBYTES;
+}
+
 /*!md
 ## handletick
 Our timer to send data - use this for when we are a single channel. Mixing tick is done in mux.
@@ -236,7 +237,7 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
     boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
 
     if( !this->mixing ) {
-      this->tsout += G711PAYLOADBYTES;
+      this->incrtsout();
 
       if( this->checkidlerecv() ) return;
       this->checkfornewrecorders();
@@ -295,15 +296,15 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
       this->totalticktime += tms;
       this->totaltickcount++;
       if( tms > this->maxticktime ) this->maxticktime = tms;
-
-      /* The last thing we do */
-      this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
-
-      this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
-      this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
-                                          shared_from_this(),
-                                          boost::asio::placeholders::error ) );
     }
+
+    /* The last thing we do */
+    this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
+
+    this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
+    this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
+                                        shared_from_this(),
+                                        boost::asio::placeholders::error ) );
   }
 }
 
@@ -629,6 +630,7 @@ void projectrtpchannel::handletargetresolve (
   if( e == boost::asio::error::operation_aborted ||
       it == end ) {
     /* Failure - silent (the call will be as well!) */
+    fprintf( stderr, "Failed to find target\n" );
     return;
   }
 
@@ -657,27 +659,30 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
 
   if( nullptr == this->mixer && nullptr != other->mixer ) {
     this->mixer = other->mixer;
+    this->mixer->addchannel( shared_from_this() );
+
   } else if ( nullptr != this->mixer && nullptr == other->mixer ) {
     other->mixer = this->mixer;
-  }
+    this->mixer->addchannel( other );
 
-  if( nullptr == this->mixer && nullptr == other->mixer  ) {
+  } else if( nullptr == this->mixer && nullptr == other->mixer  ) {
     this->mixer = projectchannelmux::create( workercontext );
     other->mixer = this->mixer;
+
+    this->mixer->addchannel( shared_from_this() );
+    this->mixer->addchannel( other );
   } else {
     /* If we get here this and other are already mixing and should be cleaned up first */
     RELEASESPINLOCK( this->mixerlock );
     return false;
   }
 
-  this->mixer->addchannel( shared_from_this() );
-  this->mixer->addchannel( other );
+  this->mixing = true;
+  other->mixing = true;
 
   this->mixer->go();
 
   RELEASESPINLOCK( this->mixerlock );
-
-  this->mixing = true;
 
   return true;
 }
@@ -743,6 +748,30 @@ static projectrtpchannel::pointer getrtpchannelfromthis( napi_env env, napi_call
   }
 
   if( napi_ok != napi_unwrap( env, thisarg, ( void** ) &pb ) ) {
+    napi_throw_type_error( env, "1", "Channel didn't unwrap" );
+    return nullptr;
+  }
+
+  return pb->get< projectrtpchannel >();
+}
+
+static projectrtpchannel::pointer getrtpchannelfromargv( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+  napi_value thisarg;
+  bool isrtpchannel;
+
+  hiddensharedptr *pb;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, &thisarg, nullptr ) ) return nullptr;
+  if( napi_ok != napi_check_object_type_tag( env, argv[ 0 ], &channelcreatetag, &isrtpchannel ) ) return nullptr;
+
+  if( !isrtpchannel ) {
+    napi_throw_type_error( env, "0", "Not an RTP Channel type" );
+    return nullptr;
+  }
+
+  if( napi_ok != napi_unwrap( env, argv[ 0 ], ( void** ) &pb ) ) {
     napi_throw_type_error( env, "1", "Channel didn't unwrap" );
     return nullptr;
   }
@@ -916,6 +945,33 @@ static napi_value channelecho( napi_env env, napi_callback_info info ) {
   chan->requestecho( echo );
 
   return createnapibool( env, true );
+}
+
+static napi_value channelmix( napi_env env, napi_callback_info info ) {
+
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_error( env, "0", "We require 1 param (channel)" );
+    return NULL;
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    napi_throw_error( env, "1", "That's embarrassing - we shouldn't get here" );
+    return NULL;
+  }
+
+  projectrtpchannel::pointer chan2 = getrtpchannelfromargv( env, info );
+  if( nullptr == chan2 ) {
+    napi_throw_error( env, "1", "Also embarrassing - we shouldn't get here either" );
+    return NULL;
+  }
+
+  return createnapibool( env, chan->mix( chan2 ) );
 }
 
 void channeldestroy( napi_env env, void* /* data */, void* hint ) {
@@ -1194,19 +1250,21 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   p->requestopen( targetaddress, targetport, codecval );
 
   /* methods */
-  napi_value mclose, mecho, mplay, mrecord;
-  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelclose, nullptr, &mclose ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "close", mclose ) ) return NULL;
+  napi_value mfunc;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelclose, nullptr, &mfunc ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "close", mfunc ) ) return NULL;
 
-  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelecho, nullptr, &mecho ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "echo", mecho ) ) return NULL;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelmix, nullptr, &mfunc ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "mix", mfunc ) ) return NULL;
 
-  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelplay, nullptr, &mplay ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "play", mplay ) ) return NULL;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelecho, nullptr, &mfunc ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "echo", mfunc ) ) return NULL;
 
-  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelrecord, nullptr, &mrecord ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "record", mrecord ) ) return NULL;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelplay, nullptr, &mfunc ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "play", mfunc ) ) return NULL;
 
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelrecord, nullptr, &mfunc ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "record", mfunc ) ) return NULL;
 
   /* values */
   napi_value nourport;

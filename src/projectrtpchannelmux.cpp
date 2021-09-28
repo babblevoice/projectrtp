@@ -58,6 +58,11 @@ void projectchannelmux::mixall( void ) {
 
   /* Now we subtract this channel to send to this channel. */
   for( auto& chan: this->channels ) {
+    rtppacket *dst = chan->gettempoutbuf();
+
+    this->subtracted.zero();
+    this->subtracted.copy( this->added );
+
     /*
      There is a small chance that rtp bottom may have flipped from nullptr to something.
      We will get a little noise as a result. We could get rid of this by marking the
@@ -66,19 +71,14 @@ void projectchannelmux::mixall( void ) {
     AQUIRESPINLOCK( chan->rtpbufferlock );
     rtppacket *src = chan->inbuff->pop();
     RELEASESPINLOCK( chan->rtpbufferlock );
-
     if( nullptr != src ) {
-      rtppacket *dst = chan->gettempoutbuf();
-
-      this->subtracted.zero();
-      this->subtracted.copy( this->added );
       this->subtracted -= chan->incodec;
-
-      chan->outcodec << codecx::next;
-      chan->outcodec << this->subtracted;
-      dst << chan->outcodec;
-      chan->writepacket( dst );
     }
+
+    chan->outcodec << codecx::next;
+    chan->outcodec << this->subtracted;
+    dst << chan->outcodec;
+    chan->writepacket( dst );
   }
 }
 
@@ -129,6 +129,10 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
     /* Check for channels which have request removal */
     this->channels.remove_if( []( projectrtpchannelptr chan ) { return !chan->mixing; } );
 
+    for( auto& chan: this->channels ) {
+      chan->incrtsout();
+    }
+
     if( 2 == this->channels.size() ) {
       this->mix2();
     } else if( this->channels.size() > 2 ) {
@@ -151,12 +155,14 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
 
 
     /* The last thing we do */
-    this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
+    if( this->channels.size() > 0 ) {
+      this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
 
-    this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
-    this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
-                                        shared_from_this(),
-                                        boost::asio::placeholders::error ) );
+      this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
+      this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
+                                          shared_from_this(),
+                                          boost::asio::placeholders::error ) );
+    }
   }
 }
 
@@ -187,9 +193,9 @@ void projectchannelmux::checkfornewmixes( void ) {
     }
 
     this->channels.push_back( newchan );
-
     contin:;
   }
+  this->newchannels.clear();
 
   RELEASESPINLOCK( this->newchannelslock );
 }
