@@ -348,10 +348,10 @@ describe( "rtpchannel", function() {
           */
           expect( receviedpkcount ).to.equal( d.stats.out.count )
           expect( d.stats.in.count ).to.equal( 300 )
-          expect( d.stats.out.count ).to.equal( 190 )
+          expect( d.stats.out.count ).to.be.within( 188, 192 )
           expect( totalsndiff ).to.equal( 0 ) // received should be reordered
           expect( totaltsdiff ).to.equal( 17600 )
-          expect( lastsn - firstsn ).to.equal( 189 )
+          expect( lastsn - firstsn ).to.be.within( 188, 192 )
 
           server.close()
           done()
