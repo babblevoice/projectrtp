@@ -152,6 +152,67 @@ describe( "record", function() {
 
   } )
 
+  it( `record to file with pause`, async function() {
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+    var receviedpkcount = 0
+    var channel
+
+    server.on( "message", function( msg, rinfo ) {
+      receviedpkcount++
+    } )
+
+    this.timeout( 1500 )
+    this.slow( 1200 )
+
+    server.bind()
+    server.on( "listening", function() {
+
+      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+        if( "close" === d.action ) {
+          server.close()
+        }
+      } )
+
+      expect( channel.record( {
+        "file": "/tmp/ourpausedrecording.wav"
+      } ) ).to.be.true
+
+      /* something to record */
+      expect( channel.echo() ).to.be.true
+
+      for( let i = 0;  i < 50; i ++ ) {
+        sendpk( i, i, channel.port, server )
+      }
+
+      /* @ 400mS pause the recording - 200mS will still be in the buffer*/
+      setTimeout( () => {
+        expect( channel.record( {
+          "file": "/tmp/ourpausedrecording.wav",
+          "pause": true
+        } ) ).to.be.true
+      }, 400 )
+    } )
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1100 ) } )
+    channel.close()
+
+    /* Now test the file */
+    let wavinfo = projectrtp.soundfile.info( "/tmp/ourpausedrecording.wav" )
+    expect( wavinfo.audioformat ).to.equal( 1 )
+    expect( wavinfo.channelcount ).to.equal( 2 )
+    expect( wavinfo.samplerate ).to.equal( 8000 )
+    expect( wavinfo.byterate ).to.equal( 32000 )
+    expect( wavinfo.bitdepth ).to.equal( 16 )
+    expect( wavinfo.chunksize ).to.be.within( 5500, 7000 ) /* 200mS of audio */
+    expect( wavinfo.fmtchunksize ).to.equal( 16 )
+    expect( wavinfo.subchunksize ).to.be.within( 5500, 7000 )
+
+    let stats = fs.statSync( "/tmp/ourpausedrecording.wav" )
+    expect( stats.size ).to.be.within( 5500, 7000 )
+
+  } )
+
   it( `record with power detection`, function( done ) {
 
     this.timeout( 9000 )
@@ -412,6 +473,7 @@ describe( "record", function() {
 
   after( async () => {
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourrecording.wav", ( err ) => { resolve() } ) } )
+    await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourpausedrecording.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourpowerrecording.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourtimeoutpowerrecording.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/dualrecordingpower.wav", ( err ) => { resolve() } ) } )
