@@ -538,6 +538,12 @@ describe( "rtpchannel", function() {
 class channel {
 
   /**
+  @summary Our local port number we receive UDP on
+  @return {number}
+  */
+  get port(){}
+
+  /**
   @summary Close the channel
   */
   close(){}
