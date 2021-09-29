@@ -39,6 +39,8 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   ssrcout( 0 ),
   tsout( 0 ),
   snout( 0 ),
+  send( true ),
+  recv( true ),
   receivedpkcount( 0 ),
   receivedpkskip( 0 ),
   maxticktime( 0 ),
@@ -67,8 +69,6 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   newplaylock( false ),
   doecho( false ),
   tick( workercontext ),
-  send( true ),
-  recv( true ),
   newrecorderslock( false ),
   rtpdtls( nullptr ),
   rtpdtlshandshakeing( false ) {
@@ -789,16 +789,20 @@ static napi_value channelclose( napi_env env, napi_callback_info info ) {
   return createnapibool( env, true );
 }
 
+/* channel at the moment - but future proof to include other stats */
 static napi_value stats( napi_env env, napi_callback_info info ) {
-  napi_value result;
+  napi_value result, channel;
   if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+
+  if( napi_ok != napi_create_object( env, &channel ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "channel", channel ) ) return NULL;
 
   napi_value av, chcount;
   if( napi_ok != napi_create_double( env, availableports.size(), &av ) ) return NULL;
   if( napi_ok != napi_create_double( env, channelscreated, &chcount ) ) return NULL;
 
-  if( napi_ok != napi_set_named_property( env, result, "available", av ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "current", chcount ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, channel, "available", av ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, channel, "current", chcount ) ) return NULL;
 
   return result;
 }
@@ -974,6 +978,45 @@ static napi_value channelmix( napi_env env, napi_callback_info info ) {
   return createnapibool( env, chan->mix( chan2 ) );
 }
 
+static napi_value channeldirection( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_error( env, "0", "We require 1 param" );
+    return NULL;
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    napi_throw_error( env, "1", "That's embarrassing - we shouldn't get here" );
+    return NULL;
+  }
+
+  bool hasit;
+  napi_value nsend, nrecv;
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "send", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "send", &nsend ) ) {
+    bool vsend;
+    if( napi_ok == napi_get_value_bool( env, nsend, &vsend ) ) {
+      chan->send = vsend;
+    }
+  }
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "recv", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "recv", &nrecv ) ) {
+    bool vrecv;
+    if( napi_ok == napi_get_value_bool( env, nrecv, &vrecv ) ) {
+      chan->recv = vrecv;
+    }
+  }
+
+  return createnapibool( env, true );
+}
+
 void channeldestroy( napi_env env, void* /* data */, void* hint ) {
   hiddensharedptr *pb = ( hiddensharedptr * ) hint;
   delete pb;
@@ -1146,18 +1189,6 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
   delete ev;
 }
 
-/*
-argv[ 0 ]: {
-  "target": {
-    "port": int,
-    "address": string
-  },
-  "dtls": {
-    "fingerprint": "00:01:ff...",
-    "setup": "act"
-  }
-}
-*/
 static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
   size_t argc = 2;
@@ -1211,6 +1242,33 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   }
 
   projectrtpchannel::pointer p = projectrtpchannel::create( ourport );
+
+  /* optional - these have defaults */
+  napi_value ndirection;
+  bool hasit;
+  if ( napi_ok == napi_has_named_property( env, argv[ 0 ], "direction", &hasit ) &&
+       hasit &&
+       napi_ok == napi_get_named_property( env, argv[ 0 ], "direction", &ndirection ) ) {
+
+    napi_value nsend, nrecv;
+    if( napi_ok == napi_has_named_property( env, ndirection, "send", &hasit ) &&
+        hasit &&
+        napi_ok == napi_get_named_property( env, ndirection, "send", &nsend ) ) {
+      bool vsend;
+      if( napi_ok == napi_get_value_bool( env, nsend, &vsend ) ) {
+        p->send = vsend;
+      }
+    }
+    if( napi_ok == napi_has_named_property( env, ndirection, "recv", &hasit ) &&
+        hasit &&
+        napi_ok == napi_get_named_property( env, ndirection, "recv", &nrecv ) ) {
+      bool vrecv;
+      if( napi_ok == napi_get_value_bool( env, nrecv, &vrecv ) ) {
+        p->recv = vrecv;
+      }
+    }
+  }
+
   hiddensharedptr *pb = new hiddensharedptr( p );
 
   napi_value callback;
@@ -1266,6 +1324,9 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelrecord, nullptr, &mfunc ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "record", mfunc ) ) return NULL;
 
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channeldirection, nullptr, &mfunc ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "direction", mfunc ) ) return NULL;
+
   /* values */
   napi_value nourport;
   if( napi_ok != napi_create_int32( env, ourport, &nourport ) ) return NULL;
@@ -1275,20 +1336,17 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 }
 
 void initrtpchannel( napi_env env, napi_value &result ) {
-  napi_value rtpchan;
   napi_value ccreate, cstats;
 
   for( int i = 10000; i < 20000; i = i + 2 ) {
     availableports.push( i );
   }
 
-  if( napi_ok != napi_create_object( env, &rtpchan ) ) return;
-  if( napi_ok != napi_set_named_property( env, result, "rtpchannel", rtpchan ) ) return;
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelcreate, nullptr, &ccreate ) ) return;
-  if( napi_ok != napi_set_named_property( env, rtpchan, "create", ccreate ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "openchannel", ccreate ) ) return;
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, stats, nullptr, &cstats ) ) return;
-  if( napi_ok != napi_set_named_property( env, rtpchan, "stats", cstats ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "stats", cstats ) ) return;
 
 }
 

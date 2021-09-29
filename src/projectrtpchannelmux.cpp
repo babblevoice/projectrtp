@@ -45,6 +45,8 @@ void projectchannelmux::mixall( void ) {
 
   /* We first have to add them all up */
   for( auto& chan: this->channels ) {
+    if( !chan->recv ) continue;
+    
     AQUIRESPINLOCK( chan->rtpbufferlock );
     rtppacket *src = chan->inbuff->peek();
     RELEASESPINLOCK( chan->rtpbufferlock );
@@ -58,6 +60,8 @@ void projectchannelmux::mixall( void ) {
 
   /* Now we subtract this channel to send to this channel. */
   for( auto& chan: this->channels ) {
+    if( !chan->send ) continue;
+
     rtppacket *dst = chan->gettempoutbuf();
 
     this->subtracted.zero();
@@ -68,11 +72,13 @@ void projectchannelmux::mixall( void ) {
      We will get a little noise as a result. We could get rid of this by marking the
      channel somehow?
     */
-    AQUIRESPINLOCK( chan->rtpbufferlock );
-    rtppacket *src = chan->inbuff->pop();
-    RELEASESPINLOCK( chan->rtpbufferlock );
-    if( nullptr != src ) {
-      this->subtracted -= chan->incodec;
+    if( chan->recv ) {
+      AQUIRESPINLOCK( chan->rtpbufferlock );
+      rtppacket *src = chan->inbuff->pop();
+      RELEASESPINLOCK( chan->rtpbufferlock );
+      if( nullptr != src ) {
+        this->subtracted -= chan->incodec;
+      }
     }
 
     chan->outcodec << codecx::next;

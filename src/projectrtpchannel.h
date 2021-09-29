@@ -103,6 +103,10 @@ public:
   uint32_t tsout;
   uint16_t snout;
 
+  /* do we send, do we receive */
+  std::atomic_bool send;
+  std::atomic_bool recv;
+
   /* for stats */
   std::atomic_uint64_t receivedpkcount;
   std::atomic_uint64_t receivedpkskip;
@@ -176,10 +180,6 @@ private:
   std::atomic_bool doecho;
   boost::asio::steady_timer tick;
   std::chrono::high_resolution_clock::time_point nexttick;
-
-  /* do we send, do we receive */
-  std::atomic_bool send;
-  std::atomic_bool recv;
 
   std::list< channelrecorder::pointer > newrecorders;
   std::atomic_bool newrecorderslock;

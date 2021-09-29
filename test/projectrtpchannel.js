@@ -574,4 +574,13 @@ class channel {
   @returns {boolean}
   */
   record(){}
+
+  /**
+  @summary Enable/disable the sending and receiving of RTP traffic
+  @param {Object} options
+  @param {boolean} [soundsoup.send]
+  @param {boolean} [soundsoup.recv]
+  @returns {boolean}
+  */
+  direction( options ){}
 }

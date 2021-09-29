@@ -22,10 +22,8 @@ function sendpk( sn, sendtime, dstport, server, data = undefined ) {
   return setTimeout( () => {
 
     let payload
-    if( undefined != data ) {
-      let start = sn * 160
-      let end = start + 160
-      payload = data.subarray( start, end )
+    if( undefined !== data ) {
+      payload = data
     } else {
       payload = Buffer.alloc( pklength - 12 ).fill( projectrtp.codecx.linear162pcmu( sn ) & 0xff )
     }
@@ -252,11 +250,264 @@ describe( "channel mix", function() {
     endpointb.close()
     endpointc.close()
 
-console.log(endpointapkcount)
-console.log(endpointbpkcount)
-console.log(endpointcpkcount)
     expect( endpointapkcount ).to.be.equal( 0 )
     expect( endpointbpkcount ).to.be.equal( 0 )
+    expect( endpointcpkcount ).to.be.within( 59, 61 )
+
+  } )
+
+  it( `mix 3 channels - 1 writer 3 recevers but writer recv=false`, async function() {
+
+    this.timeout( 3000 )
+    this.slow( 2000 )
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+    const endpointc = dgram.createSocket( "udp4" )
+
+    let endpointapkcount = 0
+    let endpointbpkcount = 0
+    let endpointcpkcount = 0
+
+    endpointa.on( "message", function( msg, rinfo ) {
+      endpointapkcount++
+      expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.equal( 0 )
+    } )
+
+    endpointb.on( "message", function( msg, rinfo ) {
+      endpointbpkcount++
+      expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.equal( 0 )
+    } )
+
+    endpointc.on( "message", function( msg, rinfo ) {
+      endpointcpkcount++
+      expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.equal( 0 )
+    } )
+
+    endpointa.bind()
+    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+
+    endpointb.bind()
+    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+
+    endpointc.bind()
+    await new Promise( ( resolve, reject ) => { endpointc.on( "listening", function() { resolve() } ) } )
+
+    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    let channelc = projectrtp.openchannel( { "direction": { "recv": false }, "target": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+      }
+    } )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+    expect( channela.mix( channelc ) ).to.be.true
+
+    /* Send data - which should be ignored but receviers should recevie silence (in payload) */
+    for( let i = 0;  i < 50; i ++ ) {
+      sendpk( i, i, channelc.port, endpointc )
+    }
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+
+    channela.close()
+    channelb.close()
+    channelc.close()
+    endpointa.close()
+    endpointb.close()
+    endpointc.close()
+
+    expect( endpointapkcount ).to.be.within( 59, 61 )
+    expect( endpointbpkcount ).to.be.within( 59, 61 )
+    expect( endpointcpkcount ).to.be.within( 59, 61 )
+
+  } )
+
+
+  it( `mix 3 channels - 1 writer 3 recevers but writer delayed recv=false`, async function() {
+
+    this.timeout( 3000 )
+    this.slow( 2000 )
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+    const endpointc = dgram.createSocket( "udp4" )
+
+
+    let endpointapkcountzero = 0
+    let endpointbpkcountzero = 0
+    let endpointcpkcountzero = 0
+    let endpointapkcountnotzero = 0
+    let endpointbpkcountnotzero = 0
+    let endpointcpkcountnotzero = 0
+
+    endpointa.on( "message", function( msg, rinfo ) {
+      if( 0 == projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ) {
+        endpointapkcountzero++
+      } else {
+        endpointapkcountnotzero++
+      }
+    } )
+
+    endpointb.on( "message", function( msg, rinfo ) {
+      if( 0 == projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ) {
+        endpointbpkcountzero++
+      } else {
+        endpointbpkcountnotzero++
+      }
+    } )
+
+    endpointc.on( "message", function( msg, rinfo ) {
+      if( 0 == projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ) {
+        endpointcpkcountzero++
+      } else {
+        endpointcpkcountnotzero++
+      }
+    } )
+
+    endpointa.bind()
+    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+
+    endpointb.bind()
+    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+
+    endpointc.bind()
+    await new Promise( ( resolve, reject ) => { endpointc.on( "listening", function() { resolve() } ) } )
+
+    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    let channelc = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+      }
+    } )
+
+    setTimeout( () => expect( channelc.direction( { "recv": false } ) ).to.be.true , 400 )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+    expect( channela.mix( channelc ) ).to.be.true
+
+    /* Send data - which should be ignored but receviers should recevie silence (in payload) */
+    for( let i = 0;  i < 50; i ++ ) {
+      sendpk( i, i, channelc.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
+    }
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+
+    channela.close()
+    channelb.close()
+    channelc.close()
+    endpointa.close()
+    endpointb.close()
+    endpointc.close()
+
+    expect( endpointapkcountzero ).to.be.within( 49, 51 )
+    expect( endpointbpkcountzero ).to.be.within( 49, 51 )
+    expect( endpointcpkcountzero ).to.be.within( 59, 61 )
+    expect( endpointapkcountnotzero ).to.be.within( 8, 12 )
+    expect( endpointbpkcountnotzero ).to.be.within( 8, 12 )
+    expect( endpointcpkcountnotzero ).to.equal( 0 )
+
+  } )
+
+  it( `mix 3 channels - 1 writer 1 readers (2 silenced but delayed)`, async function() {
+
+    this.timeout( 3000 )
+    this.slow( 2000 )
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+    const endpointc = dgram.createSocket( "udp4" )
+
+    let endpointapkcount = 0
+    let endpointbpkcount = 0
+    let endpointcpkcount = 0
+
+    endpointa.on( "message", function( msg, rinfo ) {
+      endpointapkcount++
+      expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.be.oneOf([0 , 8 ] )
+    } )
+
+    endpointb.on( "message", function( msg, rinfo ) {
+      endpointbpkcount++
+      expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.be.oneOf([0 , 8 ] )
+    } )
+
+    endpointc.on( "message", function( msg, rinfo ) {
+      endpointcpkcount++
+      expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.be.oneOf([0 , 8 ] )
+    } )
+
+    endpointa.bind()
+    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+
+    endpointb.bind()
+    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+
+    endpointc.bind()
+    await new Promise( ( resolve, reject ) => { endpointc.on( "listening", function() { resolve() } ) } )
+
+    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    let channelc = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+      }
+    } )
+
+    setTimeout( () => expect( channela.direction( { "send": false } ) ).to.be.true , 200 )
+    setTimeout( () => expect( channelb.direction( { "send": false } ) ).to.be.true , 200 )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+    expect( channela.mix( channelc ) ).to.be.true
+
+    /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
+    for( let i = 0;  i < 50; i ++ ) {
+      sendpk( i, i, channelc.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
+    }
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+
+    channela.close()
+    channelb.close()
+    channelc.close()
+    endpointa.close()
+    endpointb.close()
+    endpointc.close()
+
+    expect( endpointapkcount ).to.be.at.most( 15 )
+    expect( endpointbpkcount ).to.be.at.most( 15 )
     expect( endpointcpkcount ).to.be.within( 59, 61 )
 
   } )
