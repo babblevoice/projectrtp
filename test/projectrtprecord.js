@@ -149,6 +149,71 @@ describe( "record", function() {
       expect( buffer.readInt16BE( 160 * 2 * 2 * sn ) )
         .to.equal( projectrtp.codecx.pcmu2linear16( projectrtp.codecx.linear162pcmu( sn ) ) )
     }
+  } )
+
+  it( `record to file then request finish`, async function() {
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+    var receviedpkcount = 0
+    var channel
+
+    server.on( "message", function( msg, rinfo ) {
+      receviedpkcount++
+    } )
+
+    this.timeout( 1500 )
+    this.slow( 1200 )
+
+    server.bind()
+
+    let expectedmessagecount = 0
+    const expectedmessages = [
+      { action: 'record', file: '/tmp/ourstoppedrecording.wav', event: 'recording' },
+      { action: 'record', file: '/tmp/ourstoppedrecording.wav', event: 'finished.requested' },
+      { action: 'close' }
+    ]
+
+    server.on( "listening", function() {
+
+      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+        expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
+        expectedmessagecount++
+        if( "close" === d.action ) {
+          server.close()
+        }
+      } )
+
+      expect( channel.record( {
+        "file": "/tmp/ourstoppedrecording.wav"
+      } ) ).to.be.true
+
+      /* something to record */
+      expect( channel.echo() ).to.be.true
+
+      for( let i = 0;  i < 50; i ++ ) {
+        sendpk( i, i, channel.port, server )
+      }
+    } )
+
+    setTimeout( () => channel.record( {
+        "file": "/tmp/ourstoppedrecording.wav",
+        "finish": true
+      } ) , 600 )
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1100 ) } )
+    channel.close()
+
+    /* Now test the file */
+    let wavinfo = projectrtp.soundfile.info( "/tmp/ourstoppedrecording.wav" )
+
+    expect( wavinfo.audioformat ).to.equal( 1 )
+    expect( wavinfo.channelcount ).to.equal( 2 )
+    expect( wavinfo.samplerate ).to.equal( 8000 )
+    expect( wavinfo.byterate ).to.equal( 32000 )
+    expect( wavinfo.bitdepth ).to.equal( 16 )
+    expect( wavinfo.chunksize ).to.be.within( 12000, 13000 )
+    expect( wavinfo.fmtchunksize ).to.equal( 16 )
+    expect( wavinfo.subchunksize ).to.be.within( 12000, 13000 )
 
   } )
 
@@ -421,10 +486,10 @@ console.log(stats)
     server.on( "listening", function() {
 
       channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
-
+console.log( d )
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
-console.log( d )
+console.log( "ok" )
         if( "record" === d.action && "finished.timeout" == d.event ) {
 
           expect( d.file ).to.equal( "/tmp/dualrecording.wav" )
@@ -479,6 +544,7 @@ console.log(stats)
 
   after( async () => {
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourrecording.wav", ( err ) => { resolve() } ) } )
+    await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourstoppedrecording.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourpausedrecording.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourpowerrecording.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourtimeoutpowerrecording.wav", ( err ) => { resolve() } ) } )

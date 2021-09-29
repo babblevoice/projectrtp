@@ -55,6 +55,7 @@ RTP on SIP channels should be able to switch between CODECS during a session so 
 
 typedef std::shared_ptr< projectchannelmux > projectchannelmuxptr;
 
+typedef std::list< channelrecorder::pointer > chanrecptrlist;
 
 class projectrtpchannel :
   public std::enable_shared_from_this< projectrtpchannel > {
@@ -181,9 +182,9 @@ private:
   boost::asio::steady_timer tick;
   std::chrono::high_resolution_clock::time_point nexttick;
 
-  std::list< channelrecorder::pointer > newrecorders;
+  chanrecptrlist newrecorders;
   std::atomic_bool newrecorderslock;
-  std::list< channelrecorder::pointer > recorders;
+  chanrecptrlist recorders;
 
   /* DTLS Session */
   dtlssession::pointer rtpdtls;

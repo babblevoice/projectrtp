@@ -228,12 +228,12 @@ bool soundfile::write( codecx &in, codecx &out ) {
   }
 
   if( aio_error( &this->cbwavblock[ this->currentwriteindex ] ) == EINPROGRESS ) {
-    std::cerr << "soundfile trying to write a packet whilst last is still in progress" << std::endl;
+    fprintf( stderr, "soundfile trying to write a packet whilst last is still in progress\n" );
     return false;
   }
 
   if( nullptr == this->writebuffer ) {
-    std::cerr << "soundfile no write buffer!" << std::endl;
+    fprintf( stderr, "soundfile no write buffer!\n" );
     return false;
   }
 
@@ -253,8 +253,8 @@ bool soundfile::write( codecx &in, codecx &out ) {
   }
 
   buf = ( int16_t * ) this->cbwavblock[ this->currentwriteindex ].aio_buf;
-  if( this->ourwavheader.num_channels > 1 ) /* only works up to 2 channels - which is all we support */
-  {
+  /* only works up to 2 channels - which is all we support */
+  if( this->ourwavheader.num_channels > 1 ) {
     buf++;
   }
 
@@ -267,7 +267,7 @@ bool soundfile::write( codecx &in, codecx &out ) {
   }
 
   if ( aio_write( &this->cbwavblock[ this->currentwriteindex ] ) == -1 ) {
-    std::cerr << "soundfile unable to write wav block to file " << this->url << std::endl;
+    fprintf( stderr, "soundfile unable to write wav block to file %s\n", this->url.c_str() );
     return false;
   }
 
@@ -279,7 +279,7 @@ bool soundfile::write( codecx &in, codecx &out ) {
 
     /* Update the wav header with size */
     if ( aio_write( &this->cbwavheader ) == -1 ) {
-      std::cerr << "soundfile unable to update wav header to file " << this->url << std::endl;
+      fprintf( stderr, "soundfile unable to update wav header to file %s\n", this->url.c_str() );
     }
   }
 

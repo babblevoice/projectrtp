@@ -422,12 +422,12 @@ describe( "channel mix", function() {
     endpointb.close()
     endpointc.close()
 
-    expect( endpointapkcountzero ).to.be.within( 49, 51 )
-    expect( endpointbpkcountzero ).to.be.within( 49, 51 )
-    expect( endpointcpkcountzero ).to.be.within( 59, 61 )
+    expect( endpointapkcountzero ).to.be.within( 48, 52 )
+    expect( endpointbpkcountzero ).to.be.within( 48, 52 )
+    expect( endpointcpkcountzero ).to.be.within( 58, 62 )
     expect( endpointapkcountnotzero ).to.be.within( 8, 12 )
     expect( endpointbpkcountnotzero ).to.be.within( 8, 12 )
-    expect( endpointcpkcountnotzero ).to.equal( 0 )
+    expect( endpointcpkcountnotzero ).to.be.below( 2 )
 
   } )
 

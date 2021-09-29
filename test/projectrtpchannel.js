@@ -577,6 +577,7 @@ class channel {
   @param {number} [options.maxduration] - regardless of power options finish when this mS long
   @param {number} [options.poweraveragepackets] - number of packets to average the power calcs over
   @param {boolean} [options.pause] - pause the recording this function can be called again to pause and resume the recording
+  @param {boolean} [options.finish=false] - finish the recording
   @returns {boolean}
   */
   record(){}

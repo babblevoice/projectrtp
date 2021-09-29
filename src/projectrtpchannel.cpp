@@ -337,6 +337,7 @@ void projectrtpchannel::checkfornewrecorders( void ) {
     for( auto& currentrec: this->recorders ) {
       if( currentrec->file == newrec->file ) {
         currentrec->pause = newrec->pause;
+        currentrec->requestfinish = newrec->requestfinish;
         goto endofwhileloop;
       }
     }
@@ -352,6 +353,8 @@ void projectrtpchannel::checkfornewrecorders( void ) {
 endofwhileloop:;
   }
 
+  this->newrecorders.clear();
+
   RELEASESPINLOCK( this->newrecorderslock );
 }
 
@@ -364,6 +367,12 @@ void projectrtpchannel::removeoldrecorders( void ) {
       boost::posix_time::time_duration const diff = ( nowtime - rec->activeat );
 
       if( diff.total_milliseconds() < rec->minduration  ) {
+        continue;
+      }
+
+      if( rec->requestfinish ) {
+        rec->completed = true;
+        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.requested" );
         continue;
       }
 
@@ -381,7 +390,14 @@ void projectrtpchannel::removeoldrecorders( void ) {
     }
   }
 
-  this->recorders.remove_if( []( channelrecorder::pointer rec ) { return rec->completed; } );
+  for ( chanrecptrlist::iterator rec = this->recorders.begin();
+        rec != this->recorders.end(); ) {
+    if( ( *rec )->completed ) {
+      rec = this->recorders.erase( rec );
+    } else {
+      ++rec;
+    }
+  }
 }
 
 
@@ -404,6 +420,8 @@ void projectrtpchannel::writerecordings( void ) {
 
   /* Check if we need to trigger the start of any recordings and write */
   for( auto& rec: this->recorders ) {
+
+    if( rec->completed ) continue;
 
     if( 0 == rec->startabovepower && 0 == rec->finishbelowpower ) {
       if( !rec->isactive() ) {
@@ -855,8 +873,10 @@ static napi_value channelrecord( napi_env env, napi_callback_info info ) {
   int32_t vtmp;
 
   bool hasit;
-  napi_has_named_property( env, argv[ 0 ], "startabovepower", &hasit );
-  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "startabovepower", &mtmp ) ) {
+
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "startabovepower", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "startabovepower", &mtmp ) ) {
     napi_get_value_int32( env, mtmp, &vtmp );
     p->startabovepower = vtmp;
   }
@@ -867,29 +887,42 @@ static napi_value channelrecord( napi_env env, napi_callback_info info ) {
     p->finishbelowpower = vtmp;
   }
 
-  napi_has_named_property( env, argv[ 0 ], "minduration", &hasit );
-  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "minduration", &mtmp ) ) {
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "minduration", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "minduration", &mtmp ) ) {
     napi_get_value_int32( env, mtmp, &vtmp );
     p->minduration = vtmp;
   }
 
-  napi_has_named_property( env, argv[ 0 ], "maxduration", &hasit );
-  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "maxduration", &mtmp ) ) {
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "maxduration", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "maxduration", &mtmp ) ) {
     napi_get_value_int32( env, mtmp, &vtmp );
     p->maxduration = vtmp;
   }
 
-  napi_has_named_property( env, argv[ 0 ], "poweraveragepackets", &hasit );
-  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "poweraveragepackets", &mtmp ) ) {
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "poweraveragepackets", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "poweraveragepackets", &mtmp ) ) {
     napi_get_value_int32( env, mtmp, &vtmp );
     p->poweraveragepackets = vtmp;
   }
 
-  napi_has_named_property( env, argv[ 0 ], "pause", &hasit );
-  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "pause", &mtmp ) ) {
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "pause", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "pause", &mtmp ) ) {
     bool vpause;
     if( napi_ok == napi_get_value_bool( env, mtmp, &vpause ) ) {
       p->pause = vpause;
+    }
+  }
+
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "finish", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "finish", &mtmp ) ) {
+    bool vfinish;
+    if( napi_ok == napi_get_value_bool( env, mtmp, &vfinish ) ) {
+      p->requestfinish = vfinish;
     }
   }
 

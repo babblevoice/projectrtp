@@ -35,14 +35,15 @@ public:
   uint32_t minduration; /* mSeconds */
   uint32_t maxduration; /* mSeconds */
 
-  bool pause;
-
   int numchannels;
   soundfile::pointer sfile;
 
   uint16_t lastpowercalc;
   boost::posix_time::ptime created;
   boost::posix_time::ptime activeat;
+
+  bool pause;
+  bool requestfinish;
   bool completed; /* indicate clean up required */
 
 private:
