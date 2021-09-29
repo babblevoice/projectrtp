@@ -94,11 +94,11 @@ describe( "server", function() {
 
   } )
 
-  it( `check stats at the start`, function( done ) {
+  it( `check stats object`, function( done ) {
     let s = projectrtp.stats()
 
-    expect( s.channel.available ).to.equal( 5000 )
-    expect( s.channel.current ).to.equal( 0 )
+    expect( s.channel.available ).to.be.above( 100 )
+    expect( s.channel.current ).to.be.below( 50 )
     done()
   } )
 } )
