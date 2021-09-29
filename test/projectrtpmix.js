@@ -98,7 +98,7 @@ describe( "channel mix", function() {
     endpointa.close()
     endpointb.close()
 
-    expect( endpointapkcount ).to.equal( 50 )
+    expect( endpointapkcount ).to.be.above( 48 )
 
   } )
 
