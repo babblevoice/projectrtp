@@ -100,7 +100,7 @@ describe( "record", function() {
     server.bind()
     server.on( "listening", function() {
 
-      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) {
           server.close()
         }
@@ -168,7 +168,7 @@ describe( "record", function() {
     server.bind()
     server.on( "listening", function() {
 
-      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) {
           server.close()
         }
@@ -254,12 +254,15 @@ describe( "record", function() {
 
     server.bind()
     let delayedjobs = []
+    let recording = false
     server.on( "listening", function() {
 
-      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
-
+      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+console.log(d)
         if( "record" === d.action && "finished.belowpower" == d.event ) {
           channel.close()
+        } else if( "record" === d.action && "recording" == d.event ) {
+            recording = true
         } else if( "close" === d.action ) {
 
           delayedjobs.every( ( id ) => {
@@ -270,7 +273,8 @@ describe( "record", function() {
 
           let stats = fs.statSync( "/tmp/ourpowerrecording.wav" )
           expect( stats.size ).to.be.within( 70000, 80000 )
-
+          expect( recording ).to.be.true
+console.log(stats)
           done()
         }
       } )
@@ -329,7 +333,7 @@ describe( "record", function() {
     let delayedjobs = []
     server.on( "listening", function() {
 
-      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
 
         if( "record" === d.action && "finished.timeout" == d.event ) {
           channel.close()
@@ -416,21 +420,23 @@ describe( "record", function() {
 
     server.on( "listening", function() {
 
-      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
 
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
-
+console.log( d )
         if( "record" === d.action && "finished.timeout" == d.event ) {
 
           expect( d.file ).to.equal( "/tmp/dualrecording.wav" )
           let stats = fs.statSync( "/tmp/dualrecording.wav" )
+console.log(stats)
           expect( stats.size ).to.be.within( 128000, 129000 )
 
         } else if( "record" === d.action && "finished.belowpower" == d.event ) {
           expect( d.file ).to.equal( "/tmp/dualrecordingpower.wav" )
 
           let stats = fs.statSync( "/tmp/dualrecordingpower.wav" )
+console.log(stats)
           expect( stats.size ).to.be.within( 37000, 38000 )
 
         } else if( "close" === d.action ) {

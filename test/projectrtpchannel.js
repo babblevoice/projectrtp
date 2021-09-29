@@ -51,27 +51,12 @@ function sendpk( sn, sendtime, dstport, server, ssrc = 25, pklength = 172 ) {
 /* Tests */
 describe( "rtpchannel", function() {
 
-  it( `check channel stats at the start`, function( done ) {
-    let s = projectrtp.rtpchannel.stats()
-
-    expect( s.available ).to.equal( 5000 )
-    expect( s.current ).to.equal( 0 )
-    done()
-  } )
-
-  it( `structure of rtpchannel is correct`, async function() {
-
-    expect( projectrtp.rtpchannel ).to.be.an( "object" )
-    expect( projectrtp.rtpchannel.create ).to.be.an( "function" )
-
-  } )
-
   it( `call create channel and check the structure of the returned object`, async function() {
 
     this.timeout( 2000 )
     this.slow( 1500 )
 
-    let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": 20000, "codec": 0 } } )
+    let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": 20000, "codec": 0 } } )
     expect( channel ).to.be.an( "object" )
 
     expect( channel.close ).to.be.an( "function" )
@@ -98,7 +83,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -145,7 +130,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
           expect( receviedpkcount ).to.equal( 50 - 6 )
@@ -211,7 +196,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -260,7 +245,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -336,7 +321,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -399,7 +384,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -445,7 +430,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -493,7 +478,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -531,7 +516,7 @@ describe( "rtpchannel", function() {
     this.timeout( 21000 )
     this.slow( 20000 )
 
-    let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": 20765, "codec": 0 } }, function( d ) {
+    let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": 20765, "codec": 0 } }, function( d ) {
 
       if( "close" === d.action ) {
 
@@ -543,16 +528,50 @@ describe( "rtpchannel", function() {
       }
     } )
   } )
-
-  it( `check channel stats at the end`, function( done ) {
-
-    let s = projectrtp.rtpchannel.stats()
-
-    expect( s.available ).to.equal( 5000 )
-    /* For now this might not be zero as the destructor is
-    call when the JS object is cleaned up */
-    //expect( s.current ).to.equal( 0 )
-    done()
-  } )
-
 } )
+
+/**
+@summary An RTP session
+@memberof projectrtp
+@hideconstructor
+*/
+class channel {
+
+  /**
+  @summary Close the channel
+  */
+  close(){}
+
+  /**
+  @summary Adds another channel to mix with this one
+  @param {channel} other
+  @returns {boolean}
+  */
+  mix(){}
+  /**
+  @summary Echos receved RTP back out when unmixed
+  @returns {boolean}
+  */
+  echo(){}
+  /**
+  @summary Plays audio to the channel when unmixed
+  @param {Object} soundsoup
+  @param {Object} soundsoup.files
+  @returns {boolean}
+  */
+  play(){}
+
+  /**
+  @summary Plays audio to the channel when unmixed
+  @param {Object} options
+  @param {string} options.file - filename of the recording
+  @param {number} [options.startabovepower] - only start the recording if the average power goes above this value
+  @param {number} [options.finishbelowpower] - finish the recording if the average power drops below this level
+  @param {number} [options.minduration] - ensure we have this many mS recording
+  @param {number} [options.maxduration] - regardless of power options finish when this mS long
+  @param {number} [options.poweraveragepackets] - number of packets to average the power calcs over
+  @param {boolean} [options.pause] - pause the recording this function can be called again to pause and resume the recording
+  @returns {boolean}
+  */
+  record(){}
+}

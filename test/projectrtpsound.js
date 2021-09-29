@@ -17,6 +17,46 @@ if( "debug" === process.env.build ) {
   projectrtp = require( "../src/build/Release/projectrtp" )
 }
 
+
+/**
+@summary wav file header
+@memberof projectrtp
+@hideconstructor
+@class
+*/
+function wavinfo() {
+  /** @member {number} */
+  this.audioformat
+  /** @member {number} */
+  this.channelcount
+  /** @member {number} */
+  this.samplerate
+  /** @member {number} */
+  this.byterate
+  /** @member {number} */
+  this.bitdepth
+  /** @member {number} */
+  this.chunksize
+  /** @member {number} */
+  this.fmtchunksize
+  /** @member {number} */
+  this.subchunksize
+}
+
+/**
+@summary Sound (wav) utils
+@hideconstructor
+*/
+
+class soundfile {
+  /**
+  @summary Loads wav header and returns info
+  @param {string} filename - path and filename
+  @returns {wavinfo}
+  */
+  info( filename ){}
+}
+
 function createwavheader( samples = 8000 ) {
   let audioformat = 1 /* 1 for PCM | 3 for IEEE Float | 6 a law | 7 u law | 0xA112 722 | 0xA116 ilbc */
   let fmtchunksize = 16  /* Should be 16 for PCM */
@@ -53,7 +93,7 @@ describe( "rtpsound", function() {
     this.timeout( 800 )
     this.slow( 600 )
 
-    let channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": 20000, "codec": 0 } } )
+    let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": 20000, "codec": 0 } } )
 
     expect( channel.close ).to.be.an( "function" )
     expect( channel.play ).to.be.an( "function" )
@@ -87,7 +127,7 @@ describe( "rtpsound", function() {
 
       let ourport = server.address().port
 
-      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
       } )
 
       expect( channel.play( {
@@ -134,7 +174,7 @@ describe( "rtpsound", function() {
 
       let ourport = server.address().port
 
-      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
           server.close()
@@ -183,7 +223,7 @@ describe( "rtpsound", function() {
 
       let ourport = server.address().port
 
-      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
           server.close()
@@ -224,7 +264,7 @@ describe( "rtpsound", function() {
 
       let ourport = server.address().port
 
-      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
       } )
 
       expect( channel.play( { "loop": 2, "files": [ { "wav": "/tmp/flat.wav" } ] } ) ).to.be.true
@@ -304,7 +344,7 @@ describe( "rtpsound", function() {
 
       let ourport = server.address().port
 
-      channel = projectrtp.rtpchannel.create( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
       } )
 
       expect( channel.play( { "loop": 2, "files": [
