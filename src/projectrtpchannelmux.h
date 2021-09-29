@@ -19,6 +19,8 @@ for things like playing a sound file (on single channels) or echo.
 
 typedef std::shared_ptr< projectrtpchannel > projectrtpchannelptr;
 
+typedef std::list< projectrtpchannelptr > projectchanptrlist;
+
 class projectchannelmux:
   public std::enable_shared_from_this< projectchannelmux >
 {
@@ -35,7 +37,7 @@ public:
   void addchannel( projectrtpchannelptr chan );
   void go( void );
 
-  std::list< projectrtpchannelptr > channels;
+  projectchanptrlist channels;
 
 private:
 
@@ -47,7 +49,7 @@ private:
   boost::asio::steady_timer tick;
   std::chrono::high_resolution_clock::time_point nexttick;
 
-  std::list< projectrtpchannelptr > newchannels;
+  projectchanptrlist newchannels;
   std::atomic_bool newchannelslock;
 
   std::atomic_bool mixing;

@@ -46,7 +46,7 @@ void projectchannelmux::mixall( void ) {
   /* We first have to add them all up */
   for( auto& chan: this->channels ) {
     if( !chan->recv ) continue;
-    
+
     AQUIRESPINLOCK( chan->rtpbufferlock );
     rtppacket *src = chan->inbuff->peek();
     RELEASESPINLOCK( chan->rtpbufferlock );
@@ -133,7 +133,14 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
     }
 
     /* Check for channels which have request removal */
-    this->channels.remove_if( []( projectrtpchannelptr chan ) { return !chan->mixing; } );
+    for ( projectchanptrlist::iterator chan = this->channels.begin();
+          chan != this->channels.end(); ) {
+      if( !( *chan )->mixing ) {
+        chan = this->channels.erase( chan );
+      } else {
+        ++chan;
+      }
+    }
 
     for( auto& chan: this->channels ) {
       chan->incrtsout();
