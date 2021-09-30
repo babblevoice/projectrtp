@@ -70,6 +70,7 @@ public:
 
   void requestopen( std::string address, unsigned short port, uint32_t codec );
   std::atomic_bool requestclose;
+  std::string closereason;
   void requestecho( bool e = true );
 
   void dotarget( void );

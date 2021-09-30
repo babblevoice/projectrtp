@@ -202,13 +202,14 @@ void projectrtpchannel::doclose( void ) {
   this->rtcpsocket.close();
   this->resolver.cancel();
 
-  postdatabacktojsfromthread( shared_from_this(), "close" );
+  postdatabacktojsfromthread( shared_from_this(), "close", this->closereason );
 }
 
 bool projectrtpchannel::checkidlerecv( void ) {
   if( this->recv && this->active ) {
     this->tickswithnortpcount++;
     if( this->tickswithnortpcount > ( 50 * 20 ) ) { /* 50 (@20mS ptime)/S = 20S */
+      this->closereason = "idle";
       this->doclose();
       return true;
     }
@@ -802,6 +803,7 @@ static napi_value channelclose( napi_env env, napi_callback_info info ) {
   projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
   if( nullptr == chan ) createnapibool( env, false );
 
+  chan->closereason = "requested";
   chan->requestclose = true;
 
   return createnapibool( env, true );
@@ -1082,10 +1084,13 @@ void postdatabacktojsfromthread( projectrtpchannel::pointer p, std::string event
 */
 napi_value createcloseobject( napi_env env, projectrtpchannel::pointer p ) {
 
-  napi_value result, action;
+  napi_value result, action, reason;
   if( napi_ok != napi_create_object( env, &result ) ) return NULL;
   if( napi_ok != napi_create_string_utf8( env, "close", NAPI_AUTO_LENGTH, &action ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "action", action ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, p->closereason.c_str(), NAPI_AUTO_LENGTH, &reason ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "reason", reason ) ) return NULL;
 
   /* calculate mos - calc borrowed from FS - thankyou. */
   napi_value mos, in, out, tick;
