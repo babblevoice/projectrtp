@@ -44,7 +44,7 @@ public:
   dtlssession( mode m );
   ~dtlssession();
 
-  typedef boost::shared_ptr< dtlssession > pointer;
+  typedef std::shared_ptr< dtlssession > pointer;
   static pointer create( mode m );
 
   int handshake( void );
