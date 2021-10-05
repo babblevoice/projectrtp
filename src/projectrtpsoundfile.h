@@ -65,6 +65,11 @@ public:
   soundfile( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
   ~soundfile();
 
+  soundfile( const soundfile& ) = delete;              // copy ctor
+  soundfile( soundfile&& ) = delete;                   // move ctor
+  soundfile& operator=( const soundfile& ) = delete;   // copy assignment
+  soundfile& operator=( soundfile&& ) = delete;        // move assignment
+
   typedef std::shared_ptr< soundfile > pointer;
   static pointer create( std::string url );
   static pointer create( std::string url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
@@ -92,7 +97,6 @@ private:
   int file;
   std::string url;
   uint8_t *readbuffer;
-  int readbuffercount;
   int currentreadindex;
   aiocb cbwavheader;
   wavheader ourwavheader;

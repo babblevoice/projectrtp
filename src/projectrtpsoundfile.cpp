@@ -30,6 +30,8 @@ soundfile::soundfile( std::string &url ) :
   url( url ),
   readbuffer( nullptr ),
   currentreadindex( 0 ),
+  cbwavheader(),
+  ourwavheader(),
   blocksize( L16NARROWBANDBYTES ),
   opened( false ),
   badheader( false ),
@@ -104,13 +106,16 @@ soundfile::soundfile( std::string &url, uint16_t audio_format, int16_t numchanne
   url( url ),
   readbuffer( nullptr ),
   currentreadindex( 0 ),
+  cbwavheader(),
+  ourwavheader(),
   blocksize( L16NARROWBANDBYTES ),
-  opened(false ),
+  opened( false ),
   badheader( false ),
   headerread( false ),
   writebuffer( nullptr ),
   currentwriteindex( 0 ),
-  tickcount( 0 ) {
+  tickcount( 0 ),
+  initseekmseconds( 0 ) {
   int mode = O_WRONLY | O_CREAT | O_TRUNC;
   int perms = S_IRUSR | S_IWUSR;
   std::string filenfullpath = mediachroot + url;

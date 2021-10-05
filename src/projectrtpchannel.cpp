@@ -34,6 +34,7 @@ implimented) the address and port given to us when opening in the channel.
 projectrtpchannel::projectrtpchannel( unsigned short port ):
   /* public */
   requestclose( false ),
+  closereason(),
   codec( 0 ),
   ssrcin( 0 ),
   ssrcout( 0 ),
@@ -61,17 +62,29 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   resolver( workercontext ),
   rtpsocket( workercontext ),
   rtcpsocket( workercontext ),
+  rtpsenderendpoint(),
+  confirmedrtpsenderendpoint(),
+  rtcpsenderendpoint(),
   receivedrtp( false ),
   targetconfirmed( false ),
+  mixerlock( false ),
+  mixer( nullptr ),
   mixing( false ),
+  outcodec(),
+  incodec(),
   player( nullptr ),
   newplaydef( nullptr ),
   newplaylock( false ),
   doecho( false ),
   tick( workercontext ),
+  nexttick( std::chrono::high_resolution_clock::now() ),
+  newrecorders(),
   newrecorderslock( false ),
+  recorders(),
   rtpdtls( nullptr ),
-  rtpdtlshandshakeing( false ) {
+  rtpdtlshandshakeing( false ),
+  targetaddress(),
+  targetport( 0 ) {
 
   channelscreated++;
 }

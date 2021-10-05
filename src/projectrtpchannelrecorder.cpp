@@ -16,11 +16,14 @@ channelrecorder::channelrecorder( std::string file ) :
   minduration( 0 ),
   maxduration( 0 ),
   numchannels( 2 ),
+  sfile( nullptr ),
   lastpowercalc( 0 ),
   created( boost::posix_time::microsec_clock::local_time() ),
+  activeat( boost::posix_time::not_a_date_time ),
   pause( false ),
   requestfinish( false ),
   completed( false ),
+  powerfilter(),
   _active( false )
 {
 }

@@ -44,6 +44,11 @@ public:
   dtlssession( mode m );
   ~dtlssession();
 
+  dtlssession( const dtlssession& ) = delete;              // copy ctor
+  dtlssession( dtlssession&& ) = delete;                   // move ctor
+  dtlssession& operator=( const dtlssession& ) = delete;   // copy assignment
+  dtlssession& operator=( dtlssession&& ) = delete;        // move assignment
+
   typedef std::shared_ptr< dtlssession > pointer;
   static pointer create( mode m );
 

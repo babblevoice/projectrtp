@@ -15,6 +15,9 @@ When we pop we look for sn of 15, then 16 and so on for each pop.
 */
 
 rtpbuffer::rtpbuffer( int buffercount, int waterlevel ) :
+  buffer(),
+  availablertpdata(),
+  orderedrtpdata(),
   reserved( nullptr ),
   buffercount( buffercount ),
   waterlevel( waterlevel ),

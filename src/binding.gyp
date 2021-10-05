@@ -8,7 +8,8 @@
         "-Wall",
         "-fstack-protector-all",
         "-std=c++20",
-        "-fconcepts-ts" ],
+        "-fconcepts-ts",
+        "-Weffc++" ],
       "libraries": [
             "-lrt",
             "-lspandsp",

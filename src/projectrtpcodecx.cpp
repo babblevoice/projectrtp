@@ -84,7 +84,14 @@ codecx::codecx() :
   g722decoder( nullptr ),
   ilbcencoder( nullptr ),
   ilbcdecoder( nullptr ),
+  lpfilter(),
   resamplelastsample( 0 ),
+  l168kref(),
+  l1616kref(),
+  pcmaref(),
+  pcmuref(),
+  g722ref(),
+  ilbcref(),
   _hasdata( false )
 {
 

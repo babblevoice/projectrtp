@@ -25,6 +25,11 @@ public:
   rtpbuffer( int count, int waterlevel );
   ~rtpbuffer();
 
+  rtpbuffer( const rtpbuffer& ) = delete;              // copy ctor
+  rtpbuffer( rtpbuffer&& ) = delete;                   // move ctor
+  rtpbuffer& operator=( const rtpbuffer& ) = delete;   // copy assignment
+  rtpbuffer& operator=( rtpbuffer&& ) = delete;        // move assignment
+
   typedef std::shared_ptr< rtpbuffer > pointer;
   static pointer create( int count, /* size of the array to store packets */
                          int waterlevel /* the level we build up before allowing a read */ );

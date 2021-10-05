@@ -8,10 +8,15 @@
 ## c'stor && create
 */
 projectchannelmux::projectchannelmux( boost::asio::io_context &iocontext ):
+  channels(),
   iocontext( iocontext ),
   tick( iocontext ),
+  nexttick( std::chrono::high_resolution_clock::now() ),
+  newchannels(),
   newchannelslock( false ),
-  mixing( false ) {
+  mixing( false ),
+  added(),
+  subtracted() {
 }
 
 projectchannelmux::~projectchannelmux() {

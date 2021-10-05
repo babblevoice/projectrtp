@@ -27,7 +27,8 @@ soundsoupfile::~soundsoupfile() {
 soundsoup::soundsoup( size_t size ) :
   loopcount( 0 ),
   currentfile( 0 ),
-  finished( false ) {
+  finished( false ),
+  files() {
 
   this->files.resize( size );
 }

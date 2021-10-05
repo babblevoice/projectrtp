@@ -121,6 +121,7 @@ rawsound::rawsound( rtppacket& pk, bool dirty ) :
   allocatedlength( 0 ),
   bytespersample( 1 ),
   format( pk.getpayloadtype() ),
+  samplerate( 8000 ),
   dirtydata( dirty )
 {
   this->frompt( this->format );

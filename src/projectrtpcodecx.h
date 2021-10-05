@@ -27,6 +27,11 @@ public:
   codecx();
   ~codecx();
 
+  codecx( const codecx& ) = delete;              // copy ctor
+  codecx( codecx&& ) = delete;                   // move ctor
+  codecx& operator=( const codecx& ) = delete;   // copy assignment
+  codecx& operator=( codecx&& ) = delete;        // move assignment
+
   void reset( void );
   void restart( void );
   uint16_t power( void );

@@ -65,6 +65,11 @@ public:
   projectrtpchannel( unsigned short port );
   ~projectrtpchannel( void );
 
+  projectrtpchannel( const projectrtpchannel& ) = delete;              // copy ctor
+  projectrtpchannel( projectrtpchannel&& ) = delete;                   // move ctor
+  projectrtpchannel& operator=( const projectrtpchannel& ) = delete;   // copy assignment
+  projectrtpchannel& operator=( projectrtpchannel&& ) = delete;        // move assignment
+
   typedef std::shared_ptr< projectrtpchannel > pointer;
   static pointer create( unsigned short port );
 
