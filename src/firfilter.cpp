@@ -11,7 +11,8 @@
 
 #include "firfilter.h"
 
-lowpass3_4k16k::lowpass3_4k16k() {
+lowpass3_4k16k::lowpass3_4k16k() :
+  round( 0 ) {
   this->reset();
 }
 
@@ -92,6 +93,7 @@ int16_t lowpass3_4k16k::execute( int16_t val ) {
 
 /* Moving Average filter */
 ma_filter::ma_filter():
+  round( 0 ),
   l( ma_length ),
   rtotal( 0 ) {
   this->reset( ma_length );
@@ -103,6 +105,7 @@ void ma_filter::reset( int packets ) {
 
   this->rtotal = 0;
   memset( this->history, 0, sizeof( this->history ) );
+  this->round = 0;
 }
 
 int16_t ma_filter::execute( int16_t val ) {
