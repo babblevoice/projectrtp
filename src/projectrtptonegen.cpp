@@ -82,7 +82,7 @@ static void gen( std::string tone, std::string filename )
     cadencepos = ( cadencepos + 1 ) % cadences.size();
   }
 
-  std::cout << "Total time is " << cadencetotal << "mS" << std::endl;
+  //std::cout << "Total time is " << cadencetotal << "mS" << std::endl;
 
   /* 2. Allocate enough memory */
   outwavheader.subchunksize = cadencetotal * outwavheader.sample_rate / 1000 * 2 /* 2 bytes per sample */;
