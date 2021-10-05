@@ -302,16 +302,18 @@ uint32_t soundfile::getwriteduration( void ) /* mS */ {
 Clean up.
 */
 soundfile::~soundfile() {
+
+  if ( -1 != this->file ) {
+    aio_cancel( this->file, NULL );
+    close( this->file );
+  }
+
   if( nullptr != this->readbuffer ) {
     delete[] this->readbuffer;
   }
 
   if( nullptr != this->writebuffer ) {
     delete[] this->writebuffer;
-  }
-
-  if ( -1 != this->file ) {
-    close( this->file );
   }
 }
 
