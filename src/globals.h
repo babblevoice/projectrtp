@@ -38,7 +38,7 @@ Used to hide shared pointers so we can pass a void * into libraries tht need it.
 */
 class hiddensharedptr {
 public:
-  hiddensharedptr( const std::shared_ptr< void >& p ) { this->d = p; }
+  hiddensharedptr( const std::shared_ptr< void >& p ): d ( nullptr ) { this->d = p; }
 
   template<typename T>
   auto get() {
