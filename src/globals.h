@@ -30,9 +30,6 @@ could be a larger length with our CODECs */
 #define L16MAXLENGTH ( RTPMAXLENGTH * 2 )
 #define RTCPMAXLENGTH 200
 
-
-extern std::string mediachroot;
-
 /*
 Used to hide shared pointers so we can pass a void * into libraries tht need it.
 */
