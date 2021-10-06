@@ -1,6 +1,6 @@
 # ProjectRTP
 
-A simple RTP server which offers functionality to process RTP data streams and mix them. Channels will be able to be mixed with other channels or local functions like recording or file playback. Instructions to create and manipulate RTP streams via a TCP connection (control connection). Enabling the ability to have 1 SIP/control server to manage multiple RTP servers to increase scalability of the system.
+An RTP server which offers functionality to process RTP data streams and mix them. Channels are be able to be mixed with other channels or local functions like recording or file playback. The core processing is done in a node addon and written in C++. ProjectRTP is designed to be scalable. Multiple RTP servers can communicate back to a main server to allow RTP functions to scale up.
 
 ProjectRTP is designed to provide all the functions required for a PBX, including channel bridging, recording, playback and all the functions required for IVR.
 
@@ -12,12 +12,10 @@ Features
 * CODEC transcoding (between supported CODECs listed below)
 * Call recording (WAV)
   * Multiple recorders per channel
-  * Start and end based on power detection or on command
+  * Start, pause and end based on power detection or on command
 * WAV playback using sound soup descriptions to play complex sentences from parts
 * DTMF (RFC 2833)
 * DTLS SRTP (WebRTC)
-
-ProjectRTP connects to a control server - which I anticipate is generally a SIP server of some form (but doesn't need to be). This server can have multiple RTP servers connected which allows the control server to farm out work to balance workload.
 
 ## Usage
 
