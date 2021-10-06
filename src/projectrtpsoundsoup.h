@@ -25,7 +25,7 @@ public:
   int32_t stop;
   int32_t loopcount;
   int32_t maxloop;
-  soundfile::pointer sf;
+  soundfilereader::pointer sf;
 };
 
 

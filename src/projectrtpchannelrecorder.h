@@ -36,7 +36,7 @@ public:
   uint32_t maxduration; /* mSeconds */
 
   int numchannels;
-  soundfile::pointer sfile;
+  soundfilewriter::pointer sfile;
 
   uint16_t lastpowercalc;
   boost::posix_time::ptime created;

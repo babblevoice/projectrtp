@@ -16,7 +16,6 @@
 #include "projectrtpsoundfile.h"
 #include "projectrtptonegen.h"
 
-std::string mediachroot;
 boost::asio::io_context workercontext;
 /* our work queue requires some work to not exit */
 static ourhighrestimer periodictimer( workercontext );

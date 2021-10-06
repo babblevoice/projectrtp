@@ -220,7 +220,7 @@ static soundsoupfile::pointer parsefileobj( soundsoup::pointer p, napi_env env, 
     }
   }
 
-  ssf->sf = soundfile::create( filename );
+  ssf->sf = soundfilereader::create( filename );
   if( !ssf->sf->isopen() ) {
     return nullptr;
   }

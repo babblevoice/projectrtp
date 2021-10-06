@@ -4,6 +4,103 @@
 #include "projectrtpsoundfile.h"
 #include "globals.h"
 
+/*
+soundfile
+*/
+soundfile::soundfile() :
+  file( -1 ),
+  url(),
+  ourwavheader(),
+  currentcbindex( 0 ),
+  cbwavheader(),
+  buffer( nullptr ) {
+
+  /*
+    Soundfile blindly reads the format and passes to the codec - so it must be in a format we support - or there will be silence.
+    Our macro player (to be written) will choose the most appropriate file to play based on the codec of the channel.
+  */
+  this->buffer = new uint8_t[ L16WIDEBANDBYTES * SOUNDFILENUMBUFFERS ];
+
+  /* As it is asynchronous - we read wav header + ahead */
+  memset( &this->cbwavheader, 0, sizeof( aiocb ) );
+  this->cbwavheader.aio_nbytes = sizeof( wavheader );
+  this->cbwavheader.aio_fildes = file;
+  this->cbwavheader.aio_offset = 0;
+  this->cbwavheader.aio_buf = &this->ourwavheader;
+
+  for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
+    memset( &this->cbwavblock[ i ], 0, sizeof( aiocb ) );
+    this->cbwavblock[ i ].aio_nbytes = L16WIDEBANDBYTES;
+    this->cbwavblock[ i ].aio_fildes = this->file;
+    this->cbwavblock[ i ].aio_offset = sizeof( wavheader );
+    this->cbwavblock[ i ].aio_buf = this->buffer + ( i * L16WIDEBANDBYTES );
+  }
+
+}
+
+soundfile::~soundfile() {
+  if ( -1 != this->file ) {
+    aio_cancel( this->file, NULL );
+    close( this->file );
+  }
+
+  if( nullptr != this->buffer ) {
+    delete[] this->buffer;
+  }
+}
+
+uint8_t soundfile::getwavformattopt( void ) {
+  switch( this->ourwavheader.audio_format ) {
+    case WAVE_FORMAT_PCM: {
+      if( 8000 == this->ourwavheader.sample_rate ) {
+        return L168KPAYLOADTYPE;
+      }
+      return L1616KPAYLOADTYPE;
+    }
+    case WAVE_FORMAT_ALAW:
+      return PCMAPAYLOADTYPE;
+    case WAVE_FORMAT_MULAW:
+      return PCMUPAYLOADTYPE;
+    case WAVE_FORMAT_POLYCOM_G722:
+      return G722PAYLOADTYPE;
+    case WAVE_FORMAT_GLOBAL_IP_ILBC:
+      return ILBC20PAYLOADBYTES;
+  }
+  std::cerr << "soundfile::getwavformattopt unknown wav file format to convert to RTP PT" << std::endl;
+  return L1616KPAYLOADTYPE;
+}
+
+/*
+# wavformatfrompt
+Return the best fit format for payload type for recording.
+*/
+uint16_t soundfile::wavformatfrompt( uint8_t pt ) {
+#if 0
+  switch( pt ) {
+    case PCMUPAYLOADTYPE:
+      return WAVE_FORMAT_MULAW;
+    case PCMAPAYLOADTYPE:
+      return WAVE_FORMAT_ALAW;
+    case ILBCPAYLOADTYPE:
+      return WAVE_FORMAT_GLOBAL_IP_ILBC;
+    case G722PAYLOADTYPE:
+      return WAVE_FORMAT_POLYCOM_G722;
+  }
+#endif
+  return WAVE_FORMAT_PCM;
+}
+
+int soundfile::getsampleratefrompt( uint8_t pt ) {
+  if( G722PAYLOADTYPE == pt ) {
+    return 16000;
+  }
+  return 8000;
+}
+
+uint32_t soundfile::getwriteduration( void ) /* mS */ {
+  return this->ourwavheader.subchunksize / this->ourwavheader.byte_rate;
+}
+
 
 
 /*
@@ -25,40 +122,24 @@ Further work needed on buffers. I started implimenting multiple read buffers - b
 aiocb - which breaks that concept. As we only read/write on a ticket we can probably silently fail
 perhaps monitor (std::cerr).
 */
-soundfile::soundfile( std::string &url ) :
-  file( -1 ),
-  url( url ),
-  readbuffer( nullptr ),
-  currentreadindex( 0 ),
-  cbwavheader(),
-  ourwavheader(),
+soundfilereader::soundfilereader( std::string &url ) :
+  soundfile(),
   blocksize( L16NARROWBANDBYTES ),
-  opened( false ),
   badheader( false ),
   headerread( false ),
-  writebuffer( nullptr ),
-  currentwriteindex( 0 ),
-  tickcount( 0 ),
-  initseekmseconds( 0 ) {
-  int mode = O_RDONLY;
-  std::string filenfullpath = mediachroot + url;
+  initseekmseconds( 0 ),
+  ploadtype( L168KPAYLOADTYPE ) {
 
-  this->file = open( filenfullpath.c_str(), mode | O_NONBLOCK, 0 );
+  this->file = open( url.c_str(), O_RDONLY | O_NONBLOCK, 0 );
   if ( -1 == this->file ) {
     /* Not much more we can do */
     return;
   }
 
-  /*
-    Soundfile blindly reads the format and passes to the codec - so it must be in a format we support - or there will be silence.
-    Our macro player (to be written) will choose the most appropriate file to play based on the codec of the channel.
-  */
-  this->readbuffer = new uint8_t[ L16WIDEBANDBYTES * SOUNDFILENUMBUFFERS ];
-
   /* As it is asynchronous - we read wav header + ahead */
   memset( &this->cbwavheader, 0, sizeof( aiocb ) );
   this->cbwavheader.aio_nbytes = sizeof( wavheader );
-  this->cbwavheader.aio_fildes = file;
+  this->cbwavheader.aio_fildes = this->file;
   this->cbwavheader.aio_offset = 0;
   this->cbwavheader.aio_buf = &this->ourwavheader;
 
@@ -67,28 +148,243 @@ soundfile::soundfile( std::string &url ) :
     this->cbwavblock[ i ].aio_nbytes = L16WIDEBANDBYTES;
     this->cbwavblock[ i ].aio_fildes = this->file;
     this->cbwavblock[ i ].aio_offset = sizeof( wavheader );
-    this->cbwavblock[ i ].aio_buf = this->readbuffer + ( i * L16WIDEBANDBYTES );
+    this->cbwavblock[ i ].aio_buf = this->buffer + ( i * L16WIDEBANDBYTES );
   }
 
   /* read */
   if ( aio_read( &this->cbwavheader ) == -1 ) {
-    std::cerr << "aio_read read of header failed in soundfile" << std::endl;
+    fprintf( stderr, "aio_read read of header failed in soundfile\n" );
     close( this->file );
     this->file = -1;
     return;
   }
 
-  if ( aio_read( &this->cbwavblock[ this->currentreadindex ] ) == -1 ) {
-    std::cerr << "aio_read read of block failed in soundfile" << std::endl;
+  if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
+    fprintf( stderr, "aio_read read of block failed in soundfile" );
     close( this->file );
     this->file = -1;
     return;
   }
 
 	return;
-
 }
 
+/*
+# d-stor
+Clean up.
+*/
+soundfilereader::~soundfilereader() {
+}
+
+/*
+# create
+Shared pointer version of us.
+*/
+soundfilereader::pointer soundfilereader::create( std::string url )
+{
+  return pointer( new soundfilereader( url ) );
+}
+
+/*
+## read
+Asynchronous read.
+
+Return the number of bytes read. Will read the appropriate amount of bytes for 1 rtp packet for the defined CODEC.
+If not ready return -1.
+
+We only support 1 channel. Anything else we need to look at.
+*/
+bool soundfilereader::read( rawsound &out ) {
+
+  /* check */
+  if ( -1 == this->file ) {
+    fprintf( stderr, "No file for open wav sound\n" );
+    return false;
+  }
+
+  if( this->badheader ) {
+    fprintf( stderr, "Bad wav file\n" );
+    return false;
+  }
+
+  if( !this->headerread &&
+      aio_error( &this->cbwavheader ) == EINPROGRESS ) {
+    fprintf( stderr, "Read of soundfile wav header has not completed\n" );
+    return false;
+  }
+
+  if( !this->headerread ) {
+    if( 'W' != this->ourwavheader.wave_header[ 0 ] ) {
+      this->badheader = true;
+    }
+
+    switch( this->ourwavheader.sample_rate ) {
+      case 8000:
+      case 16000:
+        break;
+      default:
+        fprintf( stderr, "Bad sample rate in wav\n" );
+        return false;
+    }
+
+    this->ploadtype = L168KPAYLOADTYPE;
+    this->blocksize = L16NARROWBANDBYTES;
+    switch( this->ourwavheader.audio_format ) {
+      case WAVE_FORMAT_PCM: {
+        if( 8000 == this->ourwavheader.sample_rate ) {
+          this->ploadtype = L168KPAYLOADTYPE;
+          this->blocksize = L16NARROWBANDBYTES;
+        } else if( 16000 == this->ourwavheader.sample_rate ) {
+          this->ploadtype = L1616KPAYLOADTYPE;
+          this->blocksize = L16WIDEBANDBYTES;
+        } else {
+          return false;
+        }
+        break;
+      }
+      case WAVE_FORMAT_ALAW: {
+        this->ploadtype = PCMAPAYLOADTYPE;
+        this->blocksize = G711PAYLOADBYTES;
+        break;
+      }
+      case WAVE_FORMAT_MULAW: {
+        this->ploadtype = PCMUPAYLOADTYPE;
+        this->blocksize = G711PAYLOADBYTES;
+        break;
+      }
+      case WAVE_FORMAT_POLYCOM_G722: {
+        this->ploadtype = G722PAYLOADTYPE;
+        this->blocksize = G722PAYLOADBYTES;
+        break;
+      }
+      case WAVE_FORMAT_GLOBAL_IP_ILBC: {
+        this->ploadtype = ILBCPAYLOADTYPE;
+        this->blocksize = ILBC20PAYLOADBYTES;
+        break;
+      }
+      default: {
+        fprintf( stderr, "Bad audio format in wav\n" );
+        return false;
+      }
+    }
+    this->headerread = true;
+  }
+
+  if( this->initseekmseconds > 0 ) {
+    off_t init_aio_offset = 0;
+    init_aio_offset = ( this->ourwavheader.bit_depth / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * this->initseekmseconds;
+    init_aio_offset = ( this->cbwavblock[ this->currentcbindex ].aio_offset / this->blocksize ) * this->blocksize;
+    this->cbwavblock[ this->currentcbindex ].aio_offset = sizeof( wavheader ) + init_aio_offset;
+    this->initseekmseconds = 0;
+
+    if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
+      close( this->file );
+      this->file = -1;
+    }
+
+    return false;
+  }
+
+  if( aio_error( &this->cbwavblock[ this->currentcbindex ] ) == EINPROGRESS ) {
+    fprintf( stderr, "Read of soundfile wav block has not completed\n" );
+    return false;
+  }
+
+  /* success? */
+  int numbytes = aio_return( &this->cbwavblock[ this->currentcbindex ] );
+
+  if( -1 == numbytes || 0 == numbytes ) {
+    return false;
+  }
+
+  uint8_t *current = ( uint8_t * ) this->cbwavblock[ this->currentcbindex ].aio_buf;
+  out = rawsound( current, this->blocksize, this->ploadtype, this->ourwavheader.sample_rate );
+
+  /* Get the next block reading */
+  auto lastreadoffset = this->cbwavblock[ this->currentcbindex ].aio_offset;
+  this->currentcbindex = ( this->currentcbindex + 1 ) % SOUNDFILENUMBUFFERS;
+
+  this->cbwavblock[ this->currentcbindex ].aio_offset = lastreadoffset + this->blocksize;
+  this->cbwavblock[ this->currentcbindex ].aio_nbytes = this->blocksize;
+
+  if( this->cbwavblock[ this->currentcbindex ].aio_offset > ( __off_t ) ( this->ourwavheader.chunksize + sizeof( wavheader ) ) ) {
+    this->cbwavblock[ this->currentcbindex ].aio_offset = sizeof( wavheader );
+  }
+
+  /* read next block */
+  if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
+    close( this->file );
+    this->file = -1;
+    return false;
+  }
+
+  return true;
+}
+
+/*
+# complete
+Have we completed reading the file.
+*/
+bool soundfilereader::complete( void ) {
+  if( this->badheader || !this->headerread ) {
+    return false;
+  }
+
+  return this->cbwavblock[ this->currentcbindex ].aio_offset > this->ourwavheader.chunksize;
+}
+
+/*!md
+# setposition and getposition
+Gets and sets the position in terms of mS. This can only be called after the header
+has been read.
+*/
+void soundfilereader::setposition( long mseconds ) {
+
+  /* check */
+  if ( -1 == this->file ) {
+    this->initseekmseconds = mseconds;
+    return;
+  }
+
+  if( !this->headerread && aio_error( &this->cbwavheader ) == 0 ) {
+    this->headerread = true;
+  }
+
+
+  if( this->headerread ) {
+    this->currentcbindex = ( this->currentcbindex + 1 ) % SOUNDFILENUMBUFFERS;
+
+    off_t our_aio_offset = ( this->ourwavheader.bit_depth /*16*/ / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * mseconds; /* bytes per sample */
+    our_aio_offset = ( our_aio_offset / this->blocksize ) * this->blocksize; /* realign to the nearest block */
+    our_aio_offset += sizeof( wavheader );
+    this->cbwavblock[ this->currentcbindex ].aio_offset = our_aio_offset;
+
+    /* read ahead */
+    if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
+      close( this->file );
+      this->file = -1;
+    }
+
+    this->initseekmseconds = 0;
+  } else {
+    this->initseekmseconds = mseconds;
+  }
+}
+
+long soundfilereader::offtomsecs( void ) {
+  __off_t position = this->cbwavblock[ this->currentcbindex ].aio_offset - sizeof( wavheader );
+  return position / ( ( this->ourwavheader.bit_depth / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) );
+}
+
+long soundfilereader::getposition( void ) {
+  if( this->cbwavblock[ this->currentcbindex ].aio_offset <= ( __off_t ) sizeof( wavheader ) ) {
+    return 0;
+  }
+
+  return this->offtomsecs();
+}
+
+/* Writer */
 /*
 # c'stor
 Open for writing.
@@ -101,26 +397,15 @@ Once opened we only accept data in that format and packet size.
 
 NOTE: currently only working for PCM.
 */
-soundfile::soundfile( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate ) :
-  file( -1 ),
-  url( url ),
-  readbuffer( nullptr ),
-  currentreadindex( 0 ),
-  cbwavheader(),
-  ourwavheader(),
-  blocksize( L16NARROWBANDBYTES ),
-  opened( false ),
-  badheader( false ),
-  headerread( false ),
+soundfilewriter::soundfilewriter( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate ) :
+  soundfile(),
   writebuffer( nullptr ),
   currentwriteindex( 0 ),
-  tickcount( 0 ),
-  initseekmseconds( 0 ) {
+  tickcount( 0 ) {
   int mode = O_WRONLY | O_CREAT | O_TRUNC;
   int perms = S_IRUSR | S_IWUSR;
-  std::string filenfullpath = mediachroot + url;
 
-  this->file = open( filenfullpath.c_str(), mode | O_NONBLOCK, perms );
+  this->file = open( url.c_str(), mode | O_NONBLOCK, perms );
   if ( -1 == this->file ) {
     /* Not much more we can do */
     return;
@@ -196,6 +481,22 @@ soundfile::soundfile( std::string &url, uint16_t audio_format, int16_t numchanne
 }
 
 /*
+# d-stor
+Clean up.
+*/
+soundfilewriter::~soundfilewriter() {
+}
+
+/*
+# create
+Shared pointer for writing.
+*/
+soundfilewriter::pointer soundfilewriter::create( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate )
+{
+  return pointer( new soundfilewriter( url, audio_format, numchannels, samplerate ) );
+}
+
+/*
 # write
 2 channel write
 in = where we get our data
@@ -204,7 +505,7 @@ out = where we get our data
 This should be called on our tick - 20mS should be ample to complete an async write.
 We maintain SOUNDFILENUMBUFFERS to ensure previous writes have an oppertunity to write.
 */
-bool soundfile::write( codecx &in, codecx &out ) {
+bool soundfilewriter::write( codecx &in, codecx &out ) {
   int16_t *inbuf = nullptr;
   int16_t *outbuf = nullptr;
   size_t bufsize = 0;
@@ -292,297 +593,6 @@ bool soundfile::write( codecx &in, codecx &out ) {
   this->tickcount++;
   return true;
 }
-
-uint32_t soundfile::getwriteduration( void ) /* mS */ {
-  return this->ourwavheader.subchunksize / this->ourwavheader.byte_rate;
-}
-
-/*!md
-# d-stor
-Clean up.
-*/
-soundfile::~soundfile() {
-
-  if ( -1 != this->file ) {
-    aio_cancel( this->file, NULL );
-    close( this->file );
-  }
-
-  if( nullptr != this->readbuffer ) {
-    delete[] this->readbuffer;
-  }
-
-  if( nullptr != this->writebuffer ) {
-    delete[] this->writebuffer;
-  }
-}
-
-/*
-# create
-Shared pointer version of us.
-*/
-soundfile::pointer soundfile::create( std::string url )
-{
-  return pointer( new soundfile( url ) );
-}
-
-/*
-# create
-Shared pointer for writing.
-*/
-soundfile::pointer soundfile::create( std::string url, uint16_t audio_format, int16_t numchannels, int32_t samplerate )
-{
-  return pointer( new soundfile( url, audio_format, numchannels, samplerate ) );
-}
-
-/*
-## read
-Asynchronous read.
-
-Return the number of bytes read. Will read the appropriate amount of bytes for 1 rtp packet for the defined CODEC.
-If not ready return -1.
-
-We only support 1 channel. Anything else we need to look at.
-*/
-bool soundfile::read( rawsound &out ) {
-
-  /* check */
-  if ( -1 == this->file ) {
-    fprintf( stderr, "No file for open wav sound\n" );
-    return false;
-  }
-
-  if( false == this->headerread &&
-      aio_error( &this->cbwavheader ) == EINPROGRESS ) {
-    fprintf( stderr, "Read of soundfile wav header has not completed\n" );
-    return false;
-  }
-
-  this->headerread = true;
-
-  if( this->initseekmseconds > 0 ) {
-    off_t init_aio_offset = 0;
-    init_aio_offset = ( this->ourwavheader.bit_depth / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * this->initseekmseconds;
-    init_aio_offset = ( this->cbwavblock[ this->currentreadindex ].aio_offset / this->blocksize ) * this->blocksize;
-    this->cbwavblock[ this->currentreadindex ].aio_offset = sizeof( wavheader ) + init_aio_offset;
-    this->initseekmseconds = 0;
-
-    if ( aio_read( &this->cbwavblock[ this->currentreadindex ] ) == -1 ) {
-      close( this->file );
-      this->file = -1;
-    }
-
-    return false;
-  }
-
-  if( aio_error( &this->cbwavblock[ this->currentreadindex ] ) == EINPROGRESS ) {
-    fprintf( stderr, "Read of soundfile wav block has not completed\n" );
-    return false;
-  }
-
-  /* success? */
-  int numbytes = aio_return( &this->cbwavblock[ this->currentreadindex ] );
-
-  if( -1 == numbytes || 0 == numbytes ) {
-    return false;
-  }
-
-  this->opened = true;
-  if( 'W' != this->ourwavheader.wave_header[ 0 ] ) {
-    this->badheader = true;
-  }
-  this->badheader = false;
-
-  switch( this->ourwavheader.sample_rate ) {
-    case 8000:
-    case 16000:
-      break;
-    default:
-      fprintf( stderr, "Bad sample rate in wav\n" );
-      return false;
-  }
-
-  int ploadtype = L168KPAYLOADTYPE;
-  this->blocksize = L16NARROWBANDBYTES;
-  switch( this->ourwavheader.audio_format ) {
-    case WAVE_FORMAT_PCM: {
-      if( 8000 == this->ourwavheader.sample_rate ) {
-        ploadtype = L168KPAYLOADTYPE;
-        blocksize = L16NARROWBANDBYTES;
-      } else if( 16000 == this->ourwavheader.sample_rate ) {
-        ploadtype = L1616KPAYLOADTYPE;
-        blocksize = L16WIDEBANDBYTES;
-      } else {
-        return false;
-      }
-      break;
-    }
-    case WAVE_FORMAT_ALAW: {
-      ploadtype = PCMAPAYLOADTYPE;
-      blocksize = G711PAYLOADBYTES;
-      break;
-    }
-    case WAVE_FORMAT_MULAW: {
-      ploadtype = PCMUPAYLOADTYPE;
-      blocksize = G711PAYLOADBYTES;
-      break;
-    }
-    case WAVE_FORMAT_POLYCOM_G722: {
-      ploadtype = G722PAYLOADTYPE;
-      blocksize = G722PAYLOADBYTES;
-      break;
-    }
-    case WAVE_FORMAT_GLOBAL_IP_ILBC: {
-      ploadtype = ILBCPAYLOADTYPE;
-      blocksize = ILBC20PAYLOADBYTES;
-      break;
-    }
-    default: {
-      fprintf( stderr, "Bad audio format in wav\n" );
-      return false;
-    }
-  }
-
-  uint8_t *current = ( uint8_t * ) this->cbwavblock[ this->currentreadindex ].aio_buf;
-  out = rawsound( current, blocksize, ploadtype, this->ourwavheader.sample_rate );
-
-  /* Get the next block reading */
-  auto lastreadoffset = this->cbwavblock[ this->currentreadindex ].aio_offset;
-  this->currentreadindex = ( this->currentreadindex + 1 ) % SOUNDFILENUMBUFFERS;
-
-  this->cbwavblock[ this->currentreadindex ].aio_offset = lastreadoffset + blocksize;
-  this->cbwavblock[ this->currentreadindex ].aio_nbytes = blocksize;
-
-  if( this->cbwavblock[ this->currentreadindex ].aio_offset > ( __off_t ) ( this->ourwavheader.chunksize + sizeof( wavheader ) ) ) {
-    this->cbwavblock[ this->currentreadindex ].aio_offset = sizeof( wavheader );
-  }
-
-  /* read next block */
-  if ( aio_read( &this->cbwavblock[ this->currentreadindex ] ) == -1 ) {
-    close( this->file );
-    this->file = -1;
-    return false;
-  }
-
-  return true;
-}
-
-/*!md
-# setposition and getposition
-Gets and sets the position in terms of mS. This can only be called after the header
-has been read.
-*/
-void soundfile::setposition( long mseconds ) {
-
-  /* check */
-  if ( -1 == this->file ) {
-    this->initseekmseconds = mseconds;
-    return;
-  }
-
-  if( !this->headerread && aio_error( &this->cbwavheader ) == 0 ) {
-    this->headerread = true;
-  }
-
-
-  if( this->headerread ) {
-    this->currentreadindex = ( this->currentreadindex + 1 ) % SOUNDFILENUMBUFFERS;
-
-    off_t our_aio_offset = ( this->ourwavheader.bit_depth /*16*/ / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * mseconds; /* bytes per sample */
-    our_aio_offset = ( our_aio_offset / this->blocksize ) * this->blocksize; /* realign to the nearest block */
-    our_aio_offset += sizeof( wavheader );
-    this->cbwavblock[ this->currentreadindex ].aio_offset = our_aio_offset;
-
-    /* read ahead */
-    if ( aio_read( &this->cbwavblock[ this->currentreadindex ] ) == -1 ) {
-      close( this->file );
-      this->file = -1;
-    }
-
-    this->initseekmseconds = 0;
-  } else {
-    this->initseekmseconds = mseconds;
-  }
-}
-
-long soundfile::offtomsecs( void )
-{
-  __off_t position = this->cbwavblock[ this->currentreadindex ].aio_offset - sizeof( wavheader );
-  return position / ( ( this->ourwavheader.bit_depth / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) );
-}
-
-long soundfile::getposition( void ) {
-  if( this->cbwavblock[ this->currentreadindex ].aio_offset <= ( __off_t ) sizeof( wavheader ) ) {
-    return 0;
-  }
-
-  return this->offtomsecs();
-}
-
-uint8_t soundfile::getwavformattopt( void ) {
-  switch( this->ourwavheader.audio_format ) {
-    case WAVE_FORMAT_PCM: {
-      if( 8000 == this->ourwavheader.sample_rate ) {
-        return L168KPAYLOADTYPE;
-      }
-      return L1616KPAYLOADTYPE;
-    }
-    case WAVE_FORMAT_ALAW:
-      return PCMAPAYLOADTYPE;
-    case WAVE_FORMAT_MULAW:
-      return PCMUPAYLOADTYPE;
-    case WAVE_FORMAT_POLYCOM_G722:
-      return G722PAYLOADTYPE;
-    case WAVE_FORMAT_GLOBAL_IP_ILBC:
-      return ILBC20PAYLOADBYTES;
-  }
-  std::cerr << "soundfile::getwavformattopt unknown wav file format to convert to RTP PT" << std::endl;
-  return L1616KPAYLOADTYPE;
-}
-
-/*
-# wavformatfrompt
-Return the best fit format for payload type for recording.
-*/
-uint16_t soundfile::wavformatfrompt( uint8_t pt )
-{
-#if 0
-  switch( pt )
-  {
-    case PCMUPAYLOADTYPE:
-      return WAVE_FORMAT_MULAW;
-    case PCMAPAYLOADTYPE:
-      return WAVE_FORMAT_ALAW;
-    case ILBCPAYLOADTYPE:
-      return WAVE_FORMAT_GLOBAL_IP_ILBC;
-    case G722PAYLOADTYPE:
-      return WAVE_FORMAT_POLYCOM_G722;
-  }
-#endif
-  return WAVE_FORMAT_PCM;
-}
-
-int soundfile::getsampleratefrompt( uint8_t pt )
-{
-  if( G722PAYLOADTYPE == pt )
-  {
-    return 16000;
-  }
-  return 8000;
-}
-
-/*!md
-# complete
-Have we completed reading the file.
-*/
-bool soundfile::complete( void ) {
-  if( false == this->opened ) {
-    return false;
-  }
-
-  return this->cbwavblock[ this->currentreadindex ].aio_offset > this->ourwavheader.chunksize;
-}
-
 
 /*!md
 ## wavinfo

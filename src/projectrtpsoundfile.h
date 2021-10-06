@@ -23,7 +23,7 @@
 #include "projectrtppacket.h"
 #include "projectrtpcodecx.h"
 
-/* min 2 for write buffers on 2 channel audio */
+/* number of soundfile async buffers */
 #define SOUNDFILENUMBUFFERS 2
 
 typedef struct {
@@ -61,28 +61,13 @@ typedef struct {
 
 class soundfile {
 public:
-  soundfile( std::string &url );
-  soundfile( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
+  soundfile();
   ~soundfile();
 
   soundfile( const soundfile& ) = delete;              // copy ctor
   soundfile( soundfile&& ) = delete;                   // move ctor
   soundfile& operator=( const soundfile& ) = delete;   // copy assignment
   soundfile& operator=( soundfile&& ) = delete;        // move assignment
-
-  typedef std::shared_ptr< soundfile > pointer;
-  static pointer create( std::string url );
-  static pointer create( std::string url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
-  std::string &geturl( void ) { return this->url; };
-
-  bool read( rawsound &out );
-  bool write( codecx &in, codecx &out );
-
-  void setposition( long seconds );
-  long getposition( void );
-  uint32_t getwriteduration( void ); /* Return umber of mS since start of recording (recorded data) */
-  bool complete( void );
-  inline bool isopen( void ) { return this->file != -1; }
 
   inline uint16_t getwavformat( void ) { return this->ourwavheader.audio_format; }
   /* Gets the current wav file format and converts to equiv RTP payload type */
@@ -91,31 +76,80 @@ public:
   /* converts from values like PCMUPAYLOADTYPE to WAVE_FORMAT_MULAW */
   static uint16_t wavformatfrompt( uint8_t pt );
   static int getsampleratefrompt( uint8_t pt );
+  uint32_t getwriteduration( void ); /* Return umber of mS since start of recording (recorded data) */
+
+  std::string &geturl( void ) { return this->url; };
+
+protected:
+  int file;
+  std::string url;
+  wavheader ourwavheader;
+
+  /* asynchronous variables */
+  int currentcbindex;
+  aiocb cbwavheader;
+  aiocb cbwavblock[ SOUNDFILENUMBUFFERS ];
+
+  /* buffer for data */
+  uint8_t *buffer;
+};
+
+
+class soundfilereader : public soundfile {
+public:
+  soundfilereader( std::string &url );
+  ~soundfilereader();
+
+  soundfilereader( const soundfilereader& ) = delete;              // copy ctor
+  soundfilereader( soundfilereader&& ) = delete;                   // move ctor
+  soundfilereader& operator=( const soundfilereader& ) = delete;   // copy assignment
+  soundfilereader& operator=( soundfilereader&& ) = delete;        // move assignment
+
+  typedef std::shared_ptr< soundfilereader > pointer;
+  static pointer create( std::string url );
+
+  bool read( rawsound &out );
+  bool complete( void );
+
+  void setposition( long seconds );
+  long getposition( void );
+
+  inline bool isopen( void ) { return this->file != -1; }
 
 private:
   long offtomsecs( void );
-  int file;
-  std::string url;
-  uint8_t *readbuffer;
-  int currentreadindex;
-  aiocb cbwavheader;
-  wavheader ourwavheader;
-  aiocb cbwavblock[ SOUNDFILENUMBUFFERS ];
+
   int blocksize;
-
-  bool opened;
   bool badheader;
-
   bool headerread;
+  long initseekmseconds;
+  int ploadtype;
+};
+
+
+class soundfilewriter : public soundfile {
+public:
+  soundfilewriter( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
+  ~soundfilewriter();
+
+  typedef std::shared_ptr< soundfilewriter > pointer;
+  static pointer create( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
+
+  soundfilewriter( const soundfilewriter& ) = delete;              // copy ctor
+  soundfilewriter( soundfilewriter&& ) = delete;                   // move ctor
+  soundfilewriter& operator=( const soundfilewriter& ) = delete;   // copy assignment
+  soundfilewriter& operator=( soundfilewriter&& ) = delete;        // move assignment
+
+  bool write( codecx &in, codecx &out );
+
+private:
 
   /* For writing */
   uint8_t *writebuffer;
   int currentwriteindex;
   int32_t tickcount;
-  long initseekmseconds;
+
 };
-
-
 
 
 void initwav( wavheader *, int samplerate = 8000 );
