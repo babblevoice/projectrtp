@@ -17,6 +17,9 @@
 #include "projectrtptonegen.h"
 
 boost::asio::io_context workercontext;
+static napi_async_work workhandle;
+static bool started = false;
+
 /* our work queue requires some work to not exit */
 static ourhighrestimer periodictimer( workercontext );
 
@@ -69,6 +72,9 @@ static void runworkcomplete( napi_env env, napi_status status, void *data ) {
 
   napi_create_string_utf8( env, "Server stopped", NAPI_AUTO_LENGTH, &resolution );
   napi_resolve_deferred( env, stoppingdefferedpromise, resolution );
+
+  started = false;
+  napi_delete_async_work( env, workhandle );
 }
 
 static napi_value stopserver( napi_env env, napi_callback_info info ) {
@@ -87,8 +93,10 @@ static napi_value stopserver( napi_env env, napi_callback_info info ) {
 
 static napi_value startserver( napi_env env, napi_callback_info info ) {
 
+  if( started ) return NULL;
+  started = true;
+
   napi_value workname;
-  napi_async_work workhandle;
 
   if( napi_ok != napi_create_string_utf8( env, "projectrtp", NAPI_AUTO_LENGTH, &workname ) ) {
     return NULL;
@@ -123,7 +131,7 @@ void initserver( napi_env env, napi_value &result ) {
   if( napi_ok != napi_set_named_property( env, result, "shutdown", bstopserver ) ) return;
 }
 
-napi_value init( napi_env env, napi_value exports ) {
+NAPI_MODULE_INIT() {
   napi_value result;
 
   srand( time( NULL ) );
@@ -143,7 +151,5 @@ napi_value init( napi_env env, napi_value exports ) {
 
   return result;
 }
-
-NAPI_MODULE( NODE_GYP_MODULE_NAME, init )
 
 #endif /* NODE_MODULE */
