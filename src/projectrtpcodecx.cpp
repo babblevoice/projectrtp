@@ -301,12 +301,10 @@ bool codecx::ilbctol16( void )
   if( this->ilbcref.isdirty() ) return false;
 
   /* roughly compression size with some leg room. */
-  this->l168kref.malloc( this->ilbcref.size(), sizeof( int16_t ), L168KPAYLOADTYPE );
-
+  this->l168kref.malloc( L16PAYLOADSAMPLES, sizeof( int16_t ), L168KPAYLOADTYPE );
   WebRtc_Word16 speechType;
 
-  if( nullptr == this->ilbcdecoder )
-  {
+  if( nullptr == this->ilbcdecoder ) {
     /* Only support 20mS ATM to make the mixing simpler */
     WebRtcIlbcfix_DecoderCreate( &this->ilbcdecoder );
     WebRtcIlbcfix_DecoderInit( this->ilbcdecoder, 20 );
@@ -319,8 +317,7 @@ bool codecx::ilbctol16( void )
                         &speechType
                       );
 
-  if( -1 == l168klength )
-  {
+  if( -1 == l168klength ) {
     this->l168kref.size( 0 );
     this->l168kref.dirty( false );
     return false;
@@ -368,13 +365,11 @@ According to RFC 3952 you determin how many frames are in the packet by the fram
 
 As we only support G722, G711 and iLBC (20/30) then we should be able simply encode and send as the matched size.
 */
-bool codecx::l16toilbc( void )
-{
+bool codecx::l16toilbc( void ) {
   if( 0 == this->l168kref.size() ) return false;
   if( this->l168kref.isdirty() ) return false;
 
-  if( nullptr == this->ilbcencoder )
-  {
+  if( nullptr == this->ilbcencoder ) {
     /* Only support 20mS ATM to make the mixing simpler */
     WebRtcIlbcfix_EncoderCreate( &this->ilbcencoder );
     WebRtcIlbcfix_EncoderInit( this->ilbcencoder, 20 );
@@ -385,8 +380,7 @@ bool codecx::l16toilbc( void )
                             this->l168kref.size(),
                             ( WebRtc_Word16* ) this->ilbcref.c_str()
                           );
-  if ( len > 0 )
-  {
+  if ( len > 0 ) {
     this->ilbcref.size( len );
     this->ilbcref.dirty( false );
     return true;
@@ -536,84 +530,64 @@ rawsound& codecx::requirel16( void )
 # getref
 returns a reference to the relavent rawsound and ensures it is transcoded if required.
 */
-rawsound& codecx::getref( int pt )
-{
+rawsound& codecx::getref( int pt ) {
   /* If we have already have or converted this packet... */
-  if( PCMAPAYLOADTYPE == pt &&  0 != this->pcmaref.size() && !this->pcmaref.isdirty() )
-  {
+  if( PCMAPAYLOADTYPE == pt &&  0 != this->pcmaref.size() && !this->pcmaref.isdirty() ) {
     return this->pcmaref;
   }
-  else if( PCMUPAYLOADTYPE == pt && 0 != this->pcmuref.size() && !this->pcmuref.isdirty() )
-  {
+  else if( PCMUPAYLOADTYPE == pt && 0 != this->pcmuref.size() && !this->pcmuref.isdirty() ) {
     return this->pcmuref;
   }
-  else if( ILBCPAYLOADTYPE == pt && 0 != this->ilbcref.size() && !this->ilbcref.isdirty() )
-  {
+  else if( ILBCPAYLOADTYPE == pt && 0 != this->ilbcref.size() && !this->ilbcref.isdirty() ) {
     return this->ilbcref;
   }
-  else if( G722PAYLOADTYPE == pt && 0 != this->g722ref.size() && !this->g722ref.isdirty() )
-  {
+  else if( G722PAYLOADTYPE == pt && 0 != this->g722ref.size() && !this->g722ref.isdirty() ) {
     return this->g722ref;
   }
-  else if( L168KPAYLOADTYPE == pt && 0 != this->l168kref.size() && !this->l168kref.isdirty() )
-  {
+  else if( L168KPAYLOADTYPE == pt && 0 != this->l168kref.size() && !this->l168kref.isdirty() ) {
     return this->l168kref;
   }
-  else if( L1616KPAYLOADTYPE == pt && 0 != this->l1616kref.size() && !this->l1616kref.isdirty() )
-  {
+  else if( L1616KPAYLOADTYPE == pt && 0 != this->l1616kref.size() && !this->l1616kref.isdirty() ) {
     return this->l1616kref;
   }
 
   /* If we get here we may have L16 but at the wrong sample rate so check and resample - then convert */
   /* narrowband targets */
-  switch( pt )
-  {
-    case ILBCPAYLOADTYPE:
-    {
+  switch( pt ) {
+    case ILBCPAYLOADTYPE: {
       this->requirenarrowband();
       this->l16toilbc();
       return this->ilbcref;
     }
-    case G722PAYLOADTYPE:
-    {
+    case G722PAYLOADTYPE: {
       this->requirewideband();
       this->l16tog722();
 
       return this->g722ref;
     }
-    case PCMAPAYLOADTYPE:
-    {
-      if( this->pcmuref.size() > 0 )
-      {
+    case PCMAPAYLOADTYPE: {
+      if( this->pcmuref.size() > 0 ) {
         this->alaw2ulaw();
-      }
-      else
-      {
+      } else {
         this->requirenarrowband();
         this->l16topcma();
       }
       return this->pcmaref;
     }
-    case PCMUPAYLOADTYPE:
-    {
-      if( this->pcmaref.size() > 0 )
-      {
+    case PCMUPAYLOADTYPE: {
+      if( this->pcmaref.size() > 0 ) {
         this->ulaw2alaw();
-      }
-      else
-      {
+      } else {
         this->requirenarrowband();
         this->l16topcmu();
       }
       return this->pcmuref;
     }
-    case L168KPAYLOADTYPE:
-    {
+    case L168KPAYLOADTYPE: {
       this->requirenarrowband();
       return this->l168kref;
     }
-    case L1616KPAYLOADTYPE:
-    {
+    case L1616KPAYLOADTYPE: {
       this->requirewideband();
       return this->l1616kref;
     }

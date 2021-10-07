@@ -103,62 +103,49 @@ copy( *, size_t )
 setpayloadlength( size_t )
 setlength( size_t )
 */
-auto& operator << ( auto& pk, codecx& c )
-{
+auto& operator << ( auto& pk, codecx& c ) {
   (&pk) << c;
   return pk;
 }
 
-auto* operator << ( auto *pk, codecx& c )
-{
+auto* operator << ( auto *pk, codecx& c ) {
   int outpayloadtype = pk->getpayloadtype();
 
-  switch( outpayloadtype )
-  {
-    case ILBCPAYLOADTYPE:
-    {
-      if( !c.ilbcref.isdirty() )
-      {
+  switch( outpayloadtype ) {
+    case ILBCPAYLOADTYPE: {
+      if( !c.ilbcref.isdirty() ) {
         pk->copy( c.ilbcref.c_str(), c.ilbcref.size() * c.ilbcref.getbytespersample() );
         return pk;
       }
       c.ilbcref = rawsound( *pk, true );
       break;
     }
-    case G722PAYLOADTYPE:
-    {
-      if( !c.g722ref.isdirty() )
-      {
+    case G722PAYLOADTYPE: {
+      if( !c.g722ref.isdirty() ) {
         pk->copy( c.g722ref.c_str(), c.g722ref.size() * c.g722ref.getbytespersample() );
         return pk;
       }
       c.g722ref = rawsound( *pk, true );
       break;
     }
-    case PCMAPAYLOADTYPE:
-    {
-      if( !c.pcmaref.isdirty() )
-      {
+    case PCMAPAYLOADTYPE: {
+      if( !c.pcmaref.isdirty() ) {
         pk->copy( c.pcmaref.c_str(), c.pcmaref.size() * c.pcmaref.getbytespersample() );
         return pk;
       }
       c.pcmaref = rawsound( *pk, true );
       break;
     }
-    case PCMUPAYLOADTYPE:
-    {
-      if( !c.pcmuref.isdirty() )
-      {
+    case PCMUPAYLOADTYPE: {
+      if( !c.pcmuref.isdirty() ) {
         pk->copy( c.pcmuref.c_str(), c.pcmuref.size() * c.pcmuref.getbytespersample() );
         return pk;
       }
       c.pcmuref = rawsound( *pk, true );
       break;
     }
-    case L168KPAYLOADTYPE:
-    {
-      if( !c.l168kref.isdirty() )
-      {
+    case L168KPAYLOADTYPE: {
+      if( !c.l168kref.isdirty() ) {
         pk->copy( c.l168kref.c_str(), c.l168kref.size() * c.l168kref.getbytespersample() );
         return pk;
       }
@@ -166,10 +153,8 @@ auto* operator << ( auto *pk, codecx& c )
       break;
     }
 
-    case L1616KPAYLOADTYPE:
-    {
-      if( !c.l1616kref.isdirty() )
-      {
+    case L1616KPAYLOADTYPE: {
+      if( !c.l1616kref.isdirty() ) {
         pk->copy( c.l1616kref.c_str(), c.l1616kref.size() * c.l1616kref.getbytespersample() );
         return pk;
       }
@@ -178,7 +163,8 @@ auto* operator << ( auto *pk, codecx& c )
     }
   }
 
-  c.getref( outpayloadtype );
+  rawsound r = c.getref( outpayloadtype );
+  pk->setpayloadlength( r.size() );
   return pk;
 }
 
