@@ -57,12 +57,19 @@ describe( "channel mix", function() {
     const endpointb = dgram.createSocket( "udp4" )
 
     let endpointapkcount = 0
+    let endpointbpkcount = 0
 
     endpointa.on( "message", function( msg, rinfo ) {
       endpointapkcount++
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
     } )
 
     endpointb.on( "message", function( msg, rinfo ) {
+      endpointbpkcount++
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+      endpointb.send( msg, channelb.port, "localhost" )
     } )
 
     endpointa.bind()
@@ -88,7 +95,7 @@ describe( "channel mix", function() {
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
     for( let i = 0;  i < 50; i ++ ) {
-      sendpk( i, i, channelb.port, endpointb )
+      sendpk( i, i, channela.port, endpointa )
     }
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
@@ -98,7 +105,199 @@ describe( "channel mix", function() {
     endpointa.close()
     endpointb.close()
 
-    expect( endpointapkcount ).to.be.above( 48 )
+    expect( endpointapkcount ).to.be.within( 30, 51 )
+    expect( endpointbpkcount ).to.be.within( 30, 51 )
+
+  } )
+
+  it( `mix 2 channels - pcmu <-> pcma`, async function() {
+
+    this.timeout( 3000 )
+    this.slow( 2000 )
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+
+    let endpointapkcount = 0
+    let endpointbpkcount = 0
+
+    endpointa.on( "message", function( msg, rinfo ) {
+      endpointapkcount++
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+    } )
+
+    endpointb.on( "message", function( msg, rinfo ) {
+      endpointbpkcount++
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 8 )
+      endpointb.send( msg, channelb.port, "localhost" )
+    } )
+
+    endpointa.bind()
+    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+
+    endpointb.bind()
+    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+
+    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+
+    /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
+    for( let i = 0;  i < 50; i ++ ) {
+      sendpk( i, i, channela.port, endpointa )
+    }
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+
+    channela.close()
+    channelb.close()
+    endpointa.close()
+    endpointb.close()
+
+    expect( endpointapkcount ).to.be.within( 30, 51 )
+    expect( endpointbpkcount ).to.be.within( 30, 51 )
+
+  } )
+
+  it( `mix 2 channels - pcmu <-> ilbc`, async function() {
+
+    this.timeout( 3000 )
+    this.slow( 2500 )
+
+    let bssrc = 1
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+
+    let endpointapkcount = 0
+    let endpointbpkcount = 0
+
+    endpointa.on( "message", function( msg, rinfo ) {
+      endpointapkcount++
+
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+    } )
+
+    endpointb.on( "message", function( msg, rinfo ) {
+      endpointbpkcount++
+
+      expect( msg.length ).to.equal( 50 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 97 )
+
+      msg.writeUInt32BE( bssrc, 8 )
+      endpointb.send( msg, channelb.port, "localhost" )
+    } )
+
+    endpointa.bind()
+    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+
+    endpointb.bind()
+    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+
+    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointb.address().port, "codec": 97 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+
+    /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
+    for( let i = 0;  i < 50; i ++ ) {
+      sendpk( i, i, channela.port, endpointa )
+    }
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+
+    channela.close()
+    channelb.close()
+    endpointa.close()
+    endpointb.close()
+
+    expect( endpointapkcount ).to.be.above( 30 )
+    expect( endpointbpkcount ).to.be.above( 30 )
+
+  } )
+
+  it( `mix 2 channels - pcmu <-> g722`, async function() {
+
+    this.timeout( 3000 )
+    this.slow( 2000 )
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+
+    let endpointapkcount = 0
+    let endpointbpkcount = 0
+
+    endpointa.on( "message", function( msg, rinfo ) {
+      endpointapkcount++
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+    } )
+
+    endpointb.on( "message", function( msg, rinfo ) {
+
+      endpointbpkcount++
+      expect( 0x7f & msg [ 1 ] ).to.equal( 9 )
+      endpointb.send( msg, channelb.port, "localhost" )
+    } )
+
+    endpointa.bind()
+    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+
+    endpointb.bind()
+    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+
+    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointb.address().port, "codec": 9 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+
+    /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
+    for( let i = 0;  i < 50; i ++ ) {
+      sendpk( i, i, channela.port, endpointa )
+    }
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+
+    channela.close()
+    channelb.close()
+    endpointa.close()
+    endpointb.close()
+
+    expect( endpointapkcount ).to.be.above( 30 )
+    expect( endpointbpkcount ).to.be.above( 30 )
 
   } )
 
