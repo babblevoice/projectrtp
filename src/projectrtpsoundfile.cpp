@@ -35,12 +35,13 @@ soundfile::soundfile() :
     this->cbwavblock[ i ].aio_offset = sizeof( wavheader );
     this->cbwavblock[ i ].aio_buf = this->buffer + ( i * L16WIDEBANDBYTES );
   }
-
 }
 
 soundfile::~soundfile() {
   if ( -1 != this->file ) {
-    aio_cancel( this->file, NULL );
+    /* Is there a better way? Not waiting for the cancel can can cause the async
+    opperation to write to our buffer which is much worse */
+    while( AIO_NOTCANCELED == aio_cancel( this->file, NULL ) );
     close( this->file );
   }
 
@@ -399,8 +400,6 @@ NOTE: currently only working for PCM.
 */
 soundfilewriter::soundfilewriter( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate ) :
   soundfile(),
-  writebuffer( nullptr ),
-  currentwriteindex( 0 ),
   tickcount( 0 ) {
   int mode = O_WRONLY | O_CREAT | O_TRUNC;
   int perms = S_IRUSR | S_IWUSR;
@@ -445,14 +444,6 @@ soundfilewriter::soundfilewriter( std::string &url, uint16_t audio_format, int16
   this->ourwavheader.chunksize = 0;
   this->ourwavheader.sample_alignment = this->ourwavheader.bit_depth / 8 * numchannels;
 
-  /* we need to set chunksize on close? */
-  /*
-    Soundfile blindly reads the format and passes to the codec - so it must be in a format we support - or there will be silence.
-
-    Our macro player (to be written) will choose the most appropriate file to play based on the codec of the channel.
-  */
-  this->writebuffer = new uint8_t[ blocknumbytes * numchannels * SOUNDFILENUMBUFFERS ];
-
   /* As it is asynchronous - we write wav header without waiting - maintain memory */
   memset( &this->cbwavheader, 0, sizeof( aiocb ) );
   this->cbwavheader.aio_nbytes = sizeof( wavheader );
@@ -465,7 +456,7 @@ soundfilewriter::soundfilewriter( std::string &url, uint16_t audio_format, int16
     this->cbwavblock[ i ].aio_nbytes = blocknumbytes * numchannels;
     this->cbwavblock[ i ].aio_fildes = this->file;
     this->cbwavblock[ i ].aio_offset = sizeof( wavheader );
-    this->cbwavblock[ i ].aio_buf = this->writebuffer + ( i * blocknumbytes );
+    this->cbwavblock[ i ].aio_buf = this->buffer + ( i * blocknumbytes );
   }
 
   /* write */
@@ -533,22 +524,22 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
     return false;
   }
 
-  if( aio_error( &this->cbwavblock[ this->currentwriteindex ] ) == EINPROGRESS ) {
+  if( aio_error( &this->cbwavblock[ this->currentcbindex ] ) == EINPROGRESS ) {
     fprintf( stderr, "soundfile trying to write a packet whilst last is still in progress\n" );
     return false;
   }
 
-  if( nullptr == this->writebuffer ) {
+  if( nullptr == this->buffer ) {
     fprintf( stderr, "soundfile no write buffer!\n" );
     return false;
   }
 
-  this->cbwavblock[ this->currentwriteindex ].aio_nbytes = bufsize * bytespersample * this->ourwavheader.num_channels;
-  this->cbwavblock[ this->currentwriteindex ].aio_offset = sizeof( wavheader ) +
-            ( this->tickcount * this->cbwavblock[ this->currentwriteindex ].aio_nbytes );
+  this->cbwavblock[ this->currentcbindex ].aio_nbytes = bufsize * bytespersample * this->ourwavheader.num_channels;
+  this->cbwavblock[ this->currentcbindex ].aio_offset = sizeof( wavheader ) +
+            ( this->tickcount * this->cbwavblock[ this->currentcbindex ].aio_nbytes );
 
-  int16_t *buf = ( int16_t * ) this->cbwavblock[ this->currentwriteindex ].aio_buf;
-  memset( buf, 0, this->cbwavblock[ this->currentwriteindex ].aio_nbytes );
+  int16_t *buf = ( int16_t * ) this->cbwavblock[ this->currentcbindex ].aio_buf;
+  memset( buf, 0, this->cbwavblock[ this->currentcbindex ].aio_nbytes );
 
   if( nullptr != inbuf ) {
     for( size_t i = 0; i < bufsize; i++ ) {
@@ -558,7 +549,7 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
     }
   }
 
-  buf = ( int16_t * ) this->cbwavblock[ this->currentwriteindex ].aio_buf;
+  buf = ( int16_t * ) this->cbwavblock[ this->currentcbindex ].aio_buf;
   /* only works up to 2 channels - which is all we support */
   if( this->ourwavheader.num_channels > 1 ) {
     buf++;
@@ -572,13 +563,13 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
     }
   }
 
-  if ( aio_write( &this->cbwavblock[ this->currentwriteindex ] ) == -1 ) {
+  if ( aio_write( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
     fprintf( stderr, "soundfile unable to write wav block to file %s\n", this->url.c_str() );
     return false;
   }
 
   uint32_t maxbasedonthischunk = 0;
-  maxbasedonthischunk = this->cbwavblock[ this->currentwriteindex ].aio_offset + this->cbwavblock[ this->currentwriteindex ].aio_nbytes;
+  maxbasedonthischunk = this->cbwavblock[ this->currentcbindex ].aio_offset + this->cbwavblock[ this->currentcbindex ].aio_nbytes;
   if( maxbasedonthischunk > this->ourwavheader.subchunksize ) {
     this->ourwavheader.subchunksize = maxbasedonthischunk;
     this->ourwavheader.chunksize = maxbasedonthischunk + 36;
@@ -589,7 +580,7 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
     }
   }
 
-  this->currentwriteindex = ( this->currentwriteindex + 1 ) % SOUNDFILENUMBUFFERS;
+  this->currentcbindex = ( this->currentcbindex + 1 ) % SOUNDFILENUMBUFFERS;
   this->tickcount++;
   return true;
 }

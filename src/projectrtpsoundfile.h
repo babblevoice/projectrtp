@@ -143,10 +143,6 @@ public:
   bool write( codecx &in, codecx &out );
 
 private:
-
-  /* For writing */
-  uint8_t *writebuffer;
-  int currentwriteindex;
   int32_t tickcount;
 
 };
