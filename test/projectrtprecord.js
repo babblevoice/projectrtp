@@ -317,29 +317,34 @@ describe( "record", function() {
       receviedpkcount++
     } )
 
+    let expectedmessagecount = 0
+    const expectedmessages = [
+      { action: 'record', file: '/tmp/ourpowerrecording.wav', event: 'recording' },
+      { action: 'record', file: '/tmp/ourpowerrecording.wav', event: 'finished.belowpower' },
+      { action: 'close' }
+    ]
+
     server.bind()
     let delayedjobs = []
     let recording = false
     server.on( "listening", function() {
 
       channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
-console.log(d)
-        if( "record" === d.action && "finished.belowpower" == d.event ) {
+
+        expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
+        expectedmessagecount++
+
+        if( 2 == expectedmessagecount ) {
           channel.close()
-        } else if( "record" === d.action && "recording" == d.event ) {
-            recording = true
-        } else if( "close" === d.action ) {
+        } else if( 3 == expectedmessagecount ) {
 
           delayedjobs.every( ( id ) => {
             clearTimeout( id )
             return true
           } )
           server.close()
-
           let stats = fs.statSync( "/tmp/ourpowerrecording.wav" )
           expect( stats.size ).to.be.within( 70000, 80000 )
-          expect( recording ).to.be.true
-console.log(stats)
           done()
         }
       } )
@@ -486,22 +491,19 @@ console.log(stats)
     server.on( "listening", function() {
 
       channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
-console.log( d )
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
-console.log( "ok" )
-        if( "record" === d.action && "finished.timeout" == d.event ) {
+
+        if( "record" === d.action && "finished.channelclosed" == d.event ) {
 
           expect( d.file ).to.equal( "/tmp/dualrecording.wav" )
           let stats = fs.statSync( "/tmp/dualrecording.wav" )
-console.log(stats)
           expect( stats.size ).to.be.within( 128000, 129000 )
 
         } else if( "record" === d.action && "finished.belowpower" == d.event ) {
-          expect( d.file ).to.equal( "/tmp/dualrecordingpower.wav" )
 
+          expect( d.file ).to.equal( "/tmp/dualrecordingpower.wav" )
           let stats = fs.statSync( "/tmp/dualrecordingpower.wav" )
-console.log(stats)
           expect( stats.size ).to.be.within( 37000, 38000 )
 
         } else if( "close" === d.action ) {
