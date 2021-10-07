@@ -57,7 +57,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   /* private */
   active( false ),
   port( port ),
-  rfc2833pt( 0 ),
+  rfc2833pt( 101 ),
   lasttelephoneevent( 0 ),
   resolver( workercontext ),
   rtpsocket( workercontext ),
@@ -259,14 +259,18 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
       this->incodec << codecx::next;
       this->outcodec << codecx::next;
 
-      AQUIRESPINLOCK( this->rtpbufferlock );
-      rtppacket *src = this->inbuff->pop();
-      RELEASESPINLOCK( this->rtpbufferlock );
+      rtppacket *src;
+      do {
+        AQUIRESPINLOCK( this->rtpbufferlock );
+        src = this->inbuff->pop();
+        RELEASESPINLOCK( this->rtpbufferlock );
+      } while( this->checkfordtmf( src ) );
 
       if( nullptr != src ) {
         this->incodec << *src;
       }
 
+      /* check for new players */
       AQUIRESPINLOCK( this->newplaylock );
       if( nullptr != this->newplaydef ) {
         if( nullptr != this->player ) {
@@ -414,6 +418,59 @@ void projectrtpchannel::removeoldrecorders( void ) {
   }
 }
 
+/*
+## checkfordtmf
+
+We should receive a start packet with mark set to true. This should then continue until a packet with an
+end of event marked in the 2833 payload. But we might lose any one of these packets and should still work
+if we do.
+*/
+static char dtmfchars[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '#', 'A', 'B', 'C', 'D', 'F' };
+bool projectrtpchannel::checkfordtmf( rtppacket *src ) {
+  /* The next section is sending to our recipient(s) */
+  if( nullptr != src &&
+      0 != this->rfc2833pt &&
+      src->getpayloadtype() == this->rfc2833pt ) {
+
+    if( src->getpayloadlength() >= 4 ) {
+      /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
+      uint16_t sn = src->getsequencenumber();
+
+      uint8_t * pl = src->getpayload();
+      uint8_t endbit = pl[ 1 ] >> 7;
+      uint8_t event = pl[ 0 ] & 0x7f;
+
+      if( event <= 16 ) {
+        uint8_t pm = src->getpacketmarker();
+
+        /* Have we lost our mark packet */
+        if( 0 == pm &&
+            0 == this->lasttelephoneevent ) {
+          pm = 1;
+        }
+
+        /* did we lose the last end of event */
+        if( 0 != this->lasttelephoneevent &&
+            abs( static_cast< long long int >( sn - this->lasttelephoneevent ) ) > 20 ) {
+          pm = 1;
+        }
+
+        if( 1 == pm ) {
+          postdatabacktojsfromthread( shared_from_this(), "telephone-event", std::string( 1, dtmfchars[ event ] ) );
+        }
+
+        if( endbit ) {
+          this->lasttelephoneevent = 0;
+        } else {
+          this->lasttelephoneevent = sn;
+        }
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
 
 /*
 # writerecordings
@@ -547,7 +604,7 @@ void projectrtpchannel::readsomertp( void )
       } );
 }
 
-/*!md
+/*
 ## gettempoutbuf
 When we need a buffer to send data out (because we cannot guarantee our
 own buffer will be available) we can use the circular out buffer on this
@@ -568,7 +625,7 @@ rtppacket *projectrtpchannel::gettempoutbuf( void ) {
   return buf;
 }
 
-/*!md
+/*
 ## handlereadsomertcp
 Wait for RTP data
 */
@@ -590,7 +647,7 @@ void projectrtpchannel::readsomertcp( void )
     } );
 }
 
-/*!md
+/*
 ## isactive
 As it says.
 */
@@ -598,7 +655,7 @@ bool projectrtpchannel::isactive( void ) {
   return this->active;
 }
 
-/*!md
+/*
 ## writepacket
 Send a [RTP] packet to our endpoint.
 */
@@ -671,10 +728,6 @@ void projectrtpchannel::handletargetresolve (
 
   /* allow us to re-auto correct */
   this->receivedrtp = false;
-}
-
-void projectrtpchannel::rfc2833( unsigned short pt ) {
-  this->rfc2833pt = pt;
 }
 
 /*
@@ -1195,6 +1248,19 @@ napi_value createplayobject( napi_env env, projectrtpchannel::pointer p, jschann
   return result;
 }
 
+napi_value createteleventobject( napi_env env, projectrtpchannel::pointer p, jschannelevent *ev ) {
+  napi_value result, tmp;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, "telephone-event", NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "action", tmp ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, ev->arg1.c_str(), NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "event", tmp ) ) return NULL;
+
+  return result;
+}
+
 /*
 In case the user doesn't supply a call back to be notified then
 we use this one so that we can pass data back into the threadsafe
@@ -1220,6 +1286,8 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
     ourdata = createrecordobject( env, p, ev );
   } else if( "play" == ev->event ) {
     ourdata = createplayobject( env, p, ev );
+  } else if( "telephone-event" == ev->event ) {
+    ourdata = createteleventobject( env, p, ev );
   }
 
   napi_value undefined;

@@ -31,7 +31,6 @@ public:
   static pointer create( boost::asio::io_context &iocontext );
 
   void handletick( const boost::system::error_code& error );
-  void checkfordtmf( projectrtpchannelptr chan, rtppacket *src );
   void postrtpdata( projectrtpchannelptr srcchan, projectrtpchannelptr dstchan, rtppacket *src );
   inline size_t size() { return this->channels.size(); }
   void addchannel( projectrtpchannelptr chan );

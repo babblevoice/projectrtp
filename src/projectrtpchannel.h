@@ -86,7 +86,6 @@ public:
 
   void enabledtls( dtlssession::mode, std::string &fingerprint );
 
-  void rfc2833( unsigned short pt );
   void requestplay( soundsoup::pointer newdef );
   void requestrecord( channelrecorder::pointer rec );
   inline void echo( void ) { this->doecho = true; }
@@ -166,6 +165,8 @@ private:
   void checkfornewrecorders( void );
   void removeoldrecorders( void );
   void writerecordings( void );
+
+  bool checkfordtmf( rtppacket *src );
 
   void handlertcpdata( void );
   void handletargetresolve (

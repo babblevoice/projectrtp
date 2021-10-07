@@ -109,7 +109,6 @@ void projectchannelmux::mix2( void ) {
   RELEASESPINLOCK( chan1->rtpbufferlock );
 
   if( src != nullptr ) {
-    this->checkfordtmf( chan1, src );
     this->postrtpdata( chan1, chan2, src );
   }
 
@@ -118,7 +117,6 @@ void projectchannelmux::mix2( void ) {
   RELEASESPINLOCK( chan2->rtpbufferlock );
 
   if( src != nullptr ) {
-    this->checkfordtmf( chan2, src );
     this->postrtpdata( chan2, chan1, src );
   }
 }
@@ -222,55 +220,6 @@ void projectchannelmux::addchannel( projectrtpchannelptr chan ) {
   AQUIRESPINLOCK( this->newchannelslock );
   this->newchannels.push_back( chan );
   RELEASESPINLOCK( this->newchannelslock );
-}
-
-/*
-## checkfordtmf
-*/
-void projectchannelmux::checkfordtmf( projectrtpchannelptr chan, rtppacket *src ) {
-  /* The next section is sending to our recipient(s) */
-  if( 0 != chan->rfc2833pt && src->getpayloadtype() == chan->rfc2833pt ) {
-    /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
-    uint16_t sn = src->getsequencenumber();
-    uint8_t event = 0;
-    uint8_t endbit = 0;
-
-    /*
-    there really should be a packet - we should cater for multiple?
-    endbits can appear to be sent multiple times.
-    */
-    if( src->getpayloadlength() >= 4 ) {
-      uint8_t * pl = src->getpayload();
-      endbit = pl[ 1 ] >> 7;
-      event = pl[ 0 ];
-    }
-
-    uint8_t pm = src->getpacketmarker();
-    if( !pm && 0 != chan->lasttelephoneevent && abs( static_cast< long long int >( sn - chan->lasttelephoneevent ) ) > 20 ) {
-      pm = 1;
-    }
-
-    if( pm ) {
-#warning finish me - how to we signal back DTMF
-#if 0
-      if( chan->control ) {
-        JSON::Object v;
-        v[ "action" ] = "telephone-event";
-        v[ "id" ] = chan->id;
-        v[ "uuid" ] = chan->uuid;
-        v[ "event" ] = ( JSON::Integer )event;
-
-        chan->control->sendmessage( v );
-      }
-#endif
-    }
-
-    if( endbit ) {
-      chan->lasttelephoneevent = 0;
-    } else {
-      chan->lasttelephoneevent = sn;
-    }
-  }
 }
 
 /*
