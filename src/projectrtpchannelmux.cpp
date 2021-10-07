@@ -52,9 +52,22 @@ void projectchannelmux::mixall( void ) {
   for( auto& chan: this->channels ) {
     if( !chan->recv ) continue;
 
-    AQUIRESPINLOCK( chan->rtpbufferlock );
-    rtppacket *src = chan->inbuff->peek();
-    RELEASESPINLOCK( chan->rtpbufferlock );
+    rtppacket *src;
+    while( true ) {
+      AQUIRESPINLOCK( chan->rtpbufferlock );
+      src = chan->inbuff->peek();
+      RELEASESPINLOCK( chan->rtpbufferlock );
+
+      if( !chan->checkfordtmf( src ) ) break;
+
+      for( auto& dtmfchan: this->channels ) {
+        if( dtmfchan->recv && chan.get() != dtmfchan.get() ) {
+          this->postrtpdata( chan, dtmfchan, src );
+        }
+      }
+
+      chan->inbuff->pop();
+    }
 
     if( nullptr != src ) {
       chan->incodec << codecx::next;
@@ -97,6 +110,7 @@ void projectchannelmux::mixall( void ) {
 ## mix2
 More effient mixer for 2 channels
 The caller has to ensure there are 2 channels.
+With 2 channels DTMF is also passed through.
 */
 void projectchannelmux::mix2( void ) {
   auto chans = this->channels.begin();
@@ -104,21 +118,25 @@ void projectchannelmux::mix2( void ) {
   auto chan2 = *chans;
   rtppacket *src;
 
-  AQUIRESPINLOCK( chan1->rtpbufferlock );
-  src = chan1->inbuff->pop();
-  RELEASESPINLOCK( chan1->rtpbufferlock );
+  while( true ) {
+    AQUIRESPINLOCK( chan1->rtpbufferlock );
+    src = chan1->inbuff->pop();
+    RELEASESPINLOCK( chan1->rtpbufferlock );
 
-  if( src != nullptr ) {
+    if( !chan1->checkfordtmf( src ) ) break;
     this->postrtpdata( chan1, chan2, src );
   }
+  this->postrtpdata( chan1, chan2, src );
 
-  AQUIRESPINLOCK( chan2->rtpbufferlock );
-  src = chan2->inbuff->pop();
-  RELEASESPINLOCK( chan2->rtpbufferlock );
+  while( true ) {
+    AQUIRESPINLOCK( chan2->rtpbufferlock );
+    src = chan2->inbuff->pop();
+    RELEASESPINLOCK( chan2->rtpbufferlock );
 
-  if( src != nullptr ) {
+    if( !chan2->checkfordtmf( src ) ) break;
     this->postrtpdata( chan2, chan1, src );
   }
+  this->postrtpdata( chan2, chan1, src );
 }
 
 /*
@@ -227,21 +245,20 @@ void projectchannelmux::addchannel( projectrtpchannelptr chan ) {
 Send the data somewhere.
 */
 void projectchannelmux::postrtpdata( projectrtpchannelptr srcchan, projectrtpchannelptr dstchan, rtppacket *src ) {
+  if( nullptr == src ) return;
   rtppacket *dst = dstchan->gettempoutbuf();
 
   if( nullptr == dst ) {
-    std::cerr << "We have a null out buffer" << std::endl;
+    fprintf( stderr, "We have a null out buffer\n" );
     return;
   }
 
-  /* This needs testing */
-  if( 0 != srcchan->rfc2833pt && src->getpayloadtype() == srcchan->rfc2833pt ) {
+  if( src->getpayloadtype() == srcchan->rfc2833pt ) {
     dst->setpayloadtype( srcchan->rfc2833pt );
     dst->copy( src );
   } else {
     srcchan->incodec << codecx::next;
     srcchan->incodec << *src;
-
     dstchan->outcodec << codecx::next;
     dstchan->outcodec << *src;
     dst << dstchan->outcodec;
