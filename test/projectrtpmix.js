@@ -110,6 +110,139 @@ describe( "channel mix", function() {
 
   } )
 
+
+  it( `mix 2 channels then unmix`, async function() {
+
+    this.timeout( 3000 )
+    this.slow( 2000 )
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+
+    let endpointapkcount = 0
+    let endpointbpkcount = 0
+
+    endpointa.on( "message", function( msg, rinfo ) {
+      endpointapkcount++
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+    } )
+
+    endpointb.on( "message", function( msg, rinfo ) {
+      endpointbpkcount++
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+      endpointb.send( msg, channelb.port, "localhost" )
+    } )
+
+    endpointa.bind()
+    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+
+    endpointb.bind()
+    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+
+    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+
+    /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
+    for( let i = 0;  i < 50; i ++ ) {
+      sendpk( i, i, channela.port, endpointa )
+    }
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 600 ) } )
+    channelb.unmix()
+    channela.echo()
+    channelb.close()
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 600 ) } )
+
+    channela.close()
+    endpointa.close()
+    endpointb.close()
+
+    expect( endpointapkcount ).to.be.within( 30, 51 )
+    expect( endpointbpkcount ).to.be.within( 15, 25 )
+
+  } )
+
+  it( `mix 2 channels then close b`, async function() {
+
+    this.timeout( 3000 )
+    this.slow( 2000 )
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+
+    let endpointapkcount = 0
+    let endpointbpkcount = 0
+
+    endpointa.on( "message", function( msg, rinfo ) {
+      endpointapkcount++
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+    } )
+
+    endpointb.on( "message", function( msg, rinfo ) {
+      endpointbpkcount++
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+      endpointb.send( msg, channelb.port, "localhost" )
+    } )
+
+    endpointa.bind()
+    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+
+    endpointb.bind()
+    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+
+    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+
+      }
+    } )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+
+    /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
+    for( let i = 0;  i < 50; i ++ ) {
+      sendpk( i, i, channela.port, endpointa )
+    }
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 600 ) } )
+
+    channelb.close()
+    channela.echo()
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 600 ) } )
+
+    channela.close()
+    endpointa.close()
+    endpointb.close()
+
+    expect( endpointapkcount ).to.be.within( 30, 51 )
+    expect( endpointbpkcount ).to.be.within( 15, 25 )
+
+  } )
+
   it( `mix 2 channels - pcmu <-> pcma`, async function() {
 
     this.timeout( 3000 )
