@@ -14,7 +14,6 @@ projectchannelmux::projectchannelmux( boost::asio::io_context &iocontext ):
   nexttick( std::chrono::high_resolution_clock::now() ),
   newchannels(),
   newchannelslock( false ),
-  mixing( false ),
   added(),
   subtracted() {
 }
@@ -143,25 +142,31 @@ void projectchannelmux::mix2( void ) {
 Our timer handler.
 */
 void projectchannelmux::handletick( const boost::system::error_code& error ) {
-  if ( error != boost::asio::error::operation_aborted )
-  {
-    boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
+  if ( error == boost::asio::error::operation_aborted ) return;
 
-    this->checkfornewmixes();
+  boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
 
-    for( auto& chan: this->channels ) {
-      chan->checkfornewrecorders();
+  this->checkfornewmixes();
+
+  for( auto& chan: this->channels ) {
+    chan->checkfornewrecorders();
+  }
+
+  /* Check for channels which have request removal */
+  for ( projectchanptrlist::iterator chan = this->channels.begin();
+        chan != this->channels.end(); ) {
+    if( ( *chan )->removemixer ) {
+      ( *chan )->mixing = false;
+      ( *chan )->removemixer = false;
+      ( *chan )->mixer = nullptr;
+      chan = this->channels.erase( chan );
+    } else {
+      ++chan;
     }
+  }
 
-    /* Check for channels which have request removal */
-    for ( projectchanptrlist::iterator chan = this->channels.begin();
-          chan != this->channels.end(); ) {
-      if( !( *chan )->mixing ) {
-        chan = this->channels.erase( chan );
-      } else {
-        ++chan;
-      }
-    }
+  /* If we have any channels left to mix */
+  if( this->channels.size() > 0 ) {
 
     for( auto& chan: this->channels ) {
       chan->incrtsout();
@@ -187,23 +192,17 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
       if( tms > chan->maxticktime ) chan->maxticktime = tms;
     }
 
-
     /* The last thing we do */
-    if( this->channels.size() > 0 ) {
-      this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
+    this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
 
-      this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
-      this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
-                                          shared_from_this(),
-                                          boost::asio::placeholders::error ) );
-    }
+    this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
+    this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
+                                        shared_from_this(),
+                                        boost::asio::placeholders::error ) );
   }
 }
 
 void projectchannelmux::go( void ) {
-
-  if( this->mixing.exchange( true ) ) return;
-
   this->nexttick = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds( 20 );
 
   this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );

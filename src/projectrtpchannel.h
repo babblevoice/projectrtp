@@ -99,9 +99,8 @@ public:
   bool isactive( void );
 
   bool mix( projectrtpchannel::pointer other );
+  bool unmix( void );
   rtppacket *gettempoutbuf( void );
-
-  void unmix( void );
 
   uint32_t codec;
   uint32_t ssrcin;
@@ -176,6 +175,7 @@ private:
   std::atomic_bool mixerlock;
   projectchannelmuxptr mixer;
   std::atomic_bool mixing;
+  std::atomic_bool removemixer;
 
   /* CODECs  */
   codecx outcodec;

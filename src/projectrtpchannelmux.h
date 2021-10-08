@@ -51,8 +51,6 @@ private:
   projectchanptrlist newchannels;
   std::atomic_bool newchannelslock;
 
-  std::atomic_bool mixing;
-
   rawsound added;
   rawsound subtracted;
 };

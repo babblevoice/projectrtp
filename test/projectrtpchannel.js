@@ -554,6 +554,21 @@ class channel {
   @returns {boolean}
   */
   mix(){}
+
+  /**
+  @summary Removes the other channel from an existing mix
+  @param {channel} other
+  @returns {boolean}
+  */
+  unmix(){}
+
+  /**
+  @summary Send RFC 2833 DTMF digits
+  @param {string} digits
+  @returns {boolean}
+  */
+  dtmf(){}
+
   /**
   @summary Echos receved RTP back out when unmixed
   @returns {boolean}
