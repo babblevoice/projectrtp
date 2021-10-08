@@ -100,6 +100,7 @@ public:
 
   bool mix( projectrtpchannel::pointer other );
   bool unmix( void );
+  void dtmf( std::string digits );
   rtppacket *gettempoutbuf( void );
 
   uint32_t codec;
@@ -166,6 +167,7 @@ private:
   void writerecordings( void );
 
   bool checkfordtmf( rtppacket *src );
+  void senddtmf( void );
 
   void handlertcpdata( void );
   void handletargetresolve (
@@ -199,6 +201,11 @@ private:
 
   std::string targetaddress;
   unsigned short targetport;
+
+  /* outbound DTMF */
+  std::string queueddigits;
+  std::atomic_bool queuddigitslock;
+  uint16_t lastdtmfsn;
 
 };
 

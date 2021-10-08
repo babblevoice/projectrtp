@@ -128,6 +128,206 @@ describe( "dtmf", function() {
   } )
 
 
+  it( `single channel and request rtp server to send 2833`, function( done ) {
+
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+    var receviedpkcount = 0
+    var dtmfpkcount = 0
+    server.on( "message", function( msg, rinfo ) {
+      receviedpkcount++
+      if( 101 == ( 0x7f & msg [ 1 ] ) ) {
+        dtmfpkcount++
+      } else {
+        receviedpkcount++
+        expect( msg.length ).to.equal( 172 )
+        expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+      }
+    } )
+
+    this.timeout( 3000 )
+    this.slow( 2500 )
+
+    server.bind()
+    server.on( "listening", function() {
+
+      let ourport = server.address().port
+
+      let expectedmessagecount = 0
+      const expectedmessages = [
+        { action: 'close' }
+      ]
+
+      let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+
+        expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
+        expectedmessagecount++
+
+        if( "close" === d.action ) {
+          server.close()
+          expect( dtmfpkcount ).to.equal( 2*3 )
+          done()
+        }
+      } )
+
+      expect( channel.echo() ).to.be.true
+
+      /* send a packet every 20mS x 50 */
+      for( let i = 0;  i < 50; i ++ ) {
+        sendpk( i, i*20, channel.port, server )
+      }
+
+      setTimeout( () => channel.dtmf( "#1" ), 400 )
+      setTimeout( () => channel.close(), 1000 )
+    } )
+  } )
+
+
+  it( `2 channels mixing and request rtp server to send 2833 to one`, async function() {
+
+    /* create our RTP/UDP endpoint */
+    const clienta = dgram.createSocket( "udp4" )
+    const clientb = dgram.createSocket( "udp4" )
+
+    var receviedpkcount = 0
+    var dtmfpkcount = 0
+    clienta.on( "message", function( msg, rinfo ) {
+      receviedpkcount++
+      if( 101 == ( 0x7f & msg [ 1 ] ) ) {
+        dtmfpkcount++
+      } else {
+        receviedpkcount++
+        expect( msg.length ).to.equal( 172 )
+        expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+      }
+    } )
+
+    clientb.on( "message", function( msg, rinfo ) {
+      if( 101 == ( 0x7f & msg [ 1 ] ) ) {
+        expect( true ).to.equal( false ) //here = bad
+        dtmfpkcount++
+      }
+      clientb.send( msg, channelb.port, "localhost" )
+    } )
+
+    this.timeout( 3000 )
+    this.slow( 2500 )
+
+    clienta.bind()
+    await new Promise( ( resolve, reject ) => { clienta.on( "listening", () => resolve()  ) } )
+    clientb.bind()
+    await new Promise( ( resolve, reject ) => { clientb.on( "listening", () => resolve()  ) } )
+
+    let ouraport = clienta.address().port
+    let ourbport = clientb.address().port
+
+    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
+    } )
+
+    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
+    } )
+
+    expect( channela.mix( channelb ) ).to.be.true
+
+    /* send a packet every 20mS x 50 */
+    for( let i = 0;  i < 50; i ++ ) {
+      sendpk( i, i*20, channela.port, clienta )
+    }
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 400 ) } )
+    channela.dtmf( "*9F" )
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 600 ) } )
+    channela.close()
+    channelb.close()
+
+    clienta.close()
+    clientb.close()
+
+    expect( dtmfpkcount ).to.equal( 3*3 )
+  } )
+
+  it( `3 channels mixing and request rtp server to send 2833 to one`, async function() {
+
+    /* create our RTP/UDP endpoint */
+    const clienta = dgram.createSocket( "udp4" )
+    const clientb = dgram.createSocket( "udp4" )
+    const clientc = dgram.createSocket( "udp4" )
+
+    var receviedpkcount = 0
+    var dtmfpkcount = 0
+    clienta.on( "message", function( msg, rinfo ) {
+      receviedpkcount++
+      if( 101 == ( 0x7f & msg [ 1 ] ) ) {
+        dtmfpkcount++
+      } else {
+        receviedpkcount++
+        expect( msg.length ).to.equal( 172 )
+        expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+      }
+    } )
+
+    clientb.on( "message", function( msg, rinfo ) {
+      if( 101 == ( 0x7f & msg [ 1 ] ) ) {
+        expect( true ).to.equal( false ) //here = bad
+        dtmfpkcount++
+      }
+      clientb.send( msg, channelb.port, "localhost" )
+    } )
+
+    clientc.on( "message", function( msg, rinfo ) {
+      if( 101 == ( 0x7f & msg [ 1 ] ) ) {
+        expect( true ).to.equal( false ) //here = bad
+        dtmfpkcount++
+      }
+      clientb.send( msg, channelb.port, "localhost" )
+    } )
+
+    this.timeout( 3000 )
+    this.slow( 2500 )
+
+    clienta.bind()
+    await new Promise( ( resolve, reject ) => { clienta.on( "listening", () => resolve()  ) } )
+    clientb.bind()
+    await new Promise( ( resolve, reject ) => { clientb.on( "listening", () => resolve()  ) } )
+    clientc.bind()
+    await new Promise( ( resolve, reject ) => { clientc.on( "listening", () => resolve()  ) } )
+
+    let ouraport = clienta.address().port
+    let ourbport = clientb.address().port
+    let ourcport = clientc.address().port
+
+    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
+    } )
+
+    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
+    } )
+
+    let channelc = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourcport, "codec": 0 } }, function( d ) {
+    } )
+
+    expect( channela.mix( channelb ) ).to.be.true
+    expect( channela.mix( channelc ) ).to.be.true
+
+    /* send a packet every 20mS x 50 */
+    for( let i = 0;  i < 50; i ++ ) {
+      sendpk( i, i*20, channela.port, clienta )
+    }
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 100 ) } )
+    channela.dtmf( "*9ABD" )
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 900 ) } )
+    channela.close()
+    channelb.close()
+    channelc.close()
+
+    clienta.close()
+    clientb.close()
+    clientc.close()
+
+    expect( dtmfpkcount ).to.equal( 5*3 )
+  } )
+
+
   it( `Send multiple 2833 DTMF and check event`, function( done ) {
 
     /* create our RTP/UDP endpoint */

@@ -116,6 +116,14 @@ uint8_t rtppacket::getpacketmarker( void )
   return ( this->pk[ 1 ] & 0x80 ) >> 7;
 }
 
+void rtppacket::setmarker( bool v ) {
+  if( v ) {
+    this->pk[ 1 ] = this->pk[ 1 ] | 0x80;
+  } else {
+    this->pk[ 1 ] = this->pk[ 1 ] & 0x7f;
+  }
+}
+
 /*!md
 ## getpayloadtype
 As it says.

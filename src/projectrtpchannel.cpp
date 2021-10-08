@@ -85,7 +85,10 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   rtpdtls( nullptr ),
   rtpdtlshandshakeing( false ),
   targetaddress(),
-  targetport( 0 ) {
+  targetport( 0 ),
+  queueddigits(),
+  queuddigitslock( false ),
+  lastdtmfsn( 0 ) {
 
   channelscreated++;
 }
@@ -267,6 +270,8 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
       src = this->inbuff->pop();
       RELEASESPINLOCK( this->rtpbufferlock );
     } while( this->checkfordtmf( src ) );
+
+    this->senddtmf();
 
     if( nullptr != src ) {
       this->incodec << *src;
@@ -784,6 +789,97 @@ bool projectrtpchannel::unmix( void ) {
 }
 
 /*
+## dtmf
+Queue digits to send as RFC 2833.
+*/
+void projectrtpchannel::dtmf( std::string digits ) {
+  AQUIRESPINLOCK( this->queuddigitslock );
+  this->queueddigits += digits;
+  RELEASESPINLOCK( this->queuddigitslock );
+}
+
+/*
+Now send each digit.
+*/
+void projectrtpchannel::senddtmf( void ) {
+
+  if( static_cast< uint16_t >( this->snout - this->lastdtmfsn ) < 10 ) {
+    return;
+  }
+
+  AQUIRESPINLOCK( this->queuddigitslock );
+  uint8_t tosend = 200;
+  if( this->queueddigits.size() > 0 ) {
+    tosend = this->queueddigits[ 0 ];
+    this->queueddigits.erase( this->queueddigits.begin() );
+  }
+  RELEASESPINLOCK( this->queuddigitslock );
+
+  if( 200 == tosend ) {
+    return;
+  }
+
+  /*
+    RFC 2833:
+     _________________________
+     0--9                0--9
+     *                     10
+     #                     11
+     A--D              12--15
+     Flash                 16
+  */
+  if( tosend >= 48 && tosend <= 57 ) {
+    // 0 -> 9
+    tosend -= 48;
+  } else if ( '*' == tosend ) {
+    tosend = 10;
+  } else if ( '#' == tosend ) {
+    tosend = 11;
+  } else if ( tosend >= 65 && tosend <= 68 ) {
+    tosend = tosend + 12 - 65;
+  } else if ( tosend >= 97 && tosend <= 100 ) {
+    tosend = tosend + 12 - 97;
+  } else if ( 'F' == tosend || 'f' == tosend ) { /* Flash */
+    tosend = 16;
+  } else {
+    return;
+  }
+
+  rtppacket *dst = this->gettempoutbuf();
+  dst->setpayloadtype( this->rfc2833pt );
+  dst->setmarker();
+  dst->setpayloadlength( 4 );
+  uint8_t *pl =  dst->getpayload();
+  pl[ 0 ] = tosend;
+  pl[ 1 ] = 10; /* end of event & reserved & volume */
+  pl[ 2 ] = 0; /* event duration high */
+  pl[ 3 ] = 160; /* event duration */
+  this->writepacket( dst );
+
+  dst = this->gettempoutbuf();
+  dst->setpayloadtype( this->rfc2833pt );
+  dst->setpayloadlength( 4 );
+  pl =  dst->getpayload();
+  pl[ 0 ] = tosend;
+  pl[ 1 ] = 10; /* end of event & reserved & volume */
+  pl[ 2 ] = 0; /* event duration high */
+  pl[ 3 ] = 160; /* event duration */
+  this->writepacket( dst );
+
+  dst = this->gettempoutbuf();
+  dst->setpayloadtype( this->rfc2833pt );
+  dst->setpayloadlength( 4 );
+  pl =  dst->getpayload();
+  pl[ 0 ] = tosend;
+  pl[ 1 ] = 0x80 | 10; /* end of event & reserved & volume */
+  pl[ 2 ] = 0; /* event duration high */
+  pl[ 3 ] = 160; /* event duration */
+  this->writepacket( dst );
+
+  this->lastdtmfsn = this->snout;
+}
+
+/*
 ## handlesend
 What is called once we have sent something.
 */
@@ -1097,10 +1193,6 @@ static napi_value channelunmix( napi_env env, napi_callback_info info ) {
   return createnapibool( env, chan->unmix() );
 }
 
-static napi_value channeldtmf( napi_env env, napi_callback_info info ) {
-#warning finish me now
-}
-
 static napi_value channeldirection( napi_env env, napi_callback_info info ) {
   size_t argc = 1;
   napi_value argv[ 1 ];
@@ -1139,6 +1231,38 @@ static napi_value channeldirection( napi_env env, napi_callback_info info ) {
 
   return createnapibool( env, true );
 }
+
+static napi_value channeldtmf( napi_env env, napi_callback_info info ) {
+
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_error( env, "0", "We require 1 param" );
+    return NULL;
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    napi_throw_error( env, "1", "That's embarrassing - we shouldn't get here" );
+    return NULL;
+  }
+
+  size_t bytescopied;
+  char dtmfstr[ 50 ];
+  napi_get_value_string_utf8( env, argv[ 0 ], dtmfstr, sizeof( dtmfstr ), &bytescopied );
+  if( 0 == bytescopied || bytescopied >= sizeof( dtmfstr ) ) {
+    napi_throw_error( env, "2", "DTMF String too long" );
+    return NULL;
+  }
+
+  chan->dtmf( std::string( dtmfstr ) );
+
+  return createnapibool( env, true );
+}
+
 
 void channeldestroy( napi_env env, void* /* data */, void* hint ) {
   hiddensharedptr *pb = ( hiddensharedptr * ) hint;
@@ -1470,6 +1594,9 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channeldirection, nullptr, &mfunc ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "direction", mfunc ) ) return NULL;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channeldtmf, nullptr, &mfunc ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "dtmf", mfunc ) ) return NULL;
 
   /* values */
   napi_value nourport;

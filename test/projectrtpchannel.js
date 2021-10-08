@@ -563,7 +563,7 @@ class channel {
   unmix(){}
 
   /**
-  @summary Send RFC 2833 DTMF digits
+  @summary Send RFC 2833 DTMF digits i.e. channel.dtmf( "#123*" )
   @param {string} digits
   @returns {boolean}
   */
