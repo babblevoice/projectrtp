@@ -165,6 +165,15 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
     }
   }
 
+  /* if 1 is removed then we may have 1 left - and 1 isn't mixing */
+  if( 1 == this->channels.size() ) {
+    projectchanptrlist::iterator chan = this->channels.begin();
+    ( *chan )->mixing = false;
+    ( *chan )->removemixer = false;
+    ( *chan )->mixer = nullptr;
+    chan = this->channels.erase( chan );
+  }
+
   /* If we have any channels left to mix */
   if( this->channels.size() > 0 ) {
 
