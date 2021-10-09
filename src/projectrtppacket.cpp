@@ -20,7 +20,7 @@ Sets up all of the RTP packet header to defaults.
 */
 void rtppacket::init( uint32_t ssrc )
 {
-  memset( this->pk, 0, 12 );
+  memset( this->pk, 0, sizeof( this->pk ) );
   this->pk[ 0 ] = 0x80; /* v = 2 */
 
   uint32_t *ssrcptr = ( uint32_t * )this->pk;
