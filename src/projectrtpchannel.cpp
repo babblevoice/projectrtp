@@ -807,15 +807,15 @@ void projectrtpchannel::senddtmf( void ) {
     return;
   }
 
+  uint8_t tosend = 0;
   AQUIRESPINLOCK( this->queuddigitslock );
-  uint8_t tosend = 200;
   if( this->queueddigits.size() > 0 ) {
     tosend = this->queueddigits[ 0 ];
     this->queueddigits.erase( this->queueddigits.begin() );
   }
   RELEASESPINLOCK( this->queuddigitslock );
 
-  if( 200 == tosend ) {
+  if( 0 == tosend ) {
     return;
   }
 
