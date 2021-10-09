@@ -47,10 +47,6 @@ void projectchannelmux::mixall( void ) {
   this->subtracted.malloc( insize, sizeof( int16_t ), l16krequired );
   this->added.zero();
 
-  for( auto& chan: this->channels ) {
-    chan->senddtmf();
-  }
-
   /* We first have to add them all up */
   for( auto& chan: this->channels ) {
     if( !chan->recv ) continue;
@@ -120,9 +116,6 @@ void projectchannelmux::mix2( void ) {
   auto chan1 = *chans++;
   auto chan2 = *chans;
   rtppacket *src;
-
-  chan1->senddtmf();
-  chan2->senddtmf();
 
   while( true ) {
     AQUIRESPINLOCK( chan1->rtpbufferlock );
@@ -195,6 +188,7 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
     }
 
     for( auto& chan: this->channels ) {
+      chan->senddtmf();
       chan->writerecordings();
       chan->checkidlerecv();
     }
