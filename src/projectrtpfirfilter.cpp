@@ -9,7 +9,7 @@
 #include <math.h>
 #include <climits>
 
-#include "firfilter.h"
+#include "projectrtpfirfilter.h"
 
 lowpass3_4k16k::lowpass3_4k16k() :
   round( 0 ) {

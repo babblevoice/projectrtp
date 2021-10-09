@@ -13,7 +13,7 @@
 #include "projectrtppacket.h"
 #include "projectrtprawsound.h"
 #include "globals.h"
-#include "firfilter.h"
+#include "projectrtpfirfilter.h"
 
 
 /*

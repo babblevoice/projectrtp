@@ -17,7 +17,7 @@
             "-lgnutls"
           ],
       "sources": [
-        "firfilter.cpp",
+        "projectrtpfirfilter.cpp",
         "projectrtpnodemain.cpp",
         "projectrtpbuffer.cpp",
         "projectrtppacket.cpp",
