@@ -30,7 +30,7 @@ module.exports = async ( packets = utils.between( 50, 50*60*5 ) ) => {
     if( "close" === d.action ) {
       utils.cancelremainingscheduled( clienta )
       clienta.close()
-      utils.logclosechannel( `Mix 2 for ${packets} packets completed with reason '${d.reason}'` )
+      utils.logclosechannel( `Mix 2 (a) for ${packets} packets completed with reason '${d.reason}'` )
     }
   } )
   utils.lognewchannel()
@@ -39,7 +39,7 @@ module.exports = async ( packets = utils.between( 50, 50*60*5 ) ) => {
     if( "close" === d.action ) {
       utils.cancelremainingscheduled( clientb )
       clientb.close()
-      utils.logclosechannel( `Mix 2 for ${packets} packets completed with reason '${d.reason}'` )
+      utils.logclosechannel( `Mix 2 (b) for ${packets} packets completed with reason '${d.reason}'` )
     }
   } )
   utils.lognewchannel()
@@ -61,17 +61,17 @@ module.exports = async ( packets = utils.between( 50, 50*60*5 ) ) => {
   let payload = Buffer.alloc( 172 - 12 ).fill( projectrtp.codecx.linear162pcmu( 0 ) )
   let ssrc = utils.between( 10, 100 )
 
-  let senddtfat = utils.between( 100, packets )
-  let senddtfat2 = utils.between( 100, packets )
-  
+  let senddtmfat = utils.between( 100, packets )
+  let senddtmfat2 = utils.between( 100, packets )
+
   /* send a packet every 20mS x 50 */
   for( let i = 0;  i < packets; i ++ ) {
     utils.sendpk( i, i * 20, channela.port, clienta, ssrc, payload )
 
-    if( i === senddtfat ) {
+    if( i === senddtmfat ) {
       /* sending some DTMF */
       channela.dtmf( "*01239ABD" )
-    } else if ( i === senddtfat2 ) {
+    } else if ( i === senddtmfat2 ) {
       channela.dtmf( "45678F#" )
     }
   }
