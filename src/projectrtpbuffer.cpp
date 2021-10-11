@@ -122,7 +122,7 @@ rtppacket* rtpbuffer::reserve( void ) {
     return this->reserved;
   }
 
-  /* Space was not available in availablertpdata - this should be rare data is
+  /* Space was not available in availablertpdata - this should be rare and means data is
   comming in too fast so we clear to make way for new data */
   while ( !this->availablertpdata.empty() ) this->availablertpdata.pop();
 
