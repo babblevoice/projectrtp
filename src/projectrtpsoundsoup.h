@@ -9,7 +9,6 @@
 
 #include <vector>
 
-#include <node_api.h>
 
 #include "projectrtpsoundfile.h"
 
@@ -83,6 +82,10 @@ private:
 };
 
 
+#ifdef NODE_MODULE
+#include <node_api.h>
 soundsoup::pointer soundsoupcreate( napi_env env, napi_value obj, int channelcodec );
+#endif
+
 
 #endif  /* PROJECTRTPSOUNDSOUP_H */

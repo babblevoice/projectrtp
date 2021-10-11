@@ -109,16 +109,114 @@ void rtpbuffer::push( void ) {
 }
 
 /*
-Returns an available buffer (if there is one free). This is then passed into
-push once we have received data for it.
+Always returns an available buffer. It will look in available buffer first.
+Failing that, it will discard the oldest packet in order to continue.
+It is still logically possible to return a nullptr - but it shouldn't happen.
 */
 rtppacket* rtpbuffer::reserve( void ) {
   if( nullptr != this->reserved ) return this->reserved;
-  if( 0 == this->availablertpdata.size() ) return nullptr;
+
+  if( this->availablertpdata.size() > 0 ) {
+    this->reserved = this->availablertpdata.front();
+    this->availablertpdata.pop();
+    return this->reserved;
+  }
+
+  /* Space was not available in availablertpdata - this should be rare data is
+  comming in too fast so we clear to make way for new data */
+  while ( !this->availablertpdata.empty() ) this->availablertpdata.pop();
+
+  for ( auto i = 0; i < this->buffercount; i++ ) {
+    this->orderedrtpdata.at( i ) = nullptr;
+    this->availablertpdata.push( &this->buffer.at( i ) );
+  }
+
   this->reserved = this->availablertpdata.front();
   this->availablertpdata.pop();
   return this->reserved;
 }
+
+#ifdef TESTSUITE
+void testrtpbuffer( void ) {
+  rtpbuffer::pointer p = rtpbuffer::create();
+
+  /* This should over fill */
+  auto i = 1000;
+  for( ; i < 1030; i++ ) {
+    rtppacket *rp = p->reserve();
+    if( nullptr != rp ) {
+      rp->setsequencenumber( i );
+      p->push();
+    }
+  }
+
+  if( 19 != p->getdropped() ) throw "Incorrect number of dropped packets";
+
+  auto pullcount = 0;
+  for( auto j = 0; j < BUFFERPACKETCOUNT; j++ ) {
+    rtppacket *rp = p->pop();
+    if( nullptr != rp ) pullcount++;
+  }
+
+  if( 10 != pullcount ) throw "Wrong number of packets available in rtp buffer";
+
+  for( ; i < 1035; i++ ) {
+    /* Don't check for nullptr as these should be available */
+    rtppacket *rp = p->reserve();
+    rp->setsequencenumber( i );
+    p->push();
+  }
+
+  /* Put in some rubbish */
+  rtppacket *rp = p->reserve();
+  rp->setsequencenumber( 4000 );
+  p->push();
+  rp = p->reserve();
+  rp->setsequencenumber( 4005 );
+  p->push();
+
+  rp = p->reserve();
+  rp->setsequencenumber( 20000 );
+  p->push();
+
+  pullcount = 0;
+  for( auto j = 0; j < BUFFERPACKETCOUNT; j++ ) {
+    rtppacket *rp = p->pop();
+    if( nullptr != rp ) pullcount++;
+  }
+
+  if( 5 != pullcount ) throw "Wrong number of packets available in rtp buffer";
+
+  /* Fill with a hole */
+  for( ; i < 1035 + BUFFERPACKETCOUNT; i++ ) {
+    /* Don't check for nullptr as these should be available */
+    switch( i ) {
+      case 1040:
+      case 1041:
+      case 1042:
+        continue;
+      default: {
+        rtppacket *rp = p->reserve();
+        rp->setsequencenumber( i );
+        p->push();
+      }
+    }
+  }
+
+  pullcount = 0;
+  auto endsn = i + BUFFERPACKETCOUNT * 2;
+  for( ; i < endsn; i++ ) {
+    rtppacket *rp = p->reserve();
+    if( nullptr != rp ) {
+      rp->setsequencenumber( i );
+      p->push();
+      pullcount++;
+    } else {
+      throw "nullptr returned by rtpbuffer::reserve";
+    }
+  }
+}
+#endif
 
 
 #ifdef NODE_MODULE

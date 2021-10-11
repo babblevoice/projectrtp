@@ -117,31 +117,45 @@ int16_t ma_filter::execute( int16_t val ) {
   return this->rtotal / this->l;
 }
 
+#ifdef TESTSUITE
+
+/*
+TODO - improve
+*/
+void testlowpass( void ) {
+  lowpass3_4k16k lpfilter;
+
+  for( int16_t i = 0; i < 10000; i++ ) {
+    lpfilter.execute( i );
+  }
+}
+
 /*
 ## testma
-
 */
 void testma( void ) {
-  std::cout << "Moving average test" << std::endl;
   ma_filter ourma;
 
   for( auto i = 0; i < ma_length; i++ ) {
     ourma.execute( 1 );
   }
 
-  std::cout << "Latest val after pumping in 1: " << ourma.get() << std::endl;
+  if( 1 != ourma.get() ) throw "Incorrect answer from ma filter";
 
   for( auto i = 0; i < ( ma_length / 2 ); i++ ) {
     ourma.execute( 100 );
   }
-  std::cout << "Latest val after half filling with 100: " << ourma.get() << std::endl;
+
+  if( 50 != ourma.get() ) throw "Incorrect answer from ma filter";
 
   for( auto i = 0; i < ( ma_length / 2 ); i++ ) {
     ourma.execute( 100 );
   }
-  std::cout << "Latest val after half filling with 100: " << ourma.get() << std::endl;
+  if( 100 != ourma.get() ) throw "Incorrect answer from ma filter";
 }
+#endif
 
+#ifdef NODE_MODULE
 /*
 Node interface
 Notes:
@@ -214,3 +228,5 @@ void initfilter( napi_env env, napi_value &result ) {
   if( napi_ok != napi_set_named_property( env, rtpfilter, "filterlowfir", nfunction ) ) return;
 
 }
+
+#endif /* NODE_MODULE */

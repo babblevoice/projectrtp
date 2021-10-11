@@ -23,7 +23,6 @@
 #include <ilbc.h>
 #include <spandsp.h>
 
-#include <node_api.h>
 
 #include "globals.h"
 #include "projectrtpbuffer.h"
@@ -36,11 +35,6 @@
 class projectrtpchannel;
 class projectchannelmux;
 #include "projectrtpchannelmux.h"
-
-/* The number of packets we will keep in a buffer */
-#define BUFFERPACKETCOUNT 20
-/* The level we start dropping packets to clear backlog */
-#define BUFFERPACKETCAP 10  /* 200mS @ a ptime of 20mS */
 
 /* Must be to the power 2 */
 #define OUTBUFFERPACKETCOUNT 16
@@ -135,8 +129,10 @@ public:
   rtppacket outrtpdata[ OUTBUFFERPACKETCOUNT ];
   std::atomic_uint16_t rtpoutindex;
 
+#ifdef NODE_MODULE
   napi_value jsthis;
   napi_threadsafe_function cb;
+#endif
 
 private:
   std::atomic_bool active;
@@ -212,6 +208,8 @@ private:
 typedef std::deque<projectrtpchannel::pointer> rtpchannels;
 typedef std::unordered_map<std::string, projectrtpchannel::pointer> activertpchannels;
 
+#ifdef NODE_MODULE
+#include <node_api.h>
 
 void initrtpchannel( napi_env env, napi_value &result );
 
@@ -226,5 +224,12 @@ public:
 
   projectrtpchannel::pointer p;
 };
+
+/* The one function used by our channel */
+void postdatabacktojsfromthread( projectrtpchannel::pointer p, std::string event, std::string arg1 = "", std::string arg2 = "" );
+
+#else
+#define postdatabacktojsfromthread( ... )
+#endif /* NODE_MODULE */
 
 #endif

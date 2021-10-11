@@ -18,8 +18,6 @@
 
 #include <functional>
 
-#include <node_api.h>
-
 #include "projectrtppacket.h"
 #include "projectrtpcodecx.h"
 
@@ -150,7 +148,11 @@ private:
 
 void initwav( wavheader *, int samplerate = 8000 );
 
+#ifdef NODE_MODULE
+#include <node_api.h>
 void initrtpsoundfile( napi_env env, napi_value &result );
+#endif
+
 
 
 #endif /* PROJECTRTPSOUNDFILE_H */

@@ -9,6 +9,12 @@
 
 #include "projectrtppacket.h"
 
+/* Defaults */
+/* The number of packets we will keep in a buffer */
+#define BUFFERPACKETCOUNT 20
+/* The level we start dropping packets to clear backlog */
+#define BUFFERPACKETCAP 10  /* 200mS @ a ptime of 20mS */
+
 /*
 My thoughts on buffers. We reorder as we might want to use the data
 and will will probably hepl the other end if we are proxying.
@@ -31,8 +37,8 @@ public:
   rtpbuffer& operator=( rtpbuffer&& ) = delete;        // move assignment
 
   typedef std::shared_ptr< rtpbuffer > pointer;
-  static pointer create( int count, /* size of the array to store packets */
-                         int waterlevel /* the level we build up before allowing a read */ );
+  static pointer create( int count = BUFFERPACKETCOUNT, /* size of the array to store packets */
+                         int waterlevel = BUFFERPACKETCAP /* the level we build up before allowing a read */ );
 
   rtppacket* peek( void );
   rtppacket* pop( void );
@@ -63,6 +69,10 @@ private:
   uint16_t outsn;
   uint64_t dropped;
 };
+
+#ifdef TESTSUITE
+void testrtpbuffer( void );
+#endif
 
 #ifdef NODE_MODULE
 

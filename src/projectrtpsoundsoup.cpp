@@ -107,6 +107,7 @@ void soundsoup::addfile( soundsoupfile::pointer p, int index ) {
   this->files[ index ] = p;
 }
 
+#ifdef NODE_MODULE
 static std::string getfilenamefromobjectforcodec(
                         napi_env env,
                         napi_value obj,
@@ -288,3 +289,5 @@ soundsoup::pointer soundsoupcreate( napi_env env, napi_value obj, int channelcod
 
   return nullptr;
 }
+
+#endif /* NODE_MODULE */

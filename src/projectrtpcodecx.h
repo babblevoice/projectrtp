@@ -7,8 +7,6 @@
 #include <ilbc.h>
 #include <spandsp.h>
 
-#include <node_api.h>
-
 #include "projectrtppacket.h"
 #include "projectrtppacket.h"
 #include "projectrtprawsound.h"
@@ -168,8 +166,11 @@ auto* operator << ( auto *pk, codecx& c ) {
   return pk;
 }
 
-
+#ifdef NODE_MODULE
+#include <node_api.h>
 void initrtpcodecx( napi_env env, napi_value &result );
+#endif
+
 
 
 #endif /* PROJECTRTPCODECX_H */

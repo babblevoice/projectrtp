@@ -203,6 +203,7 @@ continueloop:
   close( file );
 }
 
+#ifdef NODE_MODULE
 /*
 Our node functions.
 */
@@ -255,3 +256,4 @@ void inittonegen( napi_env env, napi_value &result ) {
   if( napi_ok != napi_set_named_property( env, tonegenobj, "generate", nfunction ) ) return;
 
 }
+#endif

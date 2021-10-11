@@ -5,8 +5,6 @@
 
 #include <stdint.h>
 
-#include <node_api.h>
-
 /*!md
 # lowpass3_4k16k
 Fixed FIR filter. everything fixed for speed.
@@ -42,9 +40,16 @@ private:
   float history[ ma_length ];
 };
 
+#ifdef TESTSUITE
+void testlowpass( void );
 void testma( void );
+#endif
 
+#ifdef NODE_MODULE
+#include <node_api.h>
 void initfilter( napi_env env, napi_value &result );
+#endif
+
 
 
 #endif /* PROJECTRTPFIRFILTER_H */

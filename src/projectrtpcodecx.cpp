@@ -816,6 +816,8 @@ void codectests( void )
   std::cout << std::endl;
 }
 
+#ifdef NODE_MODULE
+
 /*
 Support single number just for now - but TODO detect Buffer input to convert whole bufffer.
 */
@@ -926,3 +928,5 @@ void initrtpcodecx( napi_env env, napi_value &result ) {
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, pcmu2linear, nullptr, &funct ) ) return;
   if( napi_ok != napi_set_named_property( env, codecx, "pcmu2linear16", funct ) ) return;
 }
+
+#endif /* NODE_MODULE */

@@ -16,9 +16,6 @@ extern boost::asio::io_context workercontext;
 std::queue < unsigned short >availableports;
 uint32_t channelscreated = 0;
 
-/* The one function used by our channel */
-void postdatabacktojsfromthread( projectrtpchannel::pointer p, std::string event, std::string arg1 = "", std::string arg2 = "" );
-
 /*
 # Project RTP Channel
 
@@ -49,11 +46,13 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   totaltickcount( 0 ),
   tickswithnortpcount( 0 ),
   outpkcount( 0 ),
-  inbuff( rtpbuffer::create( BUFFERPACKETCOUNT, BUFFERPACKETCAP ) ),
+  inbuff( rtpbuffer::create() ),
   rtpbufferlock( false ),
   rtpoutindex( 0 ),
+#ifdef NODE_MODULE
   jsthis( NULL ),
   cb( NULL ),
+#endif
   /* private */
   active( false ),
   port( port ),
@@ -534,10 +533,6 @@ void projectrtpchannel::readsomertp( void )
 {
   AQUIRESPINLOCK( this->rtpbufferlock );
   rtppacket* buf = this->inbuff->reserve();
-  if( nullptr == buf ) {
-    this->inbuff->pop();
-    buf = this->inbuff->reserve();
-  }
   RELEASESPINLOCK( this->rtpbufferlock );
   if( nullptr == buf ) {
     std::cerr << "ERROR: we should never get here - we have no more buffer available on port " << this->port << std::endl;

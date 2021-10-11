@@ -586,6 +586,46 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
 }
 
 /*!md
+## initwav
+Configure header for basic usage
+*/
+void initwav( wavheader *w, int samplerate )
+{
+  w->riff_header[ 0 ] = 'R';
+  w->riff_header[ 1 ] = 'I';
+  w->riff_header[ 2 ] = 'F';
+  w->riff_header[ 3 ] = 'F';
+
+  w->wave_header[ 0 ] = 'W';
+  w->wave_header[ 1 ] = 'A';
+  w->wave_header[ 2 ] = 'V';
+  w->wave_header[ 3 ] = 'E';
+
+  w->fmt_header[ 0 ] = 'f';
+  w->fmt_header[ 1 ] = 'm';
+  w->fmt_header[ 2 ] = 't';
+  w->fmt_header[ 3 ] = ' ';
+
+  w->data_header[ 0 ] = 'd';
+  w->data_header[ 1 ] = 'a';
+  w->data_header[ 2 ] = 't';
+  w->data_header[ 3 ] = 'a';
+
+  w->audio_format = WAVE_FORMAT_PCM;
+  w->num_channels = 1;
+  w->sample_rate = samplerate;
+  w->sample_alignment = 2;
+  w->byte_rate = w->sample_rate * 2;
+  w->bit_depth = 16;
+  w->fmt_chunk_size = 16;
+  w->chunksize = 0;
+  w->subchunksize = 0;
+
+}
+
+#ifdef NODE_MODULE
+
+/*!md
 ## wavinfo
 For test purposes only. Read and display the wav file header info.
 */
@@ -687,44 +727,6 @@ done:
   return returnval;
 }
 
-/*!md
-## initwav
-Configure header for basic usage
-*/
-void initwav( wavheader *w, int samplerate )
-{
-  w->riff_header[ 0 ] = 'R';
-  w->riff_header[ 1 ] = 'I';
-  w->riff_header[ 2 ] = 'F';
-  w->riff_header[ 3 ] = 'F';
-
-  w->wave_header[ 0 ] = 'W';
-  w->wave_header[ 1 ] = 'A';
-  w->wave_header[ 2 ] = 'V';
-  w->wave_header[ 3 ] = 'E';
-
-  w->fmt_header[ 0 ] = 'f';
-  w->fmt_header[ 1 ] = 'm';
-  w->fmt_header[ 2 ] = 't';
-  w->fmt_header[ 3 ] = ' ';
-
-  w->data_header[ 0 ] = 'd';
-  w->data_header[ 1 ] = 'a';
-  w->data_header[ 2 ] = 't';
-  w->data_header[ 3 ] = 'a';
-
-  w->audio_format = WAVE_FORMAT_PCM;
-  w->num_channels = 1;
-  w->sample_rate = samplerate;
-  w->sample_alignment = 2;
-  w->byte_rate = w->sample_rate * 2;
-  w->bit_depth = 16;
-  w->fmt_chunk_size = 16;
-  w->chunksize = 0;
-  w->subchunksize = 0;
-
-}
-
 void initrtpsoundfile( napi_env env, napi_value &result ) {
   napi_value soundfile;
   napi_value info;
@@ -735,3 +737,5 @@ void initrtpsoundfile( napi_env env, napi_value &result ) {
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, wavinfo, nullptr, &info ) ) return;
   if( napi_ok != napi_set_named_property( env, soundfile, "info", info ) ) return;
 }
+
+#endif /* NODE_MODULE */
