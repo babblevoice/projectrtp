@@ -1,10 +1,10 @@
 # ProjectRTP
 
-An RTP server which offers functionality to process RTP data streams and mix them. Channels are be able to be mixed with other channels or local functions like recording or file playback. The core processing is done in a node addon and written in C++. ProjectRTP is designed to be scalable. Multiple RTP servers can communicate back to a main server to allow RTP functions to scale up.
+An RTP node addon which offers functionality to process RTP data streams and mix them. Al performance tasks are implemented in C++ and use boost::asio for IO completion ports for high concurrency.
+
+ProjectRTP is designed to scale to multiple servers serving other signalling servers. RTP and signalling should be kept separate and this architecture allows that.
 
 ProjectRTP is designed to provide all the functions required for a PBX, including channel bridging, recording, playback and all the functions required for IVR.
-
-This is currently work in progress.
 
 Features
 
@@ -14,23 +14,8 @@ Features
   * Multiple recorders per channel
   * Start, pause and end based on power detection or on command
 * WAV playback using sound soup descriptions to play complex sentences from parts
-* DTMF (RFC 2833)
+* DTMF (RFC 2833) - send, receive and bridge
 * DTLS SRTP (WebRTC)
-
-## Usage
-
-### AWS
-
-As projectrtp is designed to be distributed it allows sessions to be created by the main control server (SIP). Each projectrtp instance is assigned its own public address (--pa) so that when a main control server opens a channel on that server then projectrtp can inform the control server what the public address is for this connection.
-
-projectrtp --fg --pa $(curl http://checkip.amazonaws.com) --connect 127.0.0.1 --chroot ../out/
-
-| Flag        | Description                                                                                  |
-| ----------- | -------------------------------------------------------------------------------------------- |
-| --fg        | Run in the foreground                                                                        |
-| --pa        | Set the public address - either set it statically or use $(curl ...)                         |
-| --connect   | The address of the control server to connect to                                              |
-| --chroot    | The directory to chroot to for sound files, in commands to play a file a / to this directory |
 
 ## Dependencies
 
@@ -44,16 +29,9 @@ projectrtp --fg --pa $(curl http://checkip.amazonaws.com) --connect 127.0.0.1 --
 
 After installing standard build tools - including g++.
 
+```
 dnf install ilbc-devel spandsp-devel boost gnutls libsrtp libsrtp-devel
-
-# Build
-
-cd src
-make
-
-This will build the executable and also generate some UK sounds.
-
-There is also a debug target which includes debug symbols.
+```
 
 ## Node Module
 
@@ -76,14 +54,25 @@ Or
 node-gyp build --debug
 ```
 
-Then you can look at backtrace etc - Fedora:
-```
-coredumpctl debug
-```
-
 ### Test
 
-All tests are run from node. From the root directory run `npm test`
+We now have 3 different sets of tests.
+
+#### `npm test`
+
+All tests are run from node. From the root directory run `npm test`. These test all our interfaces and should test expected outputs. These tests use mocha.
+
+#### node stress/index.js
+
+These are designed to create real world scenarios - opening and closing multiple channels and random times and at load. This is designed to test for unexpected behaviour. These test do not provide a pass/fail - but might crash or produce unexpected output on bad behaviour. These have concurrency/race condition tests in mind.
+
+#### C++
+
+Some tests are provided in C++. They are built with the compiler flags `-fsanitize=address -fsanitize=leak` to catch buffer overruns and leaks.
+
+To build the test executable run `make` from the src directory.
+
+More C++ tests need writing.
 
 ## RPM
 
@@ -102,6 +91,21 @@ ProjectRTP supports transcoding for the following CODECs
 * PCMU
 * G722
 * iLBC
+
+## Usage
+
+### AWS
+
+As projectrtp is designed to be distributed it allows sessions to be created by the main control server (SIP). Each projectrtp instance is assigned its own public address (--pa) so that when a main control server opens a channel on that server then projectrtp can inform the control server what the public address is for this connection.
+
+projectrtp --fg --pa $(curl http://checkip.amazonaws.com) --connect 127.0.0.1 --chroot ../out/
+
+| Flag        | Description                                                                                  |
+| ----------- | -------------------------------------------------------------------------------------------- |
+| --fg        | Run in the foreground                                                                        |
+| --pa        | Set the public address - either set it statically or use $(curl ...)                         |
+| --connect   | The address of the control server to connect to                                              |
+| --chroot    | The directory to chroot to for sound files, in commands to play a file a / to this directory |
 
 ## Control
 
