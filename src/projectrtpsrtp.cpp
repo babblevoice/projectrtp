@@ -119,7 +119,7 @@ int dtlssession::pull( void *data, size_t size ) {
     return insz;
   }
 
-  std::cerr << "Problem with DTLS buffers" << std::endl;
+  fprintf( stderr, "Problem with DTLS buffers\n" );
   return 0; /* indicate termination */
 
 }
@@ -143,7 +143,7 @@ int dtlssession::handshake( void ) {
 
 void dtlssession::write( const void *data, size_t size ) {
   if( this->incount > DTLSNUMBUFFERS ) {
-    std::cerr << "Not enough buffers for DTLS negotiation" << std::endl;
+    fprintf( stderr, "Not enough buffers for DTLS negotiation\n" );
     return;
   }
 
@@ -158,33 +158,33 @@ void dtlssession::write( const void *data, size_t size ) {
 ref: https://gitlab.com/gnutls/gnutls/blob/master/tests/mini-dtls-srtp.c
 */
 void dtlssession::getkeys( void ) {
-  std::cout << gnutls_protocol_get_name( gnutls_protocol_get_version( this->session ) ) << std::endl;
+  //std::cout << gnutls_protocol_get_name( gnutls_protocol_get_version( this->session ) ) << std::endl;
 
   uint8_t km[ DTLSMAXKEYMATERIAL ];
   gnutls_datum_t srtp_cli_key, srtp_cli_salt, srtp_server_key, srtp_server_salt;
 
   if( gnutls_srtp_get_keys(session, km, sizeof( km ), &srtp_cli_key, &srtp_cli_salt,
                         &srtp_server_key, &srtp_server_salt) < 0 ) {
-    std::cerr << "Unable to get key material" << std::endl;
+    fprintf( stderr, "Unable to get key material\n" );
     return;
   }
   //gnutls_srtp_get_keys( this->session, )
   char buf[ 2 * DTLSMAXKEYMATERIAL ];
   size_t size = sizeof( buf );
   gnutls_hex_encode( &srtp_cli_key, buf, &size );
-  std::cout << "Client key: " << buf << std::endl;
+  //std::cout << "Client key: " << buf << std::endl;
 
   size = sizeof(buf);
   gnutls_hex_encode( &srtp_cli_salt, buf, &size );
-  std::cout << "Client salt: " << buf << std::endl;
+  //std::cout << "Client salt: " << buf << std::endl;
 
   size = sizeof(buf);
   gnutls_hex_encode( &srtp_server_key, buf, &size );
-  std::cout << "Server key: " << buf << std::endl;
+  //std::cout << "Server key: " << buf << std::endl;
 
   size = sizeof(buf);
   gnutls_hex_encode( &srtp_server_salt, buf, &size );
-  std::cout << "Server salt: " << buf << std::endl;
+  //std::cout << "Server salt: " << buf << std::endl;
 }
 
 int dtlssession::peersha256( void ) {
@@ -196,7 +196,7 @@ int dtlssession::peersha256( void ) {
     gnutls_hash_fast( GNUTLS_DIG_SHA256, ( const void * ) c->data, c->size, ( void * ) digest );
 
     if( 0 == memcmp( digest, peersha256sum, 32 ) ) {
-      std::cout << "hello: compared ok!!!" << std::endl;
+      //std::cout << "hello: compared ok!!!" << std::endl;
       return 0;
     }
   }
@@ -239,14 +239,14 @@ static void dtlsinit( void ) {
                                               pemfile,
                                               pemfile,
                                               GNUTLS_X509_FMT_PEM ) ) < 0 ) {
-    std::cerr << "No certificate or key were found - quiting" << std::endl;
+    fprintf( stderr, "No certificate or key found - quiting\n" );
     exit( 1 );
   }
 
   gnutls_certificate_set_known_dh_params( xcred, GNUTLS_SEC_PARAM_MEDIUM );
 
   gnutls_certificate_set_verify_function( xcred, [] ( gnutls_session_t s ) -> int {
-    std::cout << "gnutls_certificate_set_verify_function" << std::endl;
+    //std::cout << "gnutls_certificate_set_verify_function" << std::endl;
     return ( ( dtlssession * ) gnutls_transport_get_ptr( s ) )->peersha256();
   } );
 
@@ -256,7 +256,7 @@ static void dtlsinit( void ) {
   gnutls_datum_t crtdata;
 
   if( GNUTLS_E_SUCCESS != gnutls_certificate_get_x509_crt( xcred, idx, &crts, &ncrts ) ) {
-    std::cerr << "Problem gettin our DER cert" << std::endl;
+    fprintf( stderr, "Problem gettin our DER cert\n" );
     exit( 1 );
   }
 
@@ -292,7 +292,7 @@ static void dtlsdestroy( void ) {
 void dtlstest( void ) {
   dtlsinit();
 
-  std::cout << "a=fingerprint:sha-256 " << fingerprintsha256 << std::endl;
+  //std::cout << "a=fingerprint:sha-256 " << fingerprintsha256 << std::endl;
 
   dtlssession::pointer clientsession = dtlssession::create( dtlssession::act );
   dtlssession::pointer serversession = dtlssession::create( dtlssession::pass );
@@ -301,12 +301,12 @@ void dtlstest( void ) {
   serversession->setpeersha256( fingerprintsha256 );
 
   clientsession->ondata( [ &serversession ] ( const void *d , size_t l ) -> void {
-    std::cout << "clientsession.ondata:" << l << std::endl;
+    //std::cout << "clientsession.ondata:" << l << std::endl;
     serversession->write( d, l );
   } );
 
   serversession->ondata( [ &clientsession ] ( const void *d , size_t l ) -> void {
-    std::cout << "serversession.ondata:" << l << std::endl;
+    //std::cout << "serversession.ondata:" << l << std::endl;
     clientsession->write( d, l );
   } );
 
@@ -317,9 +317,11 @@ void dtlstest( void ) {
   } while( GNUTLS_E_AGAIN == retval );
 
   if( 0 == retval ) {
-    std::cout << "TLS session negotiated" << std::endl;
+    //std::cout << "TLS session negotiated" << std::endl;
     serversession->getkeys();
     clientsession->getkeys();
+  } else {
+    throw "Failed to negotiate TLS Session";
   }
 
   dtlsdestroy();
