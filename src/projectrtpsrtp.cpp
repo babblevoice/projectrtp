@@ -324,34 +324,34 @@ void dtlstest( void )
 
   std::cout << "a=fingerprint:sha-256 " << fingerprintsha256 << std::endl;
 
-  dtlssession clientsession( dtlssession::act );
-  dtlssession serversession( dtlssession::pass );
+  dtlssession::pointer clientsession = dtlssession::create( dtlssession::act );
+  dtlssession::pointer serversession = dtlssession::create( dtlssession::pass );
 
-  clientsession.setpeersha256( fingerprintsha256 );
-  serversession.setpeersha256( fingerprintsha256 );
+  clientsession->setpeersha256( fingerprintsha256 );
+  serversession->setpeersha256( fingerprintsha256 );
 
-  clientsession.ondata( [ &serversession ] ( const void *d , size_t l ) -> void {
+  clientsession->ondata( [ &serversession ] ( const void *d , size_t l ) -> void {
     std::cout << "clientsession.ondata:" << l << std::endl;
-    serversession.write( d, l );
+    serversession->write( d, l );
   } );
 
-  serversession.ondata( [ &clientsession ] ( const void *d , size_t l ) -> void {
+  serversession->ondata( [ &clientsession ] ( const void *d , size_t l ) -> void {
     std::cout << "serversession.ondata:" << l << std::endl;
-    clientsession.write( d, l );
+    clientsession->write( d, l );
   } );
 
   int retval;
   do
   {
-    retval = clientsession.handshake();
-    serversession.handshake();
+    retval = clientsession->handshake();
+    serversession->handshake();
   } while( GNUTLS_E_AGAIN == retval );
 
   if( 0 == retval )
   {
     std::cout << "TLS session negotiated" << std::endl;
-    serversession.getkeys();
-    clientsession.getkeys();
+    serversession->getkeys();
+    clientsession->getkeys();
   }
 
   dtlsdestroy();
