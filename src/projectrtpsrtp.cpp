@@ -311,14 +311,12 @@ void dtlstest( void ) {
   } );
 
   int retval;
-  do
-  {
+  do {
     retval = clientsession->handshake();
     serversession->handshake();
   } while( GNUTLS_E_AGAIN == retval );
 
-  if( 0 == retval )
-  {
+  if( 0 == retval ) {
     std::cout << "TLS session negotiated" << std::endl;
     serversession->getkeys();
     clientsession->getkeys();
