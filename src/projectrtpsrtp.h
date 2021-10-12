@@ -4,6 +4,7 @@
 
 #include <gnutls/gnutls.h>
 #include <gnutls/dtls.h>
+#include <srtp2/srtp.h>
 
 #include <functional>
 
@@ -16,15 +17,13 @@
 
 //#define DTLSDEBUGOUTPUT 1
 
-struct ProtocolVersion
-{
+struct ProtocolVersion {
   uint8_t major;
   uint8_t minor;
 };
 
 
-class DTLSPlaintext
-{
+class DTLSPlaintext {
 public:
   uint8_t type;
   ProtocolVersion version;
@@ -36,8 +35,7 @@ public:
 
 
 class dtlssession:
-  public std::enable_shared_from_this< dtlssession >
-{
+  public std::enable_shared_from_this< dtlssession > {
 public:
 
   enum mode { act, pass };
