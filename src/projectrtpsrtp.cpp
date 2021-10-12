@@ -27,8 +27,7 @@ const char *pemfile = "dtls-srtp.pem";
 
 
 #ifdef DTLSDEBUGOUTPUT
-static void serverlogfunc(int level, const char *str)
-{
+static void serverlogfunc(int level, const char *str) {
   std::cerr << +level << ":" << str << std::endl;
 }
 #endif
@@ -36,14 +35,10 @@ static void serverlogfunc(int level, const char *str)
 dtlssession::dtlssession( dtlssession::mode mode ) :
   m( mode ),
   inindex( 0 ),
-  incount( 0 )
-{
-  if( dtlssession::act == mode )
-  {
+  incount( 0 ) {
+  if( dtlssession::act == mode ) {
     gnutls_init( &this->session, GNUTLS_CLIENT | GNUTLS_DATAGRAM | GNUTLS_NONBLOCK );
-  }
-  else
-  {
+  } else {
     gnutls_init( &this->session, GNUTLS_SERVER | GNUTLS_DATAGRAM | GNUTLS_NONBLOCK );
     gnutls_certificate_server_set_request( this->session, GNUTLS_CERT_REQUIRE );
 
@@ -83,18 +78,15 @@ dtlssession::dtlssession( dtlssession::mode mode ) :
   } );
 }
 
-dtlssession::~dtlssession()
-{
+dtlssession::~dtlssession() {
   gnutls_deinit( this->session );
 }
 
-dtlssession::pointer dtlssession::create( dtlssession::mode mode )
-{
+dtlssession::pointer dtlssession::create( dtlssession::mode mode ) {
   return pointer( new dtlssession( mode ) );
 }
 
-void dtlssession::push( const void *data, size_t size )
-{
+void dtlssession::push( const void *data, size_t size ) {
   this->bindwritefunc( data, size );
 
 #ifdef DTLSDEBUGOUTPUT
@@ -112,10 +104,8 @@ void dtlssession::push( const void *data, size_t size )
   //gnutls_transport_set_errno( this->session, EAGAIN );
 }
 
-int dtlssession::pull( void *data, size_t size )
-{
-  if( 0 == this->incount )
-  {
+int dtlssession::pull( void *data, size_t size ) {
+  if( 0 == this->incount ) {
     gnutls_transport_set_errno( this->session, EAGAIN );
     return -1;
   }
@@ -123,8 +113,7 @@ int dtlssession::pull( void *data, size_t size )
   auto ind = ( this->inindex - this->incount + DTLSNUMBUFFERS ) % DTLSNUMBUFFERS;
   auto insz = this->insize[ ind ];
 
-  if( size > insz )
-  {
+  if( size > insz ) {
     std::memcpy( data, ( void * ) this->indata[ ind ], insz );
     this->incount--;
     return insz;
@@ -135,10 +124,8 @@ int dtlssession::pull( void *data, size_t size )
 
 }
 
-int dtlssession::timeout( unsigned int ms )
-{
-  if( this->incount > 0 )
-  {
+int dtlssession::timeout( unsigned int ms ) {
+  if( this->incount > 0 ) {
     /* when we receive data we return a positive number then gnutls will call our pull function */
     return 1;
   }
@@ -150,15 +137,12 @@ int dtlssession::timeout( unsigned int ms )
 }
 
 
-int dtlssession::handshake( void )
-{
+int dtlssession::handshake( void ) {
   return gnutls_handshake( this->session );
 }
 
-void dtlssession::write( const void *data, size_t size )
-{
-  if( this->incount > DTLSNUMBUFFERS )
-  {
+void dtlssession::write( const void *data, size_t size ) {
+  if( this->incount > DTLSNUMBUFFERS ) {
     std::cerr << "Not enough buffers for DTLS negotiation" << std::endl;
     return;
   }
@@ -173,16 +157,14 @@ void dtlssession::write( const void *data, size_t size )
 /*
 ref: https://gitlab.com/gnutls/gnutls/blob/master/tests/mini-dtls-srtp.c
 */
-void dtlssession::getkeys( void )
-{
+void dtlssession::getkeys( void ) {
   std::cout << gnutls_protocol_get_name( gnutls_protocol_get_version( this->session ) ) << std::endl;
 
   uint8_t km[ DTLSMAXKEYMATERIAL ];
   gnutls_datum_t srtp_cli_key, srtp_cli_salt, srtp_server_key, srtp_server_salt;
 
   if( gnutls_srtp_get_keys(session, km, sizeof( km ), &srtp_cli_key, &srtp_cli_salt,
-                        &srtp_server_key, &srtp_server_salt) < 0 )
-  {
+                        &srtp_server_key, &srtp_server_salt) < 0 ) {
     std::cerr << "Unable to get key material" << std::endl;
     return;
   }
@@ -205,18 +187,15 @@ void dtlssession::getkeys( void )
   std::cout << "Server salt: " << buf << std::endl;
 }
 
-int dtlssession::peersha256( void )
-{
+int dtlssession::peersha256( void ) {
   unsigned int l;
   const gnutls_datum_t *c = gnutls_certificate_get_peers( this->session, &l );
   uint8_t digest[ 32 ];
 
-  if( nullptr != c && l > 0 && c[ 0 ].size > 0 )
-  {
+  if( nullptr != c && l > 0 && c[ 0 ].size > 0 ) {
     gnutls_hash_fast( GNUTLS_DIG_SHA256, ( const void * ) c->data, c->size, ( void * ) digest );
 
-    if( 0 == memcmp( digest, peersha256sum, 32 ) )
-    {
+    if( 0 == memcmp( digest, peersha256sum, 32 ) ) {
       std::cout << "hello: compared ok!!!" << std::endl;
       return 0;
     }
@@ -226,13 +205,11 @@ int dtlssession::peersha256( void )
 
 /* Takes the format: 70:4B:FC:94:C8:41:C4:A3:54:96:8A:DD:6C:FD:CD:20:77:45:82:B7:F2:45:F5:79:81:D9:BB:FB:A7:3A:5A:C4
 and converts to a char array and sotres for checking. */
-void dtlssession::setpeersha256( std::string &s )
-{
+void dtlssession::setpeersha256( std::string &s ) {
   auto n = std::min( (int) ( s.size() + 1 ) / 3, 32 );
   char conv[ 3 ];
   conv[ 2 ] = 0;
-  for( auto i = 0; i < n; i ++ )
-  {
+  for( auto i = 0; i < n; i ++ ) {
     conv[ 0 ] = s[ i * 3 ];
     conv[ 1 ] = s[ ( i *3 ) + 1 ];
     this->peersha256sum[ i ] = strtol( conv, NULL, 16);
@@ -243,8 +220,7 @@ void dtlssession::setpeersha256( std::string &s )
 /*
 TODO At the moment we load a cert from a file. I would prefer to generate this on the fly on startup.
 */
-static void dtlsinit( void )
-{
+static void dtlsinit( void ) {
   gnutls_global_init();
 
   /* X509 stuff */
@@ -262,8 +238,7 @@ static void dtlsinit( void )
   if( ( idx = gnutls_certificate_set_x509_key_file( xcred,
                                               pemfile,
                                               pemfile,
-                                              GNUTLS_X509_FMT_PEM ) ) < 0 )
-  {
+                                              GNUTLS_X509_FMT_PEM ) ) < 0 ) {
     std::cerr << "No certificate or key were found - quiting" << std::endl;
     exit( 1 );
   }
@@ -280,15 +255,13 @@ static void dtlsinit( void )
 	unsigned ncrts;
   gnutls_datum_t crtdata;
 
-  if( GNUTLS_E_SUCCESS != gnutls_certificate_get_x509_crt( xcred, idx, &crts, &ncrts ) )
-  {
+  if( GNUTLS_E_SUCCESS != gnutls_certificate_get_x509_crt( xcred, idx, &crts, &ncrts ) ) {
     std::cerr << "Problem gettin our DER cert" << std::endl;
     exit( 1 );
   }
 
   uint8_t digest[ 32 ];
-  for ( unsigned int i = 0; i < ncrts; i++ )
-  {
+  for ( unsigned int i = 0; i < ncrts; i++ ) {
     gnutls_x509_crt_export2( crts[ i ],
 						                  GNUTLS_X509_FMT_DER,
 						                  &crtdata );
@@ -303,23 +276,20 @@ static void dtlsinit( void )
   /* Convert to the string view which is needed for SDP (a=fingerprint:sha-256 ...) */
   std::stringstream conv;
   conv << std::hex << std::setfill( '0' );
-  for( unsigned int i = 0; i < 31; i++ )
-  {
+  for( unsigned int i = 0; i < 31; i++ ) {
     conv << std::setw( 2 ) << std::uppercase << ( int ) digest[ i ] << ":";
   }
   conv << std::setw( 2 ) << std::uppercase << ( int ) digest[ 31 ];
   fingerprintsha256 = conv.str();
 }
 
-static void dtlsdestroy( void )
-{
+static void dtlsdestroy( void ) {
   gnutls_certificate_free_credentials( xcred );
   gnutls_global_deinit();
 }
 
 #ifdef TESTSUITE
-void dtlstest( void )
-{
+void dtlstest( void ) {
   dtlsinit();
 
   std::cout << "a=fingerprint:sha-256 " << fingerprintsha256 << std::endl;
@@ -359,7 +329,6 @@ void dtlstest( void )
 }
 #endif
 
-const char* getdtlssrtpsha256fingerprint( void )
-{
+const char* getdtlssrtpsha256fingerprint( void ) {
   return fingerprintsha256.c_str();
 }
