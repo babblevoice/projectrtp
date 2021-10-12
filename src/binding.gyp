@@ -14,7 +14,8 @@
             "-lrt",
             "-lspandsp",
             "-lilbc",
-            "-lgnutls"
+            "-lgnutls",
+            "-fstack-protector-all"
           ],
       "sources": [
         "projectrtpfirfilter.cpp",
