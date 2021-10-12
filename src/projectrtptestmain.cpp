@@ -4,6 +4,7 @@
 #include <boost/asio.hpp>
 #include "projectrtpbuffer.h"
 #include "projectrtpfirfilter.h"
+#include "projectrtpsrtp.h"
 
 /*
 My main driver in using this test suite is to test for buffer overruns and memory leaks.
@@ -19,6 +20,8 @@ int main( void ) {
     testma();
 
     testrtpbuffer();
+
+    dtlstest();
 
   } catch( const char *msg ) {
     std::cout << "ERROR: something didn't pass it's test please review" << std::endl;
