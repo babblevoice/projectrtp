@@ -51,6 +51,7 @@ dtlssession::dtlssession( dtlssession::mode mode ) :
 
     gnutls_session_ticket_key_generate( &skey );
     gnutls_session_ticket_enable_server( this->session, &skey );
+    gnutls_free( skey.data );
   }
 
 #ifdef DTLSDEBUGOUTPUT
@@ -293,8 +294,11 @@ static void dtlsinit( void )
 						                  &crtdata );
 
     gnutls_hash_fast( GNUTLS_DIG_SHA256, ( const void * ) crtdata.data, crtdata.size, ( void * ) digest );
+    gnutls_x509_crt_deinit( crts[ i ] );
     gnutls_free( crtdata.data );
   }
+
+  gnutls_free( crts );
 
   /* Convert to the string view which is needed for SDP (a=fingerprint:sha-256 ...) */
   std::stringstream conv;
@@ -313,7 +317,7 @@ static void dtlsdestroy( void )
   gnutls_global_deinit();
 }
 
-
+#ifdef TESTSUITE
 void dtlstest( void )
 {
   dtlsinit();
@@ -353,6 +357,7 @@ void dtlstest( void )
   dtlsdestroy();
 
 }
+#endif
 
 const char* getdtlssrtpsha256fingerprint( void )
 {

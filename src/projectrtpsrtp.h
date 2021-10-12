@@ -82,7 +82,10 @@ private:
 
 
 const char* getdtlssrtpsha256fingerprint( void );
+
+#ifdef TESTSUITE
 void dtlstest( void );
+#endif
 
 
 #endif /* PROJECTRTPSRPT_H */
