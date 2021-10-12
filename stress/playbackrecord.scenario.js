@@ -1,7 +1,7 @@
 
 // TODO - need to send data to keep alive and close properly - not on idle
 
-const projectrtp = require( "../src/build/Debug/projectrtp" )
+const projectrtp = require( "../index.js" ).projectrtp
 const fs = require( "fs" )
 const dgram = require( "dgram" )
 const utils = require( "./utils.js" )

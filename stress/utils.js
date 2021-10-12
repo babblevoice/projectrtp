@@ -1,6 +1,5 @@
 
-const projectrtp = require( "../src/build/Debug/projectrtp" )
-
+const projectrtp = require( "../index.js" ).projectrtp
 
 module.exports.log = function( message ) {
   let d = new Date()

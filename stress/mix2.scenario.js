@@ -1,5 +1,5 @@
 
-const projectrtp = require( "../src/build/Debug/projectrtp" )
+const projectrtp = require( "../index.js" ).projectrtp
 const fs = require( "fs" )
 const dgram = require( "dgram" )
 const utils = require( "./utils.js" )

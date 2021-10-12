@@ -2,7 +2,7 @@
 const expect = require( "chai" ).expect
 const fs = require( "fs" )
 
-const projectrtp = require( "../src/build/Debug/projectrtp" )
+const projectrtp = require( "../index.js" ).projectrtp
 const utils = require( "./utils.js" )
 
 let scenarios = []
