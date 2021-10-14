@@ -1,13 +1,6 @@
 
 const expect = require( "chai" ).expect
-
-let projectrtp
-if( "debug" === process.env.build ) {
-  projectrtp = require( "../src/build/Debug/projectrtp" )
-} else {
-  projectrtp = require( "../src/build/Release/projectrtp" )
-}
-
+const projectrtp = require( "../index.js" ).projectrtp
 const dgram = require( "dgram" )
 
 /* helper functions */
@@ -60,7 +53,7 @@ describe( "rtpchannel", function() {
     expect( channel ).to.be.an( "object" )
 
     expect( channel.close ).to.be.an( "function" )
-    expect( channel ).to.have.property( "port" ).that.is.a( "number" )
+    expect( channel.local ).to.have.property( "port" ).that.is.a( "number" )
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1000 ) } )
     channel.close()
@@ -101,13 +94,13 @@ describe( "rtpchannel", function() {
       expect( channel ).to.be.an( "object" )
 
       expect( channel.close ).to.be.an( "function" )
-      expect( channel ).to.have.property( "port" ).that.is.a( "number" )
+      expect( channel.local ).to.have.property( "port" ).that.is.a( "number" )
 
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
       for( let i = 0;  i < 50; i ++ ) {
-        sendpk( i, i, channel.port, server )
+        sendpk( i, i, channel.local.port, server )
       }
 
       setTimeout( () => channel.close(), 2000 )
@@ -141,17 +134,12 @@ describe( "rtpchannel", function() {
           done()
         }
       } )
-      expect( channel ).to.be.an( "object" )
-
-      expect( channel.close ).to.be.an( "function" )
-      expect( channel ).to.have.property( "port" ).that.is.a( "number" )
-
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
       for( let i = 0;  i < 50; i ++ ) {
         if( i in { 3:0, 13:0, 23:0, 24:0, 30:0, 49:0 } ) continue
-        sendpk( i, i, channel.port, server )
+        sendpk( i, i, channel.local.port, server )
       }
 
       setTimeout( () => channel.close(), 2000 )
@@ -210,10 +198,8 @@ describe( "rtpchannel", function() {
           done()
         }
       } )
-      expect( channel ).to.be.an( "object" )
+
       expect( channel.echo() ).to.be.true
-      expect( channel.close ).to.be.an( "function" )
-      expect( channel ).to.have.property( "port" ).that.is.a( "number" )
 
       /* send a packet every 20mS x 50 */
       let sns = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -223,7 +209,7 @@ describe( "rtpchannel", function() {
         41, 42, 43, 44, 45, 46, 47, 48, 49 ]
 
       sns.forEach( function( e, i ) {
-          sendpk( e, i, channel.port, server )
+          sendpk( e, i, channel.local.port, server )
       } )
 
       setTimeout( () => channel.close(), 2000 )
@@ -258,10 +244,6 @@ describe( "rtpchannel", function() {
           done()
         }
       } )
-      expect( channel ).to.be.an( "object" )
-
-      expect( channel.close ).to.be.an( "function" )
-      expect( channel ).to.have.property( "port" ).that.is.a( "number" )
 
       expect( channel.echo() ).to.be.true
 
@@ -273,7 +255,7 @@ describe( "rtpchannel", function() {
         41, 42, 43, 44, 45, 46, 47, 48, 2 ]
 
       sns.forEach( function( e, i ) {
-          sendpk( e, i, channel.port, server )
+          sendpk( e, i, channel.local.port, server )
       } )
 
       setTimeout( () => channel.close(), 2000 )
@@ -342,26 +324,22 @@ describe( "rtpchannel", function() {
           done()
         }
       } )
-      expect( channel ).to.be.an( "object" )
-
-      expect( channel.close ).to.be.an( "function" )
-      expect( channel ).to.have.property( "port" ).that.is.a( "number" )
 
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
       for( var i = 0; i < 50; i++ ) {
-        sendpk( i, i, channel.port, server )
+        sendpk( i, i, channel.local.port, server )
       }
 
       /* pause then catchup */
       for( ; i < 150; i++ ) {
-        sendpk( i, 150, channel.port, server )
+        sendpk( i, 150, channel.local.port, server )
       }
 
       /* resume */
       for( ; i < 300; i++ ) {
-        sendpk( i, i, channel.port, server )
+        sendpk( i, i, channel.local.port, server )
       }
 
       setTimeout( () => channel.close(), 7000 )
@@ -396,17 +374,13 @@ describe( "rtpchannel", function() {
           done()
         }
       } )
-      expect( channel ).to.be.an( "object" )
-
-      expect( channel.close ).to.be.an( "function" )
-      expect( channel ).to.have.property( "port" ).that.is.a( "number" )
 
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
       for( let i = 0 ;  i < 50; i ++ ) {
         let sn = i + ( 2**16 ) - 25
-        sendpk( sn, i, channel.port, server )
+        sendpk( sn, i, channel.local.port, server )
       }
 
       setTimeout( () => channel.close(), 2000 )
@@ -444,18 +418,15 @@ describe( "rtpchannel", function() {
         }
       } )
 
-      expect( channel ).to.be.an( "object" )
-      expect( channel.close ).to.be.an( "function" )
-      expect( channel ).to.have.property( "port" ).that.is.a( "number" )
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
       for( var i = 0 ;  i < 50; i ++ ) {
-        sendpk( i, i, channel.port, server, 25 )
+        sendpk( i, i, channel.local.port, server, 25 )
       }
 
       for( ;  i < 100; i ++ ) {
-        sendpk( i, i, channel.port, server, 77 )
+        sendpk( i, i, channel.local.port, server, 77 )
       }
 
       setTimeout( () => channel.close(), 2100 )
@@ -492,18 +463,15 @@ describe( "rtpchannel", function() {
         }
       } )
 
-      expect( channel ).to.be.an( "object" )
-      expect( channel.close ).to.be.an( "function" )
-      expect( channel ).to.have.property( "port" ).that.is.a( "number" )
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
       for( var i = 0 ;  i < 50; i ++ ) {
         if( 40 == i ) {
           /* an oversized packet */
-          sendpk( i, i, channel.port, server, 25, 1200 )
+          sendpk( i, i, channel.local.port, server, 25, 1200 )
         } else {
-          sendpk( i, i, channel.port, server, 25 )
+          sendpk( i, i, channel.local.port, server, 25 )
         }
       }
 
