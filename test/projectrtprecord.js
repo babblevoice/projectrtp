@@ -3,15 +3,8 @@
 const expect = require( "chai" ).expect
 const fs = require( "fs" )
 const fspromises = fs.promises
-
 const dgram = require( "dgram" )
-
-let projectrtp
-if( "debug" === process.env.build ) {
-  projectrtp = require( "../src/build/Debug/projectrtp" )
-} else {
-  projectrtp = require( "../src/build/Release/projectrtp" )
-}
+const projectrtp = require( "../index.js" ).projectrtp
 
 /* use nodeplotlib to display audio data */
 const showplots = false
@@ -114,7 +107,7 @@ describe( "record", function() {
       expect( channel.echo() ).to.be.true
 
       for( let i = 0;  i < 50; i ++ ) {
-        sendpk( i, i, channel.port, server )
+        sendpk( i, i, channel.local.port, server )
       }
     } )
 
@@ -191,7 +184,7 @@ describe( "record", function() {
       expect( channel.echo() ).to.be.true
 
       for( let i = 0;  i < 50; i ++ ) {
-        sendpk( i, i, channel.port, server )
+        sendpk( i, i, channel.local.port, server )
       }
     } )
 
@@ -247,7 +240,7 @@ describe( "record", function() {
       expect( channel.echo() ).to.be.true
 
       for( let i = 0;  i < 50; i ++ ) {
-        sendpk( i, i, channel.port, server )
+        sendpk( i, i, channel.local.port, server )
       }
 
       /* @ 400mS pause the recording - 200mS will still be in the buffer*/
@@ -363,7 +356,7 @@ describe( "record", function() {
 
       for( let i = 0;  i < 50*totalseconds; i ++ ) {
         delayedjobs.push(
-          sendpk( i, i, channel.port, server, sendbuffer )
+          sendpk( i, i, channel.local.port, server, sendbuffer )
         )
       }
     } )
@@ -436,7 +429,7 @@ describe( "record", function() {
 
       for( let i = 0;  i < 50*totalseconds; i ++ ) {
         delayedjobs.push(
-          sendpk( i, i, channel.port, server, sendbuffer )
+          sendpk( i, i, channel.local.port, server, sendbuffer )
         )
       }
     } )
@@ -536,7 +529,7 @@ describe( "record", function() {
 
       for( let i = 0;  i < 50*totalseconds; i ++ ) {
         delayedjobs.push(
-          sendpk( i, i, channel.port, server, sendbuffer )
+          sendpk( i, i, channel.local.port, server, sendbuffer )
         )
       }
     } )
