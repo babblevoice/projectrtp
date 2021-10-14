@@ -4,15 +4,8 @@
 const expect = require( "chai" ).expect
 const fs = require( "fs" )
 const fspromises = fs.promises
-
 const dgram = require( "dgram" )
-
-let projectrtp
-if( "debug" === process.env.build ) {
-  projectrtp = require( "../src/build/Debug/projectrtp" )
-} else {
-  projectrtp = require( "../src/build/Release/projectrtp" )
-}
+const projectrtp = require( "../index.js" ).projectrtp
 
 function sendpk( sn, sendtime, dstport, server, data = undefined ) {
 
@@ -69,7 +62,7 @@ describe( "channel mix", function() {
       endpointbpkcount++
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
-      endpointb.send( msg, channelb.port, "localhost" )
+      endpointb.send( msg, channelb.local.port, "localhost" )
     } )
 
     endpointa.bind()
@@ -95,7 +88,7 @@ describe( "channel mix", function() {
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
     for( let i = 0;  i < 50; i ++ ) {
-      sendpk( i, i, channela.port, endpointa )
+      sendpk( i, i, channela.local.port, endpointa )
     }
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
@@ -132,7 +125,7 @@ describe( "channel mix", function() {
       endpointbpkcount++
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
-      endpointb.send( msg, channelb.port, "localhost" )
+      endpointb.send( msg, channelb.local.port, "localhost" )
     } )
 
     endpointa.bind()
@@ -158,7 +151,7 @@ describe( "channel mix", function() {
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
     for( let i = 0;  i < 50; i ++ ) {
-      sendpk( i, i, channela.port, endpointa )
+      sendpk( i, i, channela.local.port, endpointa )
     }
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 600 ) } )
@@ -198,7 +191,7 @@ describe( "channel mix", function() {
       endpointbpkcount++
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
-      endpointb.send( msg, channelb.port, "localhost" )
+      endpointb.send( msg, channelb.local.port, "localhost" )
     } )
 
     endpointa.bind()
@@ -224,7 +217,7 @@ describe( "channel mix", function() {
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
     for( let i = 0;  i < 50; i ++ ) {
-      sendpk( i, i, channela.port, endpointa )
+      sendpk( i, i, channela.local.port, endpointa )
     }
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 600 ) } )
@@ -264,7 +257,7 @@ describe( "channel mix", function() {
       endpointbpkcount++
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 8 )
-      endpointb.send( msg, channelb.port, "localhost" )
+      endpointb.send( msg, channelb.local.port, "localhost" )
     } )
 
     endpointa.bind()
@@ -290,7 +283,7 @@ describe( "channel mix", function() {
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
     for( let i = 0;  i < 50; i ++ ) {
-      sendpk( i, i, channela.port, endpointa )
+      sendpk( i, i, channela.local.port, endpointa )
     }
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
@@ -332,7 +325,7 @@ describe( "channel mix", function() {
       expect( 0x7f & msg [ 1 ] ).to.equal( 97 )
 
       msg.writeUInt32BE( bssrc, 8 )
-      endpointb.send( msg, channelb.port, "localhost" )
+      endpointb.send( msg, channelb.local.port, "localhost" )
     } )
 
     endpointa.bind()
@@ -358,7 +351,7 @@ describe( "channel mix", function() {
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
     for( let i = 0;  i < 50; i ++ ) {
-      sendpk( i, i, channela.port, endpointa )
+      sendpk( i, i, channela.local.port, endpointa )
     }
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
@@ -393,7 +386,7 @@ describe( "channel mix", function() {
 
       endpointbpkcount++
       expect( 0x7f & msg [ 1 ] ).to.equal( 9 )
-      endpointb.send( msg, channelb.port, "localhost" )
+      endpointb.send( msg, channelb.local.port, "localhost" )
     } )
 
     endpointa.bind()
@@ -419,7 +412,7 @@ describe( "channel mix", function() {
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
     for( let i = 0;  i < 50; i ++ ) {
-      sendpk( i, i, channela.port, endpointa )
+      sendpk( i, i, channela.local.port, endpointa )
     }
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
@@ -492,7 +485,7 @@ describe( "channel mix", function() {
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
     for( let i = 0;  i < 50; i ++ ) {
-      sendpk( i, i, channelc.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
+      sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
@@ -570,7 +563,7 @@ describe( "channel mix", function() {
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
     for( let i = 0;  i < 50; i ++ ) {
-      sendpk( i, i, channelc.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
+      sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
@@ -648,7 +641,7 @@ describe( "channel mix", function() {
 
     /* Send data - which should be ignored but receviers should recevie silence (in payload) */
     for( let i = 0;  i < 50; i ++ ) {
-      sendpk( i, i, channelc.port, endpointc )
+      sendpk( i, i, channelc.local.port, endpointc )
     }
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
@@ -742,7 +735,7 @@ describe( "channel mix", function() {
 
     /* Send data - which should be ignored but receviers should recevie silence (in payload) */
     for( let i = 0;  i < 50; i ++ ) {
-      sendpk( i, i, channelc.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
+      sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
@@ -826,7 +819,7 @@ describe( "channel mix", function() {
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
     for( let i = 0;  i < 50; i ++ ) {
-      sendpk( i, i, channelc.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
+      sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
