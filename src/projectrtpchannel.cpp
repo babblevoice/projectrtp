@@ -1623,15 +1623,20 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   if( napi_ok != napi_set_named_property( env, result, "dtmf", mfunc ) ) return NULL;
 
   /* values */
-  napi_value nourport;
-  if( napi_ok != napi_create_int32( env, ourport, &nourport ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "port", nourport ) ) return NULL;
+  napi_value nlocal, nourport;
+  if( napi_ok != napi_create_object( env, &nlocal ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "local", nlocal ) ) return NULL;
 
-  if( dtlsenabled ) {
-    napi_value fp;
-    if( napi_ok != napi_create_string_utf8( env, getdtlssrtpsha256fingerprint(), NAPI_AUTO_LENGTH, &fp ) ) return NULL;
-    if( napi_ok != napi_set_named_property( env, result, "fingerprint", fp ) ) return NULL;
-  }
+  if( napi_ok != napi_create_int32( env, ourport, &nourport ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, nlocal, "port", nourport ) ) return NULL;
+
+  napi_value ndtls, fp;
+  if( napi_ok != napi_create_object( env, &ndtls ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, nlocal, "dtls", ndtls ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, getdtlssrtpsha256fingerprint(), NAPI_AUTO_LENGTH, &fp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, ndtls, "fingerprint", fp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, ndtls, "enabled", createnapibool( env, dtlsenabled ) ) ) return NULL;
 
   return result;
 }
