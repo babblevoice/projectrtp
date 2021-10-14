@@ -1,13 +1,7 @@
 
 
 const expect = require( "chai" ).expect
-
-let projectrtp
-if( "debug" === process.env.build ) {
-  projectrtp = require( "../src/build/Debug/projectrtp" )
-} else {
-  projectrtp = require( "../src/build/Release/projectrtp" )
-}
+const projectrtp = require( "../index.js" ).projectrtp
 
 /*
 We are using our test files to doc the interface as well as test it as
