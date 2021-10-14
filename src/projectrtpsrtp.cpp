@@ -381,11 +381,6 @@ void dtlsdestroy( void ) {
 
   gnutls_certificate_free_credentials( xcred );
   gnutls_global_deinit();
-
-  srtp_install_event_handler( nullptr );
-  if( srtp_shutdown() ) {
-    fprintf( stderr, "Failed to shutdown libsrtp\n" );
-  }
 }
 
 #ifdef TESTSUITE
