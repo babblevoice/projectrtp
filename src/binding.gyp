@@ -29,7 +29,8 @@
         "projectrtpsoundsoup.cpp",
         "projectrtptonegen.cpp",
         "projectrtpchannel.cpp",
-        "projectrtpchannelmux.cpp" ]
+        "projectrtpchannelmux.cpp",
+        "projectrtpsrtp.cpp" ]
     }
   ]
 }

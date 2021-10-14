@@ -17,9 +17,9 @@ std::queue < unsigned short >availableports;
 uint32_t channelscreated = 0;
 
 /*
-# Project RTP Channel
+# RTP Channel
 
-This file (class) represents an RP channel. That is an RTP stream (UDP) with
+This file represents an RP channel. That is an RTP stream (UDP) with
 its pair RTCP socket. Basic functions for
 
 1. Opening and closing channels
@@ -159,7 +159,7 @@ projectrtpchannel::pointer projectrtpchannel::create( unsigned short port ) {
   return pointer( new projectrtpchannel( port ) );
 }
 
-void projectrtpchannel::enabledtls( dtlssession::mode m, std::string &fingerprint ) {
+void projectrtpchannel::enabledtls( dtlssession::mode m, std::string fingerprint ) {
   this->rtpdtls = dtlssession::create( m );
   this->rtpdtls->setpeersha256( fingerprint );
 
@@ -535,7 +535,7 @@ void projectrtpchannel::readsomertp( void )
   rtppacket* buf = this->inbuff->reserve();
   RELEASESPINLOCK( this->rtpbufferlock );
   if( nullptr == buf ) {
-    std::cerr << "ERROR: we should never get here - we have no more buffer available on port " << this->port << std::endl;
+    fprintf( stderr, "ERROR: we should never get here - we have no more buffer available on port %i\n", this->port );
     return;
   }
 
@@ -545,8 +545,6 @@ void projectrtpchannel::readsomertp( void )
         /* TODO - check for expected size for RTP */
         if ( !ec && bytes_recvd > 0 && bytes_recvd < RTPMAXLENGTH ) {
 
-          /* TODO - pull the DTLS handshake out into its own function */
-          /* To be finished */
           if( this->rtpdtlshandshakeing ) {
             this->rtpdtls->write( buf, bytes_recvd );
             auto dtlsstate = this->rtpdtls->handshake();
@@ -1529,6 +1527,37 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
     }
   }
 
+  /* optional - DTLS */
+  bool dtlsenabled = false;
+  napi_value dtls;
+  if ( napi_ok == napi_has_named_property( env, argv[ 0 ], "dtls", &hasit ) &&
+       hasit &&
+       napi_ok == napi_get_named_property( env, argv[ 0 ], "dtls", &dtls ) ) {
+
+    napi_value nfingerprint, nactpass;
+    if( napi_ok == napi_has_named_property( env, dtls, "fingerprint", &hasit ) &&
+        hasit &&
+        napi_ok == napi_get_named_property( env, dtls, "fingerprint", &nfingerprint ) ) {
+
+      size_t bytescopied;
+      char vfingerprint[ 128 ], vactpass[ 128 ];
+      if( napi_ok == napi_get_value_string_utf8( env, naddress, vfingerprint, sizeof( vfingerprint ), &bytescopied ) ) {
+        if( napi_ok == napi_has_named_property( env, dtls, "mode", &hasit ) &&
+            hasit &&
+            napi_ok == napi_get_named_property( env, dtls, "mode", &nactpass ) ) {
+          if( napi_ok == napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) {
+            if( std::string( vactpass ) == "pass" ) {
+              p->enabledtls( dtlssession::pass, vfingerprint );
+            } else {
+              p->enabledtls( dtlssession::act, vfingerprint );
+            }
+            dtlsenabled = true;
+          }
+        }
+      }
+    }
+  }
+
   hiddensharedptr *pb = new hiddensharedptr( p );
 
   napi_value callback;
@@ -1597,6 +1626,12 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   napi_value nourport;
   if( napi_ok != napi_create_int32( env, ourport, &nourport ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "port", nourport ) ) return NULL;
+
+  if( dtlsenabled ) {
+    napi_value fp;
+    if( napi_ok != napi_create_string_utf8( env, getdtlssrtpsha256fingerprint(), NAPI_AUTO_LENGTH, &fp ) ) return NULL;
+    if( napi_ok != napi_set_named_property( env, result, "fingerprint", fp ) ) return NULL;
+  }
 
   return result;
 }

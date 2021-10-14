@@ -78,7 +78,7 @@ public:
 
   unsigned short getport( void );
 
-  void enabledtls( dtlssession::mode, std::string &fingerprint );
+  void enabledtls( dtlssession::mode, std::string fingerprint );
 
   void requestplay( soundsoup::pointer newdef );
   void requestrecord( channelrecorder::pointer rec );

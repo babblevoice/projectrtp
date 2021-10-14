@@ -35,7 +35,12 @@ static void serverlogfunc(int level, const char *str) {
 dtlssession::dtlssession( dtlssession::mode mode ) :
   m( mode ),
   inindex( 0 ),
-  incount( 0 ) {
+  incount( 0 ),
+  keymaterial(),
+  srtsendppolicy(),
+  srtrecvppolicy(),
+  srtpsendsession( nullptr ),
+  srtprecvsession( nullptr ) {
   if( dtlssession::act == mode ) {
     gnutls_init( &this->session, GNUTLS_CLIENT | GNUTLS_DATAGRAM | GNUTLS_NONBLOCK );
   } else {
@@ -76,10 +81,23 @@ dtlssession::dtlssession( dtlssession::mode mode ) :
   gnutls_transport_set_pull_timeout_function( this->session, [] ( gnutls_transport_ptr_t p, unsigned int ms ) -> int {
     return ( ( dtlssession * )( p ) )->timeout( ms );
   } );
+
+  /* srtp */
+  memset( &this->srtsendppolicy, 0x0, sizeof( srtp_policy_t ) );
+  memset( &this->srtrecvppolicy, 0x0, sizeof( srtp_policy_t ) );
+  srtp_crypto_policy_set_rtp_default( &this->srtsendppolicy.rtp );
+  srtp_crypto_policy_set_rtcp_default( &this->srtsendppolicy.rtcp );
+  srtp_crypto_policy_set_rtp_default( &this->srtrecvppolicy.rtp );
+  srtp_crypto_policy_set_rtcp_default( &this->srtrecvppolicy.rtcp );
+
+  memset( this->keymaterial, 0x0, DTLSMAXKEYMATERIAL );
 }
 
 dtlssession::~dtlssession() {
   gnutls_deinit( this->session );
+
+  if( nullptr != this->srtpsendsession ) srtp_dealloc( this->srtpsendsession );
+  if( nullptr != this->srtprecvsession ) srtp_dealloc( this->srtprecvsession );
 }
 
 dtlssession::pointer dtlssession::create( dtlssession::mode mode ) {
@@ -138,7 +156,10 @@ int dtlssession::timeout( unsigned int ms ) {
 
 
 int dtlssession::handshake( void ) {
-  return gnutls_handshake( this->session );
+  auto retval = gnutls_handshake( this->session );
+  if( GNUTLS_E_AGAIN == retval ) return GNUTLS_E_AGAIN;
+  if( 0 == retval ) this->getkeys();
+  return retval;
 }
 
 void dtlssession::write( const void *data, size_t size ) {
@@ -155,36 +176,80 @@ void dtlssession::write( const void *data, size_t size ) {
 }
 
 /*
+Load our keys into our policies.
 ref: https://gitlab.com/gnutls/gnutls/blob/master/tests/mini-dtls-srtp.c
 */
 void dtlssession::getkeys( void ) {
-  //std::cout << gnutls_protocol_get_name( gnutls_protocol_get_version( this->session ) ) << std::endl;
+#ifdef DTLSDEBUGOUTPUT
+  std::cout << gnutls_protocol_get_name( gnutls_protocol_get_version( this->session ) ) << std::endl;
+#endif
 
-  uint8_t km[ DTLSMAXKEYMATERIAL ];
   gnutls_datum_t srtp_cli_key, srtp_cli_salt, srtp_server_key, srtp_server_salt;
 
-  if( gnutls_srtp_get_keys(session, km, sizeof( km ), &srtp_cli_key, &srtp_cli_salt,
-                        &srtp_server_key, &srtp_server_salt) < 0 ) {
+  if( gnutls_srtp_get_keys( this->session, this->keymaterial, DTLSMAXKEYMATERIAL, &srtp_cli_key, &srtp_cli_salt,
+                        &srtp_server_key, &srtp_server_salt ) < 0 ) {
     fprintf( stderr, "Unable to get key material\n" );
     return;
   }
-  //gnutls_srtp_get_keys( this->session, )
+
+  if( 32 == srtp_cli_key.size ) {
+    srtp_crypto_policy_set_aes_gcm_256_8_only_auth( &this->srtsendppolicy.rtp );
+    srtp_crypto_policy_set_aes_gcm_256_8_only_auth( &this->srtsendppolicy.rtcp );
+  } else {
+    srtp_crypto_policy_set_aes_gcm_128_8_only_auth( &this->srtsendppolicy.rtp );
+    srtp_crypto_policy_set_aes_gcm_128_8_only_auth( &this->srtsendppolicy.rtcp );
+  }
+
+  if( 32 == srtp_server_key.size ) {
+    srtp_crypto_policy_set_aes_gcm_256_8_only_auth( &this->srtrecvppolicy.rtp );
+    srtp_crypto_policy_set_aes_gcm_256_8_only_auth( &this->srtrecvppolicy.rtcp );
+  } else {
+    srtp_crypto_policy_set_aes_gcm_128_8_only_auth( &this->srtrecvppolicy.rtp );
+    srtp_crypto_policy_set_aes_gcm_128_8_only_auth( &this->srtrecvppolicy.rtcp );
+  }
+
+  if( dtlssession::act == this->m ) {
+    this->srtsendppolicy.ssrc.type = ssrc_any_outbound; // or ssrc_specific?
+    this->srtsendppolicy.key = srtp_server_key.data;
+
+    this->srtrecvppolicy.ssrc.type = ssrc_any_inbound;
+    this->srtrecvppolicy.key = srtp_cli_key.data;
+  } else { /* dtlssession::pass */
+    this->srtsendppolicy.ssrc.type = ssrc_any_inbound;
+    this->srtsendppolicy.key = srtp_cli_key.data;
+
+    this->srtrecvppolicy.ssrc.type = ssrc_any_outbound;
+    this->srtrecvppolicy.key = srtp_server_key.data;
+  }
+
+  if( srtp_create( &this->srtpsendsession, &this->srtsendppolicy ) ) {
+    fprintf( stderr, "Unable create sending srtp session\n" );
+    return;
+  }
+
+  if( srtp_create( &this->srtprecvsession, &this->srtrecvppolicy ) ) {
+    fprintf( stderr, "Unable create receiving srtp session\n" );
+    return;
+  }
+
+#ifdef DTLSDEBUGOUTPUT
   char buf[ 2 * DTLSMAXKEYMATERIAL ];
   size_t size = sizeof( buf );
   gnutls_hex_encode( &srtp_cli_key, buf, &size );
-  //std::cout << "Client key: " << buf << std::endl;
+  std::cout << "Client key: " << buf << std::endl;
 
   size = sizeof(buf);
   gnutls_hex_encode( &srtp_cli_salt, buf, &size );
-  //std::cout << "Client salt: " << buf << std::endl;
+  std::cout << "Client salt: " << buf << std::endl;
 
   size = sizeof(buf);
   gnutls_hex_encode( &srtp_server_key, buf, &size );
-  //std::cout << "Server key: " << buf << std::endl;
+  std::cout << "Server key: " << buf << std::endl;
 
   size = sizeof(buf);
   gnutls_hex_encode( &srtp_server_salt, buf, &size );
-  //std::cout << "Server salt: " << buf << std::endl;
+  std::cout << "Server salt: " << buf << std::endl;
+#endif
 }
 
 int dtlssession::peersha256( void ) {
@@ -216,11 +281,41 @@ void dtlssession::setpeersha256( std::string &s ) {
   }
 }
 
+/* do we need to support mki? */
+bool dtlssession::protect( rtppacket *pk ) {
+
+  int length = pk->length;
+
+  auto stat = srtp_protect( this->srtpsendsession, pk->pk, &length );
+  if( srtp_err_status_ok != stat ) {
+    fprintf( stderr, "Error: srtp protect failed with code %d\n", stat );
+    return false;
+  }
+  pk->length = length;
+  return true;
+}
+
+bool dtlssession::unprotect( rtppacket *pk ) {
+
+  int length = pk->length;
+  auto stat = srtp_unprotect( this->srtprecvsession, pk->pk, &length );
+  if( srtp_err_status_ok != stat ) {
+    fprintf( stderr, "Error: srtp unprotect failed with code %d\n", stat );
+    return false;
+  }
+  pk->length = length;
+  return true;
+}
+
 
 /*
 TODO At the moment we load a cert from a file. I would prefer to generate this on the fly on startup.
 */
-static void dtlsinit( void ) {
+static bool dtlsinitied = false;
+void dtlsinit( void ) {
+  if( dtlsinitied ) return;
+  dtlsinitied = true;
+
   gnutls_global_init();
 
   /* X509 stuff */
@@ -262,10 +357,7 @@ static void dtlsinit( void ) {
 
   uint8_t digest[ 32 ];
   for ( unsigned int i = 0; i < ncrts; i++ ) {
-    gnutls_x509_crt_export2( crts[ i ],
-						                  GNUTLS_X509_FMT_DER,
-						                  &crtdata );
-
+    gnutls_x509_crt_export2( crts[ i ], GNUTLS_X509_FMT_DER, &crtdata );
     gnutls_hash_fast( GNUTLS_DIG_SHA256, ( const void * ) crtdata.data, crtdata.size, ( void * ) digest );
     gnutls_x509_crt_deinit( crts[ i ] );
     gnutls_free( crtdata.data );
@@ -283,16 +375,26 @@ static void dtlsinit( void ) {
   fingerprintsha256 = conv.str();
 }
 
-static void dtlsdestroy( void ) {
+void dtlsdestroy( void ) {
+  if( !dtlsinitied ) return;
+  dtlsinitied = false;
+
   gnutls_certificate_free_credentials( xcred );
   gnutls_global_deinit();
+
+  srtp_install_event_handler( nullptr );
+  if( srtp_shutdown() ) {
+    fprintf( stderr, "Failed to shutdown libsrtp\n" );
+  }
 }
 
 #ifdef TESTSUITE
 void dtlstest( void ) {
   dtlsinit();
 
-  //std::cout << "a=fingerprint:sha-256 " << fingerprintsha256 << std::endl;
+#ifdef DTLSDEBUGOUTPUT
+  std::cout << "a=fingerprint:sha-256 " << fingerprintsha256 << std::endl;
+#endif
 
   dtlssession::pointer clientsession = dtlssession::create( dtlssession::act );
   dtlssession::pointer serversession = dtlssession::create( dtlssession::pass );
@@ -300,6 +402,7 @@ void dtlstest( void ) {
   clientsession->setpeersha256( fingerprintsha256 );
   serversession->setpeersha256( fingerprintsha256 );
 
+  /* just loop back the 2 sessions to each other */
   clientsession->ondata( [ &serversession ] ( const void *d , size_t l ) -> void {
     //std::cout << "clientsession.ondata:" << l << std::endl;
     serversession->write( d, l );
@@ -317,12 +420,36 @@ void dtlstest( void ) {
   } while( GNUTLS_E_AGAIN == retval );
 
   if( 0 == retval ) {
-    //std::cout << "TLS session negotiated" << std::endl;
-    serversession->getkeys();
-    clientsession->getkeys();
+#ifdef DTLSDEBUGOUTPUT
+    std::cout << "DTLS session negotiated" << std::endl;
+#endif
   } else {
     throw "Failed to negotiate TLS Session";
   }
+
+  rtppacket ourpacket;
+
+  ourpacket.setlength( 172 );
+  uint8_t *pl = ourpacket.getpayload();
+  pl[ 10 ] = 4;
+  pl[ 20 ] = 88;
+  pl[ 50 ] = 34;
+
+#ifdef DTLSDEBUGOUTPUT
+  ourpacket.dump();
+#endif
+  if( !clientsession->protect( &ourpacket ) ) throw "Failed to protect RTP packet";
+#ifdef DTLSDEBUGOUTPUT
+  ourpacket.dump();
+#endif
+  if( !serversession->unprotect( &ourpacket ) ) throw "Failed to unprotect RTP packet";
+
+#ifdef DTLSDEBUGOUTPUT
+  ourpacket.dump();
+#endif
+
+  pl = ourpacket.getpayload();
+  if( 4 != pl[ 10 ] || 88 != pl[ 20 ] || 34 != pl[ 50 ] ) throw "We didn't unprotect our SRTP data correctly";
 
   dtlsdestroy();
 
@@ -332,3 +459,15 @@ void dtlstest( void ) {
 const char* getdtlssrtpsha256fingerprint( void ) {
   return fingerprintsha256.c_str();
 }
+
+#ifdef NODE_MODULE
+void initsrtp( napi_env env, napi_value &result ) {
+  napi_value ndtls, fp;
+  if( napi_ok != napi_create_object( env, &ndtls ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "dtls", ndtls ) ) return;
+
+  if( napi_ok != napi_create_string_utf8( env, getdtlssrtpsha256fingerprint(), NAPI_AUTO_LENGTH, &fp ) ) return;
+  if( napi_ok != napi_set_named_property( env, ndtls, "fingerprint", fp ) ) return;
+}
+
+#endif

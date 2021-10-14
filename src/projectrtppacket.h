@@ -45,6 +45,9 @@ public:
   void copy( rtppacket *src );
   void copy( uint8_t *src, size_t len );
   void copyheader( rtppacket *src );
+#ifdef TESTSUITE
+  void dump();
+#endif
 
 };
 

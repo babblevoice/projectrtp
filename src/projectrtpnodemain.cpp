@@ -15,6 +15,7 @@
 #include "projectrtpchannel.h"
 #include "projectrtpsoundfile.h"
 #include "projectrtptonegen.h"
+#include "projectrtpsrtp.h"
 
 boost::asio::io_context workercontext;
 static napi_async_work workhandle;
@@ -64,6 +65,8 @@ static void runwork( napi_env env, void *data ) {
   for ( auto& t : threads ) {
     t.join();
   }
+
+  dtlsdestroy();
 }
 
 static napi_deferred stoppingdefferedpromise;
@@ -95,6 +98,8 @@ static napi_value startserver( napi_env env, napi_callback_info info ) {
 
   if( started ) return NULL;
   started = true;
+
+  dtlsinit();
 
   napi_value workname;
 
@@ -136,6 +141,8 @@ NAPI_MODULE_INIT() {
 
   srand( time( NULL ) );
 
+  dtlsinit();
+
   if( napi_ok != napi_create_object( env, &result ) ) return NULL;
 
   /* Init our modules */
@@ -146,6 +153,7 @@ NAPI_MODULE_INIT() {
   initrtpcodecx( env, result );
   initfilter( env, result );
   inittonegen( env, result );
+  initsrtp( env, result );
 
   gen711convertdata();
 
