@@ -1,12 +1,6 @@
 
 const expect = require( "chai" ).expect
-
-let projectrtp
-if( "debug" === process.env.build ) {
-  projectrtp = require( "../src/build/Debug/projectrtp" )
-} else {
-  projectrtp = require( "../src/build/Release/projectrtp" )
-}
+const projectrtp = require( "../index.js" ).projectrtp
 
 
 /* From RFC 1889
@@ -28,7 +22,7 @@ describe( "rtpbuffer", function() {
   if( `Check functions exist`, async function() {
     expect( projectrtp.rtpbuffer.create ).to.be.an( "function" )
   } )
-  
+
   it( `push data and check pops and peek happen at the right time`, async function() {
 
     let b = projectrtp.rtpbuffer.create()
@@ -160,6 +154,5 @@ describe( "rtpbuffer", function() {
         expect( pk[ 3 ] ).to.equal( step - 10 )
       }
     }
-
   } )
 } )
