@@ -8,7 +8,6 @@
   },
   "scripts": {
     "test": "./node_modules/mocha/bin/mocha --check-leaks",
-    "debug": "env build=debug ./node_modules/mocha/bin/mocha --check-leaks",
     "docs": "jsdoc -c jsdoc.conf.json ./test/*.js"
   },
   "repository": {
