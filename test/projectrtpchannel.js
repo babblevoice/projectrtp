@@ -49,7 +49,7 @@ describe( "rtpchannel", function() {
     this.timeout( 2000 )
     this.slow( 1500 )
 
-    let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": 20000, "codec": 0 } } )
+    let channel = projectrtp.openchannel( { "id": "4", "target": { "address": "localhost", "port": 20000, "codec": 0 } } )
     expect( channel ).to.be.an( "object" )
 
     expect( channel.close ).to.be.an( "function" )
@@ -62,6 +62,9 @@ describe( "rtpchannel", function() {
     expect( channel.dtmf ).to.be.an( "function" )
     expect( channel.target ).to.be.an( "function" )
     expect( channel.local ).to.have.property( "port" ).that.is.a( "number" )
+    expect( channel.uuid ).that.is.a( "string" )
+    expect( channel.id ).that.is.a( "string" )
+    expect( channel.id ).to.equal( "4" )
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 100 ) } )
     channel.close()
@@ -589,4 +592,16 @@ class channel {
   @returns {boolean}
   */
   direction( options ){}
+
+  /**
+  @summary Client provided unique id identifying this channel.
+  @returns {string}
+  */
+  get id(){}
+
+  /**
+  @summary Unique id identifying this channel.
+  @returns {string}
+  */
+  get uuid(){}
 }
