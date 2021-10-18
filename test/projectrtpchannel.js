@@ -53,6 +53,14 @@ describe( "rtpchannel", function() {
     expect( channel ).to.be.an( "object" )
 
     expect( channel.close ).to.be.an( "function" )
+    expect( channel.mix ).to.be.an( "function" )
+    expect( channel.unmix ).to.be.an( "function" )
+    expect( channel.echo ).to.be.an( "function" )
+    expect( channel.play ).to.be.an( "function" )
+    expect( channel.record ).to.be.an( "function" )
+    expect( channel.direction ).to.be.an( "function" )
+    expect( channel.dtmf ).to.be.an( "function" )
+    expect( channel.target ).to.be.an( "function" )
     expect( channel.local ).to.have.property( "port" ).that.is.a( "number" )
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1000 ) } )
@@ -504,6 +512,14 @@ describe( "rtpchannel", function() {
 @hideconstructor
 */
 class channel {
+
+  /**
+  @summary Sets or changes the target of the RTP stream. This can also
+  be passed into the channel.create() object.
+  @param {Object} target - see channel.create
+  @return bool
+  */
+  target(){}
 
   /**
   @summary Our local port number we receive UDP on

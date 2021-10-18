@@ -30,7 +30,7 @@ implimented) the address and port given to us when opening in the channel.
 */
 projectrtpchannel::projectrtpchannel( unsigned short port ):
   /* public */
-  requestclose( false ),
+  _requestclose( false ),
   closereason(),
   codec( 0 ),
   ssrcin( 0 ),
@@ -46,6 +46,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   totaltickcount( 0 ),
   tickswithnortpcount( 0 ),
   outpkcount( 0 ),
+  outpkskipcount( 0 ),
   inbuff( rtpbuffer::create() ),
   rtpbufferlock( false ),
   rtpoutindex( 0 ),
@@ -82,12 +83,13 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   newrecorderslock( false ),
   recorders(),
   rtpdtls( nullptr ),
-  rtpdtlshandshakeing( false ),
+  rtpdtlslock( false ),
   targetaddress(),
   targetport( 0 ),
   queueddigits(),
   queuddigitslock( false ),
-  lastdtmfsn( 0 ) {
+  lastdtmfsn( 0 ),
+  tickstarttime() {
 
   channelscreated++;
 }
@@ -96,15 +98,53 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
 /*
 ## requestopen
 */
-void projectrtpchannel::requestopen( std::string address, unsigned short port, uint32_t codec ) {
+void projectrtpchannel::requestopen( void ) {
+  boost::asio::post( workercontext,
+        boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
+}
 
+void projectrtpchannel::requestclose( std::string reason ) {
+  if( !this->_requestclose.exchange( true, std::memory_order_acquire ) ) {
+    this->closereason = reason;
+  }
+}
+
+void projectrtpchannel::target( std::string address,
+                                unsigned short port,
+                                uint32_t codec,
+                                dtlssession::mode m,
+                                std::string fingerprint ) {
+  this->targetconfirmed = false;
   this->targetaddress = address;
   this->targetport = port;
   this->codec = codec;
 
-  boost::asio::post( workercontext,
-        boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
+  if( dtlssession::none != m ) {
+    dtlssession::pointer newsession = dtlssession::create( m );
+    newsession->setpeersha256( fingerprint );
+
+    projectrtpchannel::pointer p = shared_from_this();
+    newsession->ondata( [ p ] ( const void *d , size_t l ) -> void {
+      /* Note to me, I need to confirm that gnutls maintains the buffer ptr until after the handshake is confirmed (or
+         at least until we have sent the packet). */
+      if( p->targetconfirmed ) {
+        p->rtpsocket.async_send_to(
+                          boost::asio::buffer( d, l ),
+                          p->confirmedrtpsenderendpoint,
+                          []( const boost::system::error_code& ec, std::size_t bytes_transferred ) -> void {
+                            /* We don't need to do anything */
+                          } );
+      }
+    } );
+
+    AQUIRESPINLOCK( this->rtpdtlslock );
+    this->rtpdtls = newsession;
+    RELEASESPINLOCK( this->rtpdtlslock );
+  }
+
+  if( this->active ) this->dotarget();
 }
+
 /*
 Must be called in the workercontext.
 */
@@ -129,7 +169,7 @@ void projectrtpchannel::doopen( void ) {
   this->tsout = std::chrono::system_clock::to_time_t( std::chrono::system_clock::now() );
   this->snout = rand();
 
-  this->dotarget();
+  if( 0 != this->targetport ) this->dotarget();
 
   this->readsomertp();
   this->readsomertcp();
@@ -157,26 +197,6 @@ projectrtpchannel::~projectrtpchannel( void ) {
 */
 projectrtpchannel::pointer projectrtpchannel::create( unsigned short port ) {
   return pointer( new projectrtpchannel( port ) );
-}
-
-void projectrtpchannel::enabledtls( dtlssession::mode m, std::string fingerprint ) {
-  this->rtpdtls = dtlssession::create( m );
-  this->rtpdtls->setpeersha256( fingerprint );
-
-  this->rtpdtlshandshakeing = true;
-
-  projectrtpchannel::pointer p = shared_from_this();
-  this->rtpdtls->ondata( [ p ] ( const void *d , size_t l ) -> void {
-    /* Note to me, I need to confirm that gnutls maintains the buffer ptr until after the handshake is confirmed (or
-       at least until we have sent the packet). */
-    p->rtpsocket.async_send_to(
-                      boost::asio::buffer( d, l ),
-                      p->confirmedrtpsenderendpoint,
-                      []( const boost::system::error_code& ec, std::size_t bytes_transferred ) -> void {
-                        /* We don't need to do anything */
-                      } );
-
-  } );
 }
 
 unsigned short projectrtpchannel::getport( void ) {
@@ -207,7 +227,6 @@ void projectrtpchannel::doclose( void ) {
 
   /* close our session if we have one */
   this->rtpdtls = nullptr;
-  this->rtpdtlshandshakeing = false;
 
   /* close up any remaining recorders */
   for( auto& rec: this->recorders ) {
@@ -246,83 +265,124 @@ Our timer to send data - use this for when we are a single channel. Mixing tick 
 void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   if ( error == boost::asio::error::operation_aborted ) return;
 
-  if( this->requestclose ) {
+  if( this->_requestclose ) {
     this->doclose();
     return;
   }
 
-  /* calc a timer */
-  boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
+  if( this->mixing ) {
+    this->setnexttick();
+    return;
+  };
 
-  if( !this->mixing ) {
-    this->incrtsout();
+  this->startticktimer();
 
-    if( this->checkidlerecv() ) return;
-    this->checkfornewrecorders();
+  if( this->dtlsnegotiate() ) {
+    this->endticktimer();
+    this->setnexttick();
+    return;
+  }
 
-    this->incodec << codecx::next;
-    this->outcodec << codecx::next;
+  this->incrtsout();
+  if( this->checkidlerecv() ) return;
+  this->checkfornewrecorders();
 
-    rtppacket *src;
-    do {
-      AQUIRESPINLOCK( this->rtpbufferlock );
-      src = this->inbuff->pop();
-      RELEASESPINLOCK( this->rtpbufferlock );
-    } while( this->checkfordtmf( src ) );
+  this->incodec << codecx::next;
+  this->outcodec << codecx::next;
 
-    this->senddtmf();
+  AQUIRESPINLOCK( this->rtpdtlslock );
+  dtlssession::pointer currentdtlssession = this->rtpdtls;
+  RELEASESPINLOCK( this->rtpdtlslock );
 
-    if( nullptr != src ) {
-      this->incodec << *src;
+  rtppacket *src;
+  do {
+    AQUIRESPINLOCK( this->rtpbufferlock );
+    src = this->inbuff->pop();
+    RELEASESPINLOCK( this->rtpbufferlock );
+
+    if( nullptr != currentdtlssession &&
+        !currentdtlssession->rtpdtlshandshakeing ) {
+      if( !currentdtlssession->unprotect( src ) ) {
+        this->receivedpkskip++;
+        src = nullptr;
+      }
     }
+  } while( this->checkfordtmf( src ) );
 
-    /* check for new players */
+  this->senddtmf();
+
+  if( nullptr != src ) {
+    this->incodec << *src;
+  }
+
+  /* check for new players */
+  {
+    bool playerreplaced = false;
+    bool playernew = false;
     AQUIRESPINLOCK( this->newplaylock );
     if( nullptr != this->newplaydef ) {
       if( nullptr != this->player ) {
-        postdatabacktojsfromthread( shared_from_this(), "play", "end", "replaced" );
+        playerreplaced = true;
       }
 
       this->player = this->newplaydef;
       this->newplaydef = nullptr;
-
-      postdatabacktojsfromthread( shared_from_this(), "play", "start", "new" );
+      playernew = true;
     }
     RELEASESPINLOCK( this->newplaylock );
 
-    if( this->player ) {
-      rtppacket *out = this->gettempoutbuf();
-      rawsound r;
-      if( this->player->read( r ) ) {
-        if( r.size() > 0 ) {
-          this->outcodec << r;
-          out << this->outcodec;
-          this->writepacket( out );
-        }
-      } else {
-        this->player = nullptr;
-        postdatabacktojsfromthread( shared_from_this(), "play", "end", "completed" );
-      }
-    } else if( this->doecho ) {
-      if( nullptr != src ) {
-        this->outcodec << *src;
-
-        rtppacket *dst = this->gettempoutbuf();
-        dst << this->outcodec;
-        this->writepacket( dst );
-      }
+    if( playerreplaced ) {
+      postdatabacktojsfromthread( shared_from_this(), "play", "end", "replaced" );
     }
-
-    this->writerecordings();
-
-    boost::posix_time::time_duration const diff = ( boost::posix_time::microsec_clock::local_time() - nowtime );
-    uint64_t tms = diff.total_microseconds();
-    this->totalticktime += tms;
-    this->totaltickcount++;
-    if( tms > this->maxticktime ) this->maxticktime = tms;
+    if( playernew ) {
+      postdatabacktojsfromthread( shared_from_this(), "play", "start", "new" );
+    }
   }
 
+  if( this->player ) {
+    rtppacket *out = this->gettempoutbuf();
+    rawsound r;
+    if( this->player->read( r ) ) {
+      if( r.size() > 0 ) {
+        this->outcodec << r;
+        out << this->outcodec;
+        this->writepacket( out );
+      }
+    } else {
+      this->player = nullptr;
+      postdatabacktojsfromthread( shared_from_this(), "play", "end", "completed" );
+    }
+  } else if( this->doecho ) {
+    if( nullptr != src ) {
+      this->outcodec << *src;
+
+      rtppacket *dst = this->gettempoutbuf();
+      dst << this->outcodec;
+      this->writepacket( dst );
+    }
+  }
+
+  this->writerecordings();
+
+  this->endticktimer();
+
   /* The last thing we do */
+  this->setnexttick();
+}
+
+void projectrtpchannel::startticktimer( void ) {
+  this->tickstarttime = boost::posix_time::microsec_clock::local_time();
+}
+
+void projectrtpchannel::endticktimer( void ) {
+  boost::posix_time::time_duration const diff = ( boost::posix_time::microsec_clock::local_time() - this->tickstarttime );
+  uint64_t tms = diff.total_microseconds();
+  this->totalticktime += tms;
+  this->totaltickcount++;
+  if( tms > this->maxticktime ) this->maxticktime = tms;
+}
+
+void projectrtpchannel::setnexttick( void ) {
   this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
 
   this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
@@ -520,6 +580,26 @@ void projectrtpchannel::writerecordings( void ) {
   this->removeoldrecorders();
 }
 
+bool projectrtpchannel::dtlsnegotiate( void ) {
+
+  AQUIRESPINLOCK( this->rtpdtlslock );
+  dtlssession::pointer oursession = this->rtpdtls;
+  RELEASESPINLOCK( this->rtpdtlslock );
+
+  if( nullptr == oursession ) return false;
+  if( !oursession->rtpdtlshandshakeing ) return false;
+
+  AQUIRESPINLOCK( this->rtpdtlslock );
+  auto dtlsstate = oursession->handshake();
+  RELEASESPINLOCK( this->rtpdtlslock );
+
+  if( GNUTLS_E_SUCCESS == dtlsstate ) {
+    oursession->rtpdtlshandshakeing = false;
+  }
+
+  return oursession->rtpdtlshandshakeing;
+}
+
 /*
 ## handlereadsomertp
 Wait for RTP data. We have to re-order when required. Look after all of the round robin memory here.
@@ -528,40 +608,63 @@ We should have enough time to deal with the in data before it gets overwritten.
 WARNING WARNING
 Order matters. We have multiple threads reading and writing variables using atomics and normal data.
 Any clashes should be handled by atomics.
+
+I have switched to using blocking functions - but only in responce to an async wait
+which should mean (not very well documented) that the read will not block.
 */
-void projectrtpchannel::readsomertp( void )
-{
-  AQUIRESPINLOCK( this->rtpbufferlock );
-  rtppacket* buf = this->inbuff->reserve();
-  RELEASESPINLOCK( this->rtpbufferlock );
-  if( nullptr == buf ) {
-    fprintf( stderr, "ERROR: we should never get here - we have no more buffer available on port %i\n", this->port );
-    return;
-  }
+void projectrtpchannel::readsomertp( void ) {
 
-  this->rtpsocket.async_receive_from(
-    boost::asio::buffer( buf->pk, RTPMAXLENGTH ), this->rtpsenderendpoint,
-      [ this, buf ]( boost::system::error_code ec, std::size_t bytes_recvd ) {
-        /* TODO - check for expected size for RTP */
-        if ( !ec && bytes_recvd > 0 && bytes_recvd < RTPMAXLENGTH ) {
+  this->rtpsocket.cancel();
+  this->rtpsocket.async_wait(
+    boost::asio::ip::tcp::socket::wait_read,
+    [ this ]( const boost::system::error_code& error ) {
 
-          if( this->rtpdtlshandshakeing ) {
-            this->rtpdtls->write( buf, bytes_recvd );
-            auto dtlsstate = this->rtpdtls->handshake();
-            if( GNUTLS_E_AGAIN == dtlsstate ) {
-              this->readsomertp();
-            } else if ( GNUTLS_E_SUCCESS == dtlsstate ) {
-              this->readsomertp();
-              this->rtpdtlshandshakeing = false;
-            }
-            return;
-          }
+      if( boost::asio::error::operation_aborted == error ) {
+        return;
+      }
+
+      AQUIRESPINLOCK( this->rtpdtlslock );
+      dtlssession::pointer currentdtlssession = this->rtpdtls;
+      RELEASESPINLOCK( this->rtpdtlslock );
+
+      if( nullptr != currentdtlssession &&
+          currentdtlssession->rtpdtlshandshakeing ) {
+        /* DTLS Handshake */
+        uint8_t dtlsbuf[ 1500 ];
+        auto bytesrecvd = this->rtpsocket.receive_from( boost::asio::buffer( dtlsbuf, sizeof( dtlsbuf ) ), this->rtpsenderendpoint );
+
+        if( bytesrecvd > 0 ) {
+          AQUIRESPINLOCK( this->rtpdtlslock );
+          currentdtlssession->write( dtlsbuf, bytesrecvd );
+          RELEASESPINLOCK( this->rtpdtlslock );
+          this->readsomertp();
+        }
+
+      } else {
+        /* RTP */
+        /* Grab a buffer */
+        AQUIRESPINLOCK( this->rtpbufferlock );
+        rtppacket* buf = this->inbuff->reserve();
+        RELEASESPINLOCK( this->rtpbufferlock );
+        if( nullptr == buf ) {
+          this->requestclose( "error.nobuffer" );
+          return;
+        }
+
+        auto bytesrecvd = this->rtpsocket.receive_from( boost::asio::buffer( buf->pk, RTPMAXLENGTH ), this->rtpsenderendpoint );
+
+        if( RTPMAXLENGTH == bytesrecvd ) {
+          // Too large
+          this->receivedpkcount++;
+          this->receivedpkskip++;
+          this->readsomertp();
+        } else if( bytesrecvd > 0 ) {
 
           /* We should still count packets we are instructed to drop */
           this->receivedpkcount++;
 
           if( !this->recv ) {
-            if( !ec && bytes_recvd && this->active ) {
+            if( bytesrecvd > 0 && this->active ) {
               this->readsomertp();
             }
             return;
@@ -587,20 +690,20 @@ void projectrtpchannel::readsomertp( void )
             }
           }
 
-          buf->length = bytes_recvd;
+          buf->length = bytesrecvd;
 
           AQUIRESPINLOCK( this->rtpbufferlock );
           this->inbuff->push();
           RELEASESPINLOCK( this->rtpbufferlock );
-        } else if( !ec ) {
+
+
+          this->readsomertp();
+        } else {
           this->receivedpkcount++;
           this->receivedpkskip++;
         }
-
-        if( !ec && bytes_recvd && this->active ) {
-          this->readsomertp();
-        }
-      } );
+      }
+    } );
 }
 
 /*
@@ -628,19 +731,15 @@ rtppacket *projectrtpchannel::gettempoutbuf( void ) {
 ## handlereadsomertcp
 Wait for RTP data
 */
-void projectrtpchannel::readsomertcp( void )
-{
+void projectrtpchannel::readsomertcp( void ) {
   this->rtcpsocket.async_receive_from(
   boost::asio::buffer( &this->rtcpdata[ 0 ], RTCPMAXLENGTH ), this->rtcpsenderendpoint,
-    [ this ]( boost::system::error_code ec, std::size_t bytes_recvd )
-    {
-      if ( !ec && bytes_recvd > 0 && bytes_recvd <= RTCPMAXLENGTH )
-      {
+    [ this ]( boost::system::error_code ec, std::size_t bytes_recvd ) {
+      if ( !ec && bytes_recvd > 0 && bytes_recvd <= RTCPMAXLENGTH ) {
         this->handlertcpdata();
       }
 
-      if( !ec && bytes_recvd && this->active )
-      {
+      if( !ec && bytes_recvd && this->active ) {
         this->readsomertcp();
       }
     } );
@@ -663,18 +762,39 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
   if( !this->active ) return;
 
   if( nullptr == pk ) {
+    this->outpkskipcount++;
     fprintf( stderr, "We have been given an nullptr RTP packet??\n" );
     return;
   }
 
   if( 0 == pk->length ) {
+    this->outpkskipcount++;
     fprintf( stderr, "We have been given an RTP packet of zero length??\n" );
     return;
   }
 
   if( !this->send ) {
+    this->outpkskipcount++;
     /* silently drop - could we do this sooner to use less CPU? */
     return;
+  }
+
+  AQUIRESPINLOCK( this->rtpdtlslock );
+  dtlssession::pointer currentdtlssession = this->rtpdtls;
+  RELEASESPINLOCK( this->rtpdtlslock );
+
+  if( nullptr != currentdtlssession &&
+      currentdtlssession->rtpdtlshandshakeing ) {
+    this->outpkskipcount++;
+    return;
+  }
+
+  if( nullptr != currentdtlssession &&
+      !currentdtlssession->rtpdtlshandshakeing ) {
+    if( !currentdtlssession->protect( pk ) ) {
+      this->outpkskipcount++;
+      return;
+    }
   }
 
   if( this->receivedrtp || this->targetconfirmed ) {
@@ -691,6 +811,7 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
 }
 
 void projectrtpchannel::dotarget( void ) {
+  if( "" == this->targetaddress ) return;
 
   this->receivedrtp = false;
   boost::asio::ip::udp::resolver::query query(
@@ -715,10 +836,11 @@ void projectrtpchannel::handletargetresolve (
             boost::asio::ip::udp::resolver::iterator it ) {
   boost::asio::ip::udp::resolver::iterator end;
 
-  if( e == boost::asio::error::operation_aborted ||
-      it == end ) {
+  if( e == boost::asio::error::operation_aborted ) return;
+
+  if( it == end ) {
     /* Failure - silent (the call will be as well!) */
-    fprintf( stderr, "Failed to find target\n" );
+    this->requestclose( "failed.target" );
     return;
   }
 
@@ -753,8 +875,7 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
     this->mixer = projectchannelmux::create( workercontext );
     other->mixer = this->mixer;
 
-    this->mixer->addchannel( shared_from_this() );
-    this->mixer->addchannel( other );
+    this->mixer->addchannels( shared_from_this(), other );
   } else {
     /* If we get here this and other are already mixing and should be cleaned up first */
     RELEASESPINLOCK( this->mixerlock );
@@ -960,9 +1081,7 @@ static napi_value channelclose( napi_env env, napi_callback_info info ) {
 
   projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
   if( nullptr == chan ) createnapibool( env, false );
-
-  chan->closereason = "requested";
-  chan->requestclose = true;
+  chan->requestclose( "requested" );
 
   return createnapibool( env, true );
 }
@@ -1225,6 +1344,87 @@ static napi_value channeldirection( napi_env env, napi_callback_info info ) {
   return createnapibool( env, true );
 }
 
+/* Can be called on a running channel so must be thread safe */
+static napi_value channeltarget( napi_env env, napi_callback_info info ) {
+
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  napi_value nport, naddress, ncodec;
+  int32_t targetport;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ||
+      1 != argc ) {
+    return createnapibool( env, false );
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    return createnapibool( env, false );
+  }
+
+  if( napi_ok != napi_get_named_property( env, argv[ 0 ], "port", &nport ) ) {
+    return createnapibool( env, false );
+  }
+
+  napi_get_value_int32( env, nport, &targetport );
+
+  if( napi_ok != napi_get_named_property( env, argv[ 0 ], "address", &naddress ) ) {
+    return createnapibool( env, false );
+  }
+
+  if( napi_ok != napi_get_named_property( env, argv[ 0 ], "codec", &ncodec ) ) {
+    return createnapibool( env, false );
+  }
+
+  uint32_t codecval = 0;
+  napi_get_value_uint32( env, ncodec, &codecval );
+
+  size_t bytescopied;
+  char targetaddress[ 128 ];
+
+  napi_get_value_string_utf8( env, naddress, targetaddress, sizeof( targetaddress ), &bytescopied );
+  if( 0 == bytescopied || bytescopied >= sizeof( targetaddress ) ) {
+    return createnapibool( env, false );
+  }
+
+  /* optional - DTLS */
+  napi_value dtls;
+  bool hasit;
+  dtlssession::mode dtlsmode = dtlssession::none;
+  char vfingerprint[ 128 ];
+  vfingerprint[ 0 ] = 0;
+
+  if ( napi_ok == napi_has_named_property( env, argv[ 0 ], "dtls", &hasit ) &&
+       hasit &&
+       napi_ok == napi_get_named_property( env, argv[ 0 ], "dtls", &dtls ) ) {
+    napi_value nfingerprint, nactpass;
+    if( napi_ok == napi_has_named_property( env, dtls, "fingerprint", &hasit ) &&
+        hasit &&
+        napi_ok == napi_get_named_property( env, dtls, "fingerprint", &nfingerprint ) ) {
+      size_t bytescopied;
+      char vactpass[ 128 ];
+      if( napi_ok == napi_get_value_string_utf8( env, nfingerprint, vfingerprint, sizeof( vfingerprint ), &bytescopied ) ) {
+        if( napi_ok == napi_has_named_property( env, dtls, "mode", &hasit ) &&
+            hasit &&
+            napi_ok == napi_get_named_property( env, dtls, "mode", &nactpass ) ) {
+          if( napi_ok == napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) {
+            if( std::string( vactpass ) == "pass" ) {
+              dtlsmode = dtlssession::pass;
+            } else {
+              dtlsmode = dtlssession::act;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  chan->target( targetaddress, targetport, codecval, dtlsmode, vfingerprint );
+
+  return createnapibool( env, true );
+}
+
 static napi_value channeldtmf( napi_env env, napi_callback_info info ) {
 
   size_t argc = 1;
@@ -1323,9 +1523,12 @@ napi_value createcloseobject( napi_env env, projectrtpchannel::pointer p ) {
   if( napi_ok != napi_set_named_property( env, in, "dropped", receiveddropped ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, in, "skip", receivedpkskip ) ) return NULL;
 
-  napi_value sentpkcount;
+  napi_value sentpkcount, outpkskipcount;
   if( napi_ok != napi_create_double( env, p->outpkcount, &sentpkcount ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, out, "count", sentpkcount ) ) return NULL;
+
+  if( napi_ok != napi_create_double( env, p->outpkskipcount, &outpkskipcount ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, out, "skip", outpkskipcount ) ) return NULL;
 
   napi_value meanticktimeus, maxticktimeus, totaltickcount;
   if( p->totaltickcount > 0 ) {
@@ -1351,8 +1554,6 @@ napi_value createcloseobject( napi_env env, projectrtpchannel::pointer p ) {
   if( napi_ok != napi_set_named_property( env, result, "stats", stats ) ) return NULL;
   return result;
 }
-
-
 
 napi_value createrecordobject( napi_env env, projectrtpchannel::pointer p, jschannelevent *ev ) {
 
@@ -1459,6 +1660,10 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
   int32_t targetport;
   char targetaddress[ 128 ];
+  targetaddress[ 0 ] = 0;
+
+  bool hasit;
+  bool dtlsenabled = false;
 
   if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
 
@@ -1467,43 +1672,78 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
     return NULL;
   }
 
-  if( napi_ok != napi_get_named_property( env, argv[ 0 ], "target", &ntarget ) ) {
-    napi_throw_error( env, "0", "Missing target in object" );
-    return NULL;
-  }
-
-  if( napi_ok != napi_get_named_property( env, ntarget, "port", &nport ) ) {
-    napi_throw_error( env, "1", "Missing port in target object" );
-    return NULL;
-  }
-
-  napi_get_value_int32( env, nport, &targetport );
-
-  if( napi_ok != napi_get_named_property( env, ntarget, "address", &naddress ) ) {
-    napi_throw_error( env, "1", "Missing address in target object" );
-    return NULL;
-  }
-
-  if( napi_ok != napi_get_named_property( env, ntarget, "codec", &ncodec ) ) {
-    napi_throw_error( env, "1", "Missing codec in target object" );
-    return NULL;
-  }
-
-  uint32_t codecval = 0;
-  napi_get_value_uint32( env, ncodec, &codecval );
-
-  size_t bytescopied;
-  napi_get_value_string_utf8( env, naddress, targetaddress, sizeof( targetaddress ), &bytescopied );
-  if( 0 == bytescopied || bytescopied >= sizeof( targetaddress ) ) {
-    napi_throw_error( env, "1", "Target host address too long" );
-    return NULL;
-  }
-
   projectrtpchannel::pointer p = projectrtpchannel::create( ourport );
+
+  /* optional - target */
+  dtlssession::mode dtlsmode = dtlssession::none;
+  char vfingerprint[ 128 ];
+  vfingerprint[ 0 ] = 0;
+  uint32_t codecval = 0;
+
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "target", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "target", &ntarget ) ) {
+
+    /* optional - DTLS */
+    napi_value dtls;
+    if ( napi_ok == napi_has_named_property( env, ntarget, "dtls", &hasit ) &&
+         hasit &&
+         napi_ok == napi_get_named_property( env, ntarget, "dtls", &dtls ) ) {
+
+      napi_value nfingerprint, nactpass;
+      if( napi_ok == napi_has_named_property( env, dtls, "fingerprint", &hasit ) &&
+          hasit &&
+          napi_ok == napi_get_named_property( env, dtls, "fingerprint", &nfingerprint ) ) {
+
+        size_t bytescopied;
+        char vactpass[ 128 ];
+        vactpass[ 0 ] = 0;
+        if( napi_ok == napi_get_value_string_utf8( env, naddress, vfingerprint, sizeof( vfingerprint ), &bytescopied ) ) {
+          if( napi_ok == napi_has_named_property( env, dtls, "mode", &hasit ) &&
+              hasit &&
+              napi_ok == napi_get_named_property( env, dtls, "mode", &nactpass ) ) {
+            if( napi_ok == napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) {
+              if( std::string( vactpass ) == "pass" ) {
+                dtlsmode = dtlssession::pass;
+              } else {
+                dtlsmode = dtlssession::act;
+              }
+              dtlsenabled = true;
+            }
+          }
+        }
+      }
+    }
+
+    if( napi_ok != napi_get_named_property( env, ntarget, "port", &nport ) ) {
+      napi_throw_error( env, "1", "Missing port in target object" );
+      return NULL;
+    }
+
+    napi_get_value_int32( env, nport, &targetport );
+
+    if( napi_ok != napi_get_named_property( env, ntarget, "address", &naddress ) ) {
+      napi_throw_error( env, "1", "Missing address in target object" );
+      return NULL;
+    }
+
+    if( napi_ok != napi_get_named_property( env, ntarget, "codec", &ncodec ) ) {
+      napi_throw_error( env, "1", "Missing codec in target object" );
+      return NULL;
+    }
+
+    napi_get_value_uint32( env, ncodec, &codecval );
+
+    size_t bytescopied;
+    napi_get_value_string_utf8( env, naddress, targetaddress, sizeof( targetaddress ), &bytescopied );
+    if( 0 == bytescopied || bytescopied >= sizeof( targetaddress ) ) {
+      napi_throw_error( env, "1", "Target host address too long" );
+      return NULL;
+    }
+  }
 
   /* optional - these have defaults */
   napi_value ndirection;
-  bool hasit;
   if ( napi_ok == napi_has_named_property( env, argv[ 0 ], "direction", &hasit ) &&
        hasit &&
        napi_ok == napi_get_named_property( env, argv[ 0 ], "direction", &ndirection ) ) {
@@ -1527,57 +1767,26 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
     }
   }
 
-  /* optional - DTLS */
-  bool dtlsenabled = false;
-  napi_value dtls;
-  if ( napi_ok == napi_has_named_property( env, argv[ 0 ], "dtls", &hasit ) &&
-       hasit &&
-       napi_ok == napi_get_named_property( env, argv[ 0 ], "dtls", &dtls ) ) {
-
-    napi_value nfingerprint, nactpass;
-    if( napi_ok == napi_has_named_property( env, dtls, "fingerprint", &hasit ) &&
-        hasit &&
-        napi_ok == napi_get_named_property( env, dtls, "fingerprint", &nfingerprint ) ) {
-
-      size_t bytescopied;
-      char vfingerprint[ 128 ], vactpass[ 128 ];
-      if( napi_ok == napi_get_value_string_utf8( env, naddress, vfingerprint, sizeof( vfingerprint ), &bytescopied ) ) {
-        if( napi_ok == napi_has_named_property( env, dtls, "mode", &hasit ) &&
-            hasit &&
-            napi_ok == napi_get_named_property( env, dtls, "mode", &nactpass ) ) {
-          if( napi_ok == napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) {
-            if( std::string( vactpass ) == "pass" ) {
-              p->enabledtls( dtlssession::pass, vfingerprint );
-            } else {
-              p->enabledtls( dtlssession::act, vfingerprint );
-            }
-            dtlsenabled = true;
-          }
-        }
-      }
-    }
-  }
-
   hiddensharedptr *pb = new hiddensharedptr( p );
 
   napi_value callback;
   if( 1 == argc ) {
-    if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, dummyclose, nullptr, &callback ) ) return NULL;
+    if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, dummyclose, nullptr, &callback ) ) {
+      delete pb;
+      return NULL;
+    }
   } else {
     callback = argv[ 1 ];
   }
 
   napi_value workname;
 
-  if( napi_ok != napi_create_string_utf8( env, "projectrtp", NAPI_AUTO_LENGTH, &workname ) ) {
-    return NULL;
-  }
-
   /*
     We don't need to call napi_acquire_threadsafe_function as we are setting
     the inital value of initial_thread_count to 1.
   */
-  if( napi_ok != napi_create_threadsafe_function( env,
+  if( napi_ok != napi_create_string_utf8( env, "projectrtp", NAPI_AUTO_LENGTH, &workname ) ||
+      napi_ok != napi_create_threadsafe_function( env,
                                        callback,
                                        NULL,
                                        workname,
@@ -1587,56 +1796,70 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
                                        NULL,
                                        NULL,
                                        eventcallback,
-                                       &p->cb ) ) return NULL;
-
-  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
-  if( napi_ok != napi_type_tag_object( env, result, &channelcreatetag ) ) return NULL;
-  if( napi_ok != napi_wrap( env, result, pb, channeldestroy, pb, nullptr ) ) return NULL;
+                                       &p->cb ) ||
+      napi_ok != napi_create_object( env, &result ) ||
+      napi_ok != napi_type_tag_object( env, result, &channelcreatetag ) ||
+      napi_ok != napi_wrap( env, result, pb, channeldestroy, pb, nullptr ) ) {
+    delete pb;
+    return NULL;
+  }
 
   p->jsthis = result;
-  p->requestopen( targetaddress, targetport, codecval );
+  p->target( targetaddress, targetport, codecval, dtlsmode, vfingerprint );
+  p->requestopen();
 
   /* methods */
   napi_value mfunc;
-  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelclose, nullptr, &mfunc ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "close", mfunc ) ) return NULL;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelclose, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "close", mfunc ) ||
 
-  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelmix, nullptr, &mfunc ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "mix", mfunc ) ) return NULL;
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelmix, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "mix", mfunc ) ||
 
-  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelunmix, nullptr, &mfunc ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "unmix", mfunc ) ) return NULL;
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelunmix, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "unmix", mfunc ) ||
 
-  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelecho, nullptr, &mfunc ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "echo", mfunc ) ) return NULL;
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelecho, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "echo", mfunc ) ||
 
-  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelplay, nullptr, &mfunc ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "play", mfunc ) ) return NULL;
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelplay, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "play", mfunc ) ||
 
-  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelrecord, nullptr, &mfunc ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "record", mfunc ) ) return NULL;
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelrecord, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "record", mfunc ) ||
 
-  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channeldirection, nullptr, &mfunc ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "direction", mfunc ) ) return NULL;
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channeldirection, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "direction", mfunc ) ||
 
-  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channeldtmf, nullptr, &mfunc ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "dtmf", mfunc ) ) return NULL;
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channeldtmf, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "dtmf", mfunc ) ||
+
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channeltarget, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "target", mfunc )
+    ) {
+    delete pb;
+    return NULL;
+  }
 
   /* values */
-  napi_value nlocal, nourport;
-  if( napi_ok != napi_create_object( env, &nlocal ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "local", nlocal ) ) return NULL;
+  napi_value nlocal, nourport, ndtls, fp;
+  if( napi_ok != napi_create_object( env, &nlocal ) ||
+      napi_ok != napi_set_named_property( env, result, "local", nlocal ) ||
 
-  if( napi_ok != napi_create_int32( env, ourport, &nourport ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, nlocal, "port", nourport ) ) return NULL;
+      napi_ok != napi_create_int32( env, ourport, &nourport ) ||
+      napi_ok != napi_set_named_property( env, nlocal, "port", nourport ) ||
 
-  napi_value ndtls, fp;
-  if( napi_ok != napi_create_object( env, &ndtls ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, nlocal, "dtls", ndtls ) ) return NULL;
 
-  if( napi_ok != napi_create_string_utf8( env, getdtlssrtpsha256fingerprint(), NAPI_AUTO_LENGTH, &fp ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, ndtls, "fingerprint", fp ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, ndtls, "enabled", createnapibool( env, dtlsenabled ) ) ) return NULL;
+      napi_ok != napi_create_object( env, &ndtls ) ||
+      napi_ok != napi_set_named_property( env, nlocal, "dtls", ndtls ) ||
+
+      napi_ok != napi_create_string_utf8( env, getdtlssrtpsha256fingerprint(), NAPI_AUTO_LENGTH, &fp ) ||
+      napi_ok != napi_set_named_property( env, ndtls, "fingerprint", fp ) ||
+      napi_ok != napi_set_named_property( env, ndtls, "enabled", createnapibool( env, dtlsenabled ) ) ) {
+
+    delete pb;
+    return NULL;
+  }
 
   return result;
 }

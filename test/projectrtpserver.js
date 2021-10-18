@@ -29,14 +29,14 @@ Addon module for an RTP server for audio mixing/recording and playback etc.
 @function openchannel
 @summary Opens a channel and returns a channel object.
 @param {Object} properties
-@param {Object} properties.target
+@param {Object} [properties.target]
 @param {number} properties.target.port - the target port - must be an Int and should be even
 @param {string} properties.target.address - the target (remote) hostname
 @param {number} properties.target.codec - the target codec as a number
 @param {Object} [properties.direction] - direction from our perspective
 @param {boolean} [properties.direction.send=true]
 @param {boolean} [properties.direction.recv=true]
-@param {Object} [properties.dtls] - TODO
+@param {Object} [properties.dtls]
 @param {string} properties.dtls.fingerprint - the fingerprint we verify the remote against
 @param {string} properties.dtls.setup - "act" or "pass"
 @param {function} [callback] - events are passed back to the caller via this callback

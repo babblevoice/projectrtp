@@ -67,8 +67,15 @@ public:
   typedef std::shared_ptr< projectrtpchannel > pointer;
   static pointer create( unsigned short port );
 
-  void requestopen( std::string address, unsigned short port, uint32_t codec );
-  std::atomic_bool requestclose;
+  void target( std::string address,
+               unsigned short port,
+               uint32_t codec,
+               dtlssession::mode,
+               std::string fingerprint );
+
+  void requestopen( void );
+  std::atomic_bool _requestclose;
+  void requestclose( std::string reason );
   std::string closereason;
   void requestecho( bool e = true );
 
@@ -77,8 +84,6 @@ public:
   void doopen( void );
 
   unsigned short getport( void );
-
-  void enabledtls( dtlssession::mode, std::string fingerprint );
 
   void requestplay( soundsoup::pointer newdef );
   void requestrecord( channelrecorder::pointer rec );
@@ -116,6 +121,7 @@ public:
   std::atomic_uint16_t tickswithnortpcount;
 
   std::atomic_uint64_t outpkcount;
+  std::atomic_uint64_t outpkskipcount;
 
   /* buffer and spin lock for in traffic */
   rtpbuffer::pointer inbuff;
@@ -170,6 +176,11 @@ private:
               boost::system::error_code e,
               boost::asio::ip::udp::resolver::iterator it );
 
+  bool dtlsnegotiate( void );
+  void setnexttick( void );
+  void startticktimer( void );
+  void endticktimer( void );
+
   std::atomic_bool mixerlock;
   projectchannelmuxptr mixer;
   std::atomic_bool mixing;
@@ -193,7 +204,7 @@ private:
 
   /* DTLS Session */
   dtlssession::pointer rtpdtls;
-  bool rtpdtlshandshakeing;
+  std::atomic_bool rtpdtlslock;
 
   std::string targetaddress;
   unsigned short targetport;
@@ -202,6 +213,8 @@ private:
   std::string queueddigits;
   std::atomic_bool queuddigitslock;
   uint16_t lastdtmfsn;
+
+  boost::posix_time::ptime tickstarttime;
 
 };
 

@@ -20,11 +20,11 @@
 
 //#define DTLSDEBUGOUTPUT 1
 
+#ifdef DTLSDEBUGOUTPUT
 struct ProtocolVersion {
   uint8_t major;
   uint8_t minor;
 };
-
 
 class DTLSPlaintext {
 public:
@@ -35,13 +35,14 @@ public:
   uint16_t length;
   //opaque fragment[DTLSPlaintext.length];
 };
+#endif
 
 
 class dtlssession:
   public std::enable_shared_from_this< dtlssession > {
 public:
 
-  enum mode { act, pass };
+  enum mode { act, pass, none };
   dtlssession( mode m );
   ~dtlssession();
 
@@ -70,6 +71,7 @@ public:
   bool protect( rtppacket *pk );
   bool unprotect( rtppacket *pk );
 
+  std::atomic_bool rtpdtlshandshakeing;
 private:
   gnutls_session_t session;
   mode m;

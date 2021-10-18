@@ -57,6 +57,17 @@ void projectchannelmux::mixall( void ) {
       src = chan->inbuff->peek();
       RELEASESPINLOCK( chan->rtpbufferlock );
 
+      AQUIRESPINLOCK( chan->rtpdtlslock );
+      dtlssession::pointer currentdtlssession = chan->rtpdtls;
+      RELEASESPINLOCK( chan->rtpdtlslock );
+      if( nullptr != currentdtlssession &&
+          !currentdtlssession->rtpdtlshandshakeing ) {
+        if( !currentdtlssession->unprotect( src ) ) {
+          chan->receivedpkskip++;
+          src = nullptr;
+        }
+      }
+
       if( !chan->checkfordtmf( src ) ) break;
 
       for( auto& dtmfchan: this->channels ) {
@@ -122,6 +133,17 @@ void projectchannelmux::mix2( void ) {
     src = chan1->inbuff->pop();
     RELEASESPINLOCK( chan1->rtpbufferlock );
 
+    AQUIRESPINLOCK( chan1->rtpdtlslock );
+    dtlssession::pointer currentdtlssession = chan1->rtpdtls;
+    RELEASESPINLOCK( chan1->rtpdtlslock );
+    if( nullptr != currentdtlssession &&
+        !currentdtlssession->rtpdtlshandshakeing ) {
+      if( !currentdtlssession->unprotect( src ) ) {
+        chan1->receivedpkskip++;
+        src = nullptr;
+      }
+    }
+
     if( !chan1->checkfordtmf( src ) ) break;
     this->postrtpdata( chan1, chan2, src );
   }
@@ -131,6 +153,17 @@ void projectchannelmux::mix2( void ) {
     AQUIRESPINLOCK( chan2->rtpbufferlock );
     src = chan2->inbuff->pop();
     RELEASESPINLOCK( chan2->rtpbufferlock );
+
+    AQUIRESPINLOCK( chan2->rtpdtlslock );
+    dtlssession::pointer currentdtlssession = chan2->rtpdtls;
+    RELEASESPINLOCK( chan2->rtpdtlslock );
+    if( nullptr != currentdtlssession &&
+        !currentdtlssession->rtpdtlshandshakeing ) {
+      if( !currentdtlssession->unprotect( src ) ) {
+        chan2->receivedpkskip++;
+        src = nullptr;
+      }
+    }
 
     if( !chan2->checkfordtmf( src ) ) break;
     this->postrtpdata( chan2, chan1, src );
@@ -144,13 +177,7 @@ Our timer handler.
 void projectchannelmux::handletick( const boost::system::error_code& error ) {
   if ( error == boost::asio::error::operation_aborted ) return;
 
-  boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
-
   this->checkfornewmixes();
-
-  for( auto& chan: this->channels ) {
-    chan->checkfornewrecorders();
-  }
 
   /* Check for channels which have request removal */
   for ( projectchanptrlist::iterator chan = this->channels.begin();
@@ -174,42 +201,50 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
     chan = this->channels.erase( chan );
   }
 
-  /* If we have any channels left to mix */
-  if( this->channels.size() > 0 ) {
-
-    for( auto& chan: this->channels ) {
-      chan->incrtsout();
-    }
-
-    if( 2 == this->channels.size() ) {
-      this->mix2();
-    } else if( this->channels.size() > 2 ) {
-      this->mixall();
-    }
-
-    for( auto& chan: this->channels ) {
-      chan->senddtmf();
-      chan->writerecordings();
-      chan->checkidlerecv();
-    }
-
-    /* calc our timer */
-    boost::posix_time::time_duration const diff = ( boost::posix_time::microsec_clock::local_time() - nowtime );
-    uint64_t tms = diff.total_microseconds();
-    for( auto& chan: this->channels ) {
-      chan->totalticktime += tms;
-      chan->totaltickcount++;
-      if( tms > chan->maxticktime ) chan->maxticktime = tms;
-    }
-
-    /* The last thing we do */
-    this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
-
-    this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
-    this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
-                                        shared_from_this(),
-                                        boost::asio::placeholders::error ) );
+  if( 0 == this->channels.size() ) {
+    return;
   }
+
+  for( auto& chan: this->channels ) {
+    chan->startticktimer();
+  }
+
+  for( auto& chan: this->channels ) {
+    chan->checkfornewrecorders();
+  }
+
+  for( auto& chan: this->channels ) {
+    chan->dtlsnegotiate();
+    chan->incrtsout();
+  }
+
+  if( 2 == this->channels.size() ) {
+    this->mix2();
+  } else if( this->channels.size() > 2 ) {
+    this->mixall();
+  }
+
+  for( auto& chan: this->channels ) {
+    chan->senddtmf();
+    chan->writerecordings();
+    chan->checkidlerecv();
+  }
+
+  for( auto& chan: this->channels ) {
+    chan->endticktimer();
+  }
+
+  /* The last thing we do */
+  this->setnexttick();
+}
+
+void projectchannelmux::setnexttick( void ) {
+  this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
+
+  this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
+  this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
+                                      shared_from_this(),
+                                      boost::asio::placeholders::error ) );
 }
 
 void projectchannelmux::go( void ) {
@@ -246,6 +281,13 @@ void projectchannelmux::checkfornewmixes( void ) {
 void projectchannelmux::addchannel( projectrtpchannelptr chan ) {
   AQUIRESPINLOCK( this->newchannelslock );
   this->newchannels.push_back( chan );
+  RELEASESPINLOCK( this->newchannelslock );
+}
+
+void projectchannelmux::addchannels( projectrtpchannelptr chana, projectrtpchannelptr chanb ) {
+  AQUIRESPINLOCK( this->newchannelslock );
+  this->newchannels.push_back( chana );
+  this->newchannels.push_back( chanb );
   RELEASESPINLOCK( this->newchannelslock );
 }
 

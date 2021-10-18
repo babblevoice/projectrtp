@@ -28,14 +28,17 @@ const char *pemfile = "dtls-srtp.pem";
 
 #ifdef DTLSDEBUGOUTPUT
 static void serverlogfunc(int level, const char *str) {
-  std::cerr << +level << ":" << str << std::endl;
+  std::cerr << +level << ":" << str;
 }
 #endif
 
 dtlssession::dtlssession( dtlssession::mode mode ) :
+  rtpdtlshandshakeing( true ),
+  session(),
   m( mode ),
   inindex( 0 ),
   incount( 0 ),
+  bindwritefunc(),
   keymaterial(),
   srtsendppolicy(),
   srtrecvppolicy(),
@@ -67,7 +70,7 @@ dtlssession::dtlssession( dtlssession::mode mode ) :
   gnutls_srtp_set_profile( this->session, GNUTLS_SRTP_AES128_CM_HMAC_SHA1_80 ); // or maybe GNUTLS_SRTP_AES128_CM_HMAC_SHA1_32?
   gnutls_transport_set_ptr( this->session, this );
 
-  gnutls_dtls_set_timeouts( this->session, 1000, 6 * 1000 );
+  gnutls_dtls_set_timeouts( this->session, 500, 60 * 1000 );
 
   gnutls_transport_set_push_function( this->session, [] ( gnutls_transport_ptr_t p, const void *data, size_t size ) -> ssize_t {
     ( ( dtlssession * )( p ) )->push( data, size );
@@ -149,7 +152,6 @@ int dtlssession::timeout( unsigned int ms ) {
   }
 
   if( 0 == ms ) return 0;
-
   gnutls_transport_set_errno( this->session, EAGAIN );
   return -1;
 }
@@ -192,6 +194,25 @@ void dtlssession::getkeys( void ) {
     return;
   }
 
+#ifdef DTLSDEBUGOUTPUT
+  char buf[ 2 * DTLSMAXKEYMATERIAL ];
+  size_t size = sizeof( buf );
+  gnutls_hex_encode( &srtp_cli_key, buf, &size );
+  std::cout << "Client key: " << buf << std::endl;
+
+  size = sizeof(buf);
+  gnutls_hex_encode( &srtp_cli_salt, buf, &size );
+  std::cout << "Client salt: " << buf << std::endl;
+
+  size = sizeof(buf);
+  gnutls_hex_encode( &srtp_server_key, buf, &size );
+  std::cout << "Server key: " << buf << std::endl;
+
+  size = sizeof(buf);
+  gnutls_hex_encode( &srtp_server_salt, buf, &size );
+  std::cout << "Server salt: " << buf << std::endl;
+#endif
+
   if( 32 == srtp_cli_key.size ) {
     srtp_crypto_policy_set_aes_gcm_256_8_only_auth( &this->srtsendppolicy.rtp );
     srtp_crypto_policy_set_aes_gcm_256_8_only_auth( &this->srtsendppolicy.rtcp );
@@ -222,34 +243,17 @@ void dtlssession::getkeys( void ) {
     this->srtrecvppolicy.key = srtp_server_key.data;
   }
 
-  if( srtp_create( &this->srtpsendsession, &this->srtsendppolicy ) ) {
-    fprintf( stderr, "Unable create sending srtp session\n" );
+  auto err = srtp_create( &this->srtpsendsession, &this->srtsendppolicy );
+  if( err ) {
+    fprintf( stderr, "Unable create sending srtp session %i\n", err );
     return;
   }
 
-  if( srtp_create( &this->srtprecvsession, &this->srtrecvppolicy ) ) {
-    fprintf( stderr, "Unable create receiving srtp session\n" );
+  err = srtp_create( &this->srtprecvsession, &this->srtrecvppolicy );
+  if( err ) {
+    fprintf( stderr, "Unable create receiving srtp session %i\n", err );
     return;
   }
-
-#ifdef DTLSDEBUGOUTPUT
-  char buf[ 2 * DTLSMAXKEYMATERIAL ];
-  size_t size = sizeof( buf );
-  gnutls_hex_encode( &srtp_cli_key, buf, &size );
-  std::cout << "Client key: " << buf << std::endl;
-
-  size = sizeof(buf);
-  gnutls_hex_encode( &srtp_cli_salt, buf, &size );
-  std::cout << "Client salt: " << buf << std::endl;
-
-  size = sizeof(buf);
-  gnutls_hex_encode( &srtp_server_key, buf, &size );
-  std::cout << "Server key: " << buf << std::endl;
-
-  size = sizeof(buf);
-  gnutls_hex_encode( &srtp_server_salt, buf, &size );
-  std::cout << "Server salt: " << buf << std::endl;
-#endif
 }
 
 int dtlssession::peersha256( void ) {
@@ -261,7 +265,6 @@ int dtlssession::peersha256( void ) {
     gnutls_hash_fast( GNUTLS_DIG_SHA256, ( const void * ) c->data, c->size, ( void * ) digest );
 
     if( 0 == memcmp( digest, peersha256sum, 32 ) ) {
-      //std::cout << "hello: compared ok!!!" << std::endl;
       return 0;
     }
   }
@@ -283,7 +286,7 @@ void dtlssession::setpeersha256( std::string &s ) {
 
 /* do we need to support mki? */
 bool dtlssession::protect( rtppacket *pk ) {
-
+  if( nullptr == this->srtpsendsession ) return false;
   int length = pk->length;
 
   auto stat = srtp_protect( this->srtpsendsession, pk->pk, &length );
@@ -297,6 +300,7 @@ bool dtlssession::protect( rtppacket *pk ) {
 
 bool dtlssession::unprotect( rtppacket *pk ) {
 
+  if( nullptr == pk ) return true; /* nothing to unprotect - so we haven't failed */
   int length = pk->length;
   auto stat = srtp_unprotect( this->srtprecvsession, pk->pk, &length );
   if( srtp_err_status_ok != stat ) {
@@ -373,6 +377,12 @@ void dtlsinit( void ) {
   }
   conv << std::setw( 2 ) << std::uppercase << ( int ) digest[ 31 ];
   fingerprintsha256 = conv.str();
+
+  auto status = srtp_init();
+  if( status ) {
+    fprintf( stderr, "Error: srtp initialization failed with error code %d\n", status );
+    exit( 1 );
+  }
 }
 
 void dtlsdestroy( void ) {
@@ -381,6 +391,12 @@ void dtlsdestroy( void ) {
 
   gnutls_certificate_free_credentials( xcred );
   gnutls_global_deinit();
+
+  auto status = srtp_shutdown();
+  if( status ) {
+    fprintf( stderr, "Error: srtp shutdown failed with error code %d\n", status );
+    exit( 1 );
+  }
 }
 
 #ifdef TESTSUITE

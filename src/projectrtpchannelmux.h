@@ -34,6 +34,7 @@ public:
   void postrtpdata( projectrtpchannelptr srcchan, projectrtpchannelptr dstchan, rtppacket *src );
   inline size_t size() { return this->channels.size(); }
   void addchannel( projectrtpchannelptr chan );
+  void addchannels( projectrtpchannelptr chana, projectrtpchannelptr chanb );
   void go( void );
 
   projectchanptrlist channels;
@@ -43,6 +44,8 @@ private:
   void checkfornewmixes( void );
   void mix2( void );
   void mixall( void );
+
+  void setnexttick( void );
 
   boost::asio::io_context &iocontext;
   boost::asio::steady_timer tick;
