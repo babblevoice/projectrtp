@@ -1,4 +1,6 @@
 
+const { v4: uuidv4 } = require( "uuid" )
+
 /* TODO */
 
 /*
@@ -27,6 +29,7 @@ Addon module for an RTP server for audio mixing/recording and playback etc.
 @function openchannel
 @summary Opens a channel and returns a channel object.
 @param {Object} [properties]
+@param {string} [properties.id] Unique id provided which is simply returned in the channel object
 @param {Object} [properties.target]
 @param {number} properties.target.port - the target port - must be an Int and should be even
 @param {string} properties.target.address - the target (remote) hostname
@@ -104,6 +107,12 @@ Object.defineProperty( module.exports.projectrtp, "openchannel", {
     Object.defineProperty( chan, "port", {
         get: function () { return port }
     } )
+
+    if( undefined !== params.id ) {
+      chan.id = params.id
+    }
+
+    chan.uuid = uuidv4()
 
     return chan
   }
