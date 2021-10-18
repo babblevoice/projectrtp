@@ -53,7 +53,7 @@ module.exports = async ( packets = utils.between( 50, 50*60*5 ) ) => {
       return
     }
 
-    clientb.send( msg, channelb.port, "localhost" )
+    clientb.send( msg, channelb.local.port, "localhost" )
   } )
 
   expect( channela.mix( channelb ) ).to.be.true
@@ -66,7 +66,7 @@ module.exports = async ( packets = utils.between( 50, 50*60*5 ) ) => {
 
   /* send a packet every 20mS x 50 */
   for( let i = 0;  i < packets; i ++ ) {
-    utils.sendpk( i, i * 20, channela.port, clienta, ssrc, payload )
+    utils.sendpk( i, i * 20, channela.local.port, clienta, ssrc, payload )
 
     if( i === senddtmfat ) {
       /* sending some DTMF */

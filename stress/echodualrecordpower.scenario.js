@@ -78,7 +78,7 @@ module.exports = ( packets = utils.between( 50, 50*60*5 ) ) => {
     for( let i = 0;  i < packets; i ++ ) {
       let start = ( i % soundblocks ) * 160
       end = start + 160
-      utils.sendpk( i, i * 20, channel.port, client, 32, sendbuffer.subarray( start, end ) )
+      utils.sendpk( i, i * 20, channel.local.port, client, 32, sendbuffer.subarray( start, end ) )
     }
   } )
 }

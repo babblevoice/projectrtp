@@ -45,7 +45,7 @@ module.exports = ( packets = utils.between( 50, 50*60*5 ) ) => {
 
     /* send a packet every 20mS x 50 */
     for( let i = 0;  i < packets; i ++ ) {
-      utils.sendpk( i, i * 20, channel.port, client )
+      utils.sendpk( i, i * 20, channel.local.port, client )
     }
   } )
 }

@@ -46,7 +46,7 @@ module.exports = async ( packets = utils.between( 50, 50*60*5 ) ) => {
 
   /* echo back */
   clientb.on( "message", function( msg, rinfo ) {
-    clientb.send( msg, channelb.port, "localhost" )
+    clientb.send( msg, channelb.local.port, "localhost" )
   } )
 
   expect( channela.mix( channelb ) ).to.be.true
@@ -55,7 +55,7 @@ module.exports = async ( packets = utils.between( 50, 50*60*5 ) ) => {
   let ssrc = utils.between( 10, 100 )
   /* send a packet every 20mS x 50 */
   for( let i = 0;  i < packets; i ++ ) {
-    utils.sendpk( i, i * 20, channela.port, clienta, ssrc, payload )
+    utils.sendpk( i, i * 20, channela.local.port, clienta, ssrc, payload )
   }
 
   await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), packets / 2 * 20 ) } )
