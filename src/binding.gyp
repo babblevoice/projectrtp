@@ -15,6 +15,7 @@
             "-lspandsp",
             "-lilbc",
             "-lgnutls",
+            "-lsrtp2",
             "-fstack-protector-all"
           ],
       "sources": [
