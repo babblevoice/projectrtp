@@ -63,7 +63,7 @@ describe( "rtpchannel", function() {
     expect( channel.target ).to.be.an( "function" )
     expect( channel.local ).to.have.property( "port" ).that.is.a( "number" )
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1000 ) } )
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 100 ) } )
     channel.close()
   } )
 
