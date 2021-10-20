@@ -1086,24 +1086,6 @@ static napi_value channelclose( napi_env env, napi_callback_info info ) {
   return createnapibool( env, true );
 }
 
-/* channel at the moment - but future proof to include other stats */
-static napi_value stats( napi_env env, napi_callback_info info ) {
-  napi_value result, channel;
-  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
-
-  if( napi_ok != napi_create_object( env, &channel ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, result, "channel", channel ) ) return NULL;
-
-  napi_value av, chcount;
-  if( napi_ok != napi_create_double( env, availableports.size(), &av ) ) return NULL;
-  if( napi_ok != napi_create_double( env, channelscreated, &chcount ) ) return NULL;
-
-  if( napi_ok != napi_set_named_property( env, channel, "available", av ) ) return NULL;
-  if( napi_ok != napi_set_named_property( env, channel, "current", chcount ) ) return NULL;
-
-  return result;
-}
-
 /*
 We receive an object like:
 {
@@ -1864,8 +1846,22 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   return result;
 }
 
+void getchannelstats( napi_env env, napi_value &result ) {
+
+  napi_value channel;
+  if( napi_ok != napi_create_object( env, &channel ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "channel", channel ) ) return;
+
+  napi_value av, chcount;
+  if( napi_ok != napi_create_double( env, availableports.size(), &av ) ) return;
+  if( napi_ok != napi_create_double( env, channelscreated, &chcount ) ) return;
+
+  if( napi_ok != napi_set_named_property( env, channel, "available", av ) ) return;
+  if( napi_ok != napi_set_named_property( env, channel, "current", chcount ) ) return;
+}
+
 void initrtpchannel( napi_env env, napi_value &result ) {
-  napi_value ccreate, cstats;
+  napi_value ccreate;
 
   for( int i = 10000; i < 20000; i = i + 2 ) {
     availableports.push( i );
@@ -1873,10 +1869,6 @@ void initrtpchannel( napi_env env, napi_value &result ) {
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelcreate, nullptr, &ccreate ) ) return;
   if( napi_ok != napi_set_named_property( env, result, "openchannel", ccreate ) ) return;
-
-  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, stats, nullptr, &cstats ) ) return;
-  if( napi_ok != napi_set_named_property( env, result, "stats", cstats ) ) return;
-
 }
 
 #endif /* NODE_MODULE */

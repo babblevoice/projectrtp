@@ -124,16 +124,34 @@ static napi_value startserver( napi_env env, napi_callback_info info ) {
   return NULL;
 }
 
+/* channel at the moment - but future proof to include other stats */
+static napi_value stats( napi_env env, napi_callback_info info ) {
+  napi_value result;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+
+  getchannelstats( env, result );
+
+  auto numcpus = std::thread::hardware_concurrency();
+
+  napi_value wc;
+  if( napi_ok != napi_create_double( env, numcpus, &wc ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "workercount", wc ) ) return NULL;
+
+  return result;
+}
 
 void initserver( napi_env env, napi_value &result ) {
 
-  napi_value bstopserver, bstartserver;
+  napi_value bstopserver, bstartserver, cstats;
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, startserver, nullptr, &bstartserver ) ) return;
   if( napi_ok != napi_set_named_property( env, result, "run", bstartserver ) ) return;
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, stopserver, nullptr, &bstopserver ) ) return;
   if( napi_ok != napi_set_named_property( env, result, "shutdown", bstopserver ) ) return;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, stats, nullptr, &cstats ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "stats", cstats ) ) return;
 }
 
 NAPI_MODULE_INIT() {
