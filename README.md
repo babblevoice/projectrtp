@@ -144,11 +144,11 @@ Open and return port number to publish to client.
   "channel": "open",
   "target": {
     "port": 56802,
-    "ip": "192.168.0.141"
+    "ip": "192.168.0.141",
+    "dtls": {
+      "fingerprint": "00:01:ff...",
+      "setup": "act"
     },
-  "dtls": {
-    "fingerprint": "00:01:ff...",
-    "setup": "act"
   },
   "id": "44fd13298e7b427f782ec6cf1ce9482d"
 }
