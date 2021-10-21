@@ -62,6 +62,7 @@ describe( "rtpchannel", function() {
     expect( channel.dtmf ).to.be.an( "function" )
     expect( channel.target ).to.be.an( "function" )
     expect( channel.local ).to.have.property( "port" ).that.is.a( "number" )
+    expect( channel.local ).to.have.property( "ip" ).that.is.a( "string" )
     expect( channel.uuid ).that.is.a( "string" )
     expect( channel.id ).that.is.a( "string" )
     expect( channel.id ).to.equal( "4" )
@@ -508,100 +509,3 @@ describe( "rtpchannel", function() {
     } )
   } )
 } )
-
-/**
-@summary An RTP session
-@memberof projectrtp
-@hideconstructor
-*/
-class channel {
-
-  /**
-  @summary Sets or changes the target of the RTP stream. This can also
-  be passed into the channel.create() object.
-  @param {Object} target - see channel.create
-  @return bool
-  */
-  target(){}
-
-  /**
-  @summary Our local port number we receive UDP on
-  @return {number}
-  */
-  get port(){}
-
-  /**
-  @summary Close the channel
-  */
-  close(){}
-
-  /**
-  @summary Adds another channel to mix with this one
-  @param {channel} other
-  @returns {boolean}
-  */
-  mix(){}
-
-  /**
-  @summary Removes the other channel from an existing mix
-  @param {channel} other
-  @returns {boolean}
-  */
-  unmix(){}
-
-  /**
-  @summary Send RFC 2833 DTMF digits i.e. channel.dtmf( "#123*" )
-  @param {string} digits
-  @returns {boolean}
-  */
-  dtmf(){}
-
-  /**
-  @summary Echos receved RTP back out when unmixed
-  @returns {boolean}
-  */
-  echo(){}
-  /**
-  @summary Plays audio to the channel when unmixed
-  @param {Object} soundsoup
-  @param {Object} soundsoup.files
-  @returns {boolean}
-  */
-  play(){}
-
-  /**
-  @summary Plays audio to the channel when unmixed
-  @param {Object} options
-  @param {string} options.file - filename of the recording
-  @param {number} [options.startabovepower] - only start the recording if the average power goes above this value
-  @param {number} [options.finishbelowpower] - finish the recording if the average power drops below this level
-  @param {number} [options.minduration] - ensure we have this many mS recording
-  @param {number} [options.maxduration] - regardless of power options finish when this mS long
-  @param {number} [options.poweraveragepackets] - number of packets to average the power calcs over
-  @param {boolean} [options.pause] - pause the recording this function can be called again to pause and resume the recording
-  @param {boolean} [options.finish=false] - finish the recording
-  @returns {boolean}
-  */
-  record(){}
-
-  /**
-  @summary Enable/disable the sending and receiving of RTP traffic
-  @param {Object} options
-  @param {boolean} [soundsoup.send]
-  @param {boolean} [soundsoup.recv]
-  @returns {boolean}
-  */
-  direction( options ){}
-
-  /**
-  @summary Client provided unique id identifying this channel.
-  @returns {string}
-  */
-  get id(){}
-
-  /**
-  @summary Unique id identifying this channel.
-  @returns {string}
-  */
-  get uuid(){}
-}
