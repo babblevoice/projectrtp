@@ -7,7 +7,7 @@
     "test": "test"
   },
   "scripts": {
-    "test": "./node_modules/mocha/bin/mocha --check-leaks",
+    "test": "./node_modules/mocha/bin/mocha --recursive --check-leaks",
     "docs": "jsdoc -c jsdoc.conf.json"
   },
   "repository": {
@@ -23,6 +23,7 @@
   "dependencies": {
     "chai": "^4.3.4",
     "mocha": "^9.0.3",
+    "net": "^1.0.2",
     "nodeplotlib": "^0.7.5",
     "uuid": "^8.3.2"
   }
