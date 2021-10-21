@@ -118,7 +118,7 @@ Object.defineProperty( module.exports.projectrtp, "openchannel", {
           get: function () {
             return {
               "port": port,
-              "ip": ""
+              "address": ""
             }
           }
       } )
