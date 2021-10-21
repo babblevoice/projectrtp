@@ -172,4 +172,106 @@ describe( "rtpnode", function() {
     expect( unmixreceived ).to.be.true
 
   } )
+
+  it( `rtpnode check target`, async function() {
+
+    /* set up our mock node object */
+    let n = new mocknode()
+    n.setmessagehandler( "open", ( msg ) => {
+      n.sendmessage( {
+          "action": "open",
+          "id": msg.id,
+          "channel": {
+            "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+            "port": 10002,
+            "address": "192.168.0.141"
+            }
+          } )
+    } )
+
+    let targetreceived = false
+    n.setmessagehandler( "target", ( msg ) => {
+      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "target" )
+      expect( msg ).to.have.property( "id" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "target" ).that.is.a( "string" ).to.equal( "wouldbeatargetobject" )
+
+      targetreceived = true
+    } )
+
+    n.setmessagehandler( "close", ( msg ) => {
+      p.close()
+      n.destroy()
+    } )
+
+    let p = await prtp.proxy.listen( 45000, "127.0.0.1" )
+    n.connect()
+    await p.waitfornewconnection()
+    let channel = await prtp.openchannel()
+    channel.target( "wouldbeatargetobject" )
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+
+    channel.close()
+
+    expect( targetreceived ).to.be.true
+
+  } )
+
+
+  it( `rtpnode check play/record`, async function() {
+
+    /* set up our mock node object */
+    let n = new mocknode()
+    n.setmessagehandler( "open", ( msg ) => {
+      n.sendmessage( {
+          "action": "open",
+          "id": msg.id,
+          "channel": {
+            "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+            "port": 10002,
+            "address": "192.168.0.141"
+            }
+          } )
+    } )
+
+    let playreceived = false
+    let recordreceived = false
+    n.setmessagehandler( "play", ( msg ) => {
+      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "play" )
+      expect( msg ).to.have.property( "id" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "soup" ).that.is.a( "string" ).to.equal( "wouldbeaplayobject" )
+
+      playreceived = true
+    } )
+
+    n.setmessagehandler( "record", ( msg ) => {
+      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "record" )
+      expect( msg ).to.have.property( "id" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "options" ).that.is.a( "string" ).to.equal( "wouldbearecordobject" )
+
+      recordreceived = true
+    } )
+
+    n.setmessagehandler( "close", ( msg ) => {
+      p.close()
+      n.destroy()
+    } )
+
+    let p = await prtp.proxy.listen( 45000, "127.0.0.1" )
+    n.connect()
+    await p.waitfornewconnection()
+    let channel = await prtp.openchannel()
+    channel.play( "wouldbeaplayobject" )
+    channel.record( "wouldbearecordobject" )
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+
+    channel.close()
+
+    expect( playreceived ).to.be.true
+    expect( recordreceived ).to.be.true
+  } )
 } )
