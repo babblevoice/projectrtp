@@ -102,17 +102,3 @@ describe( "node", function() {
     n.destroy()
   } )
 } )
-
-/*
-switch( receivedmessagecount ) {
-  case 0: {
-    expect( receivedmsg.status.channel ).to.have.property( "available" ).that.is.a( "number" )
-    expect( receivedmsg.status.channel ).to.have.property( "current" ).that.is.a( "number" )
-    expect( receivedmsg.status ).to.have.property( "workercount" ).that.is.a( "number" )
-    expect( receivedmsg.status ).to.have.property( "instance" ).that.is.a( "string" )
-
-    break
-  }
-}
-
-*/
