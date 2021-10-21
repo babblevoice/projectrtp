@@ -1392,9 +1392,10 @@ static napi_value channeltarget( napi_env env, napi_callback_info info ) {
             napi_ok == napi_get_named_property( env, dtls, "mode", &nactpass ) ) {
           if( napi_ok == napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) {
             if( std::string( vactpass ) == "pass" ) {
-              dtlsmode = dtlssession::pass;
-            } else {
+              /* If they are pass - we are act */
               dtlsmode = dtlssession::act;
+            } else {
+              dtlsmode = dtlssession::pass;
             }
           }
         }
@@ -1686,9 +1687,10 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
               napi_ok == napi_get_named_property( env, dtls, "mode", &nactpass ) ) {
             if( napi_ok == napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) {
               if( std::string( vactpass ) == "pass" ) {
-                dtlsmode = dtlssession::pass;
-              } else {
+                /* If they are pass - we are act */
                 dtlsmode = dtlssession::act;
+              } else {
+                dtlsmode = dtlssession::pass;
               }
               dtlsenabled = true;
             }
