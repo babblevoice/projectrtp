@@ -112,16 +112,8 @@ Object.defineProperty( module.exports.projectrtp, "openchannel", {
       /* use local */
       let chan = oc( params, cb )
       /* I can't find a way of defining a getter in napi - so here we override */
-      let port = chan.local.port
-      /* TODO finish IP */
-      Object.defineProperty( chan, "local", {
-          get: function () {
-            return {
-              "port": port,
-              "address": ""
-            }
-          }
-      } )
+      /* TODO finish address */
+      chan.local.address = ""
 
       if( undefined === params.id ) {
         chan.id = uuidv4()

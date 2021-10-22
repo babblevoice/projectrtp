@@ -1,7 +1,7 @@
 
 const expect = require( "chai" ).expect
 const prtp = require( "../../index.js" ).projectrtp
-const mocknode = require( "./mocknode.js" )
+const mocknode = require( "../mock/mocknode.js" )
 
 /*
 The tests in this file are to ensure what we send out over
@@ -10,7 +10,7 @@ our socket is in the correct format.
 
 let listenport = 45000
 
-describe( "rtpproxy", function() {
+describe( "rtpproxy server", function() {
 
   afterEach( function() {
     /* when in listen mode a server doesn't appear ot release the bind

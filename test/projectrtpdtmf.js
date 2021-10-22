@@ -80,7 +80,7 @@ describe( "dtmf", function() {
     this.slow( 2500 )
 
     server.bind()
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
       let ourport = server.address().port
 
@@ -90,7 +90,7 @@ describe( "dtmf", function() {
         { action: 'close' }
       ]
 
-      let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
@@ -142,7 +142,7 @@ describe( "dtmf", function() {
     this.slow( 2500 )
 
     server.bind()
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
       let ourport = server.address().port
 
@@ -151,7 +151,7 @@ describe( "dtmf", function() {
         { action: 'close' }
       ]
 
-      let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
@@ -214,10 +214,10 @@ describe( "dtmf", function() {
     let ouraport = clienta.address().port
     let ourbport = clientb.address().port
 
-    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
+    let channela = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
     } )
 
-    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
+    let channelb = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
     } )
 
     expect( channela.mix( channelb ) ).to.be.true
@@ -289,13 +289,13 @@ describe( "dtmf", function() {
     let ourbport = clientb.address().port
     let ourcport = clientc.address().port
 
-    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
+    let channela = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
     } )
 
-    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
+    let channelb = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
     } )
 
-    let channelc = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourcport, "codec": 0 } }, function( d ) {
+    let channelc = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourcport, "codec": 0 } }, function( d ) {
     } )
 
     expect( channela.mix( channelb ) ).to.be.true
@@ -334,7 +334,7 @@ describe( "dtmf", function() {
     this.slow( 2500 )
 
     server.bind()
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
       let ourport = server.address().port
 
@@ -345,7 +345,7 @@ describe( "dtmf", function() {
         { action: 'close' }
       ]
 
-      let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
 
@@ -430,7 +430,7 @@ describe( "dtmf", function() {
       { action: 'close' }
     ]
 
-    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    let channela = await projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
       expectedmessagecount++
 
@@ -439,7 +439,7 @@ describe( "dtmf", function() {
       }
     } )
 
-    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
+    let channelb = await projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
 
     } )
 
@@ -548,7 +548,7 @@ describe( "dtmf", function() {
       { action: 'close' }
     ]
 
-    let channela = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    let channela = await projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
       expectedmessagecount++
 
@@ -557,11 +557,11 @@ describe( "dtmf", function() {
       }
     } )
 
-    let channelb = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
+    let channelb = await projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
       expect( d.action).to.not.equal( "telephone-event" )
     } )
 
-    let channelc = projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointc.address().port, "codec": 97 } }, function( d ) {
+    let channelc = await projectrtp.openchannel( { "target": { "address": "localhost", "port": endpointc.address().port, "codec": 97 } }, function( d ) {
       expect( d.action).to.not.equal( "telephone-event" )
     } )
 

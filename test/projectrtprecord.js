@@ -91,9 +91,9 @@ describe( "record", function() {
     this.slow( 1200 )
 
     server.bind()
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
-      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) {
           server.close()
         }
@@ -166,9 +166,9 @@ describe( "record", function() {
       { action: 'close' }
     ]
 
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
-      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
         if( "close" === d.action ) {
@@ -224,9 +224,9 @@ describe( "record", function() {
     this.slow( 1200 )
 
     server.bind()
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
-      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) {
           server.close()
         }
@@ -320,9 +320,9 @@ describe( "record", function() {
     server.bind()
     let delayedjobs = []
     let recording = false
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
-      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
 
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
@@ -394,9 +394,9 @@ describe( "record", function() {
 
     server.bind()
     let delayedjobs = []
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
-      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
 
         if( "record" === d.action && "finished.timeout" == d.event ) {
           channel.close()
@@ -481,9 +481,9 @@ describe( "record", function() {
     ]
     let expectedmessagecount = 0
 
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
-      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
 

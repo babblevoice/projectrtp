@@ -86,7 +86,7 @@ describe( "rtpsound", function() {
     this.timeout( 800 )
     this.slow( 600 )
 
-    let channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": 20000, "codec": 0 } } )
+    let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": 20000, "codec": 0 } } )
 
     expect( channel.close ).to.be.an( "function" )
     expect( channel.play ).to.be.an( "function" )
@@ -116,11 +116,11 @@ describe( "rtpsound", function() {
     this.slow( 2000 )
 
     server.bind()
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
       let ourport = server.address().port
 
-      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
       } )
 
       expect( channel.play( {
@@ -163,11 +163,11 @@ describe( "rtpsound", function() {
     } )
 
     server.bind()
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
       let ourport = server.address().port
 
-      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
           server.close()
@@ -212,11 +212,11 @@ describe( "rtpsound", function() {
     } )
 
     server.bind()
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
       let ourport = server.address().port
 
-      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
           server.close()
@@ -253,11 +253,11 @@ describe( "rtpsound", function() {
     } )
 
     server.bind()
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
       let ourport = server.address().port
 
-      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
       } )
 
       expect( channel.play( { "loop": 2, "files": [ { "wav": "/tmp/flat.wav" } ] } ) ).to.be.true
@@ -333,11 +333,11 @@ describe( "rtpsound", function() {
     } )
 
     server.bind()
-    server.on( "listening", function() {
+    server.on( "listening", async function() {
 
       let ourport = server.address().port
 
-      channel = projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
       } )
 
       expect( channel.play( { "loop": 2, "files": [

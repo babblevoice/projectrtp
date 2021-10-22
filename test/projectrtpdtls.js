@@ -15,7 +15,7 @@ describe( "dtls", function() {
 
   it( `Test we have a fingerprint in channel`, async function() {
 
-    let channel = projectrtp.openchannel( {}, function( d ) {
+    let channel = await projectrtp.openchannel( {}, function( d ) {
     } )
 
     expect( channel.local.dtls.fingerprint ).to.be.a( "string" )
@@ -54,10 +54,10 @@ describe( "dtls", function() {
       }
     }
 
-    let channela = projectrtp.openchannel( {}, function( d ) {
+    let channela = await projectrtp.openchannel( {}, function( d ) {
     } )
 
-    let channelb = projectrtp.openchannel( {}, function( d ) {
+    let channelb = await projectrtp.openchannel( {}, function( d ) {
     } )
 
     targeta.dtls.fingerprint = channelb.local.dtls.fingerprint
