@@ -12,8 +12,8 @@ module.exports = class {
     this.recevievedmessagecount = 0
   }
 
-  connect() {
-    this.connection = net.createConnection( 45000, "127.0.0.1" )
+  connect( port = 9002, address = "127.0.0.1" ) {
+    this.connection = net.createConnection( port, address )
     this.connection.on( "connect", this._onsocketconnect.bind( this ) )
     this.connection.on( "data", this._onsocketdata.bind( this ) )
   }
