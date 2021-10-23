@@ -106,7 +106,9 @@ Object.defineProperty( module.exports.projectrtp, "openchannel", {
     if( "undefined" == typeof params ) params = {}
     if( "undefined" == typeof cb ) cb = ()=>{}
 
-    if( server.stats().nodecount > 0 && server.get() ) {
+    if( undefined === params.forcelocal &&
+        server.stats().nodecount > 0 &&
+        server.get() ) {
       return server.get().openchannel( params, cb )
     } else {
       /* use local */
