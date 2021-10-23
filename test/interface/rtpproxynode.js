@@ -1,32 +1,104 @@
 const expect = require( "chai" ).expect
-
+const mockserver = require( "../mock/mockproxyserver.js" )
 const prtp = require( "../../index.js" ).projectrtp
-if(0)
-describe( "node", function() {
+const message = require( "../../lib/message.js" )
+
+describe( "rtpproxy node", function() {
 
   it( `connect to server`, async function() {
 
-    let proxy = prtp.proxy.listen()
-    let n = await prtp.proxy.connect()
+    let ourstate = message.newstate()
 
-    await proxy.waitfornewconnection()
-    expect( prtp.proxy.stats().server.nodecount ).to.equal( 1 )
+    await new Promise( async ( completed ) => {
+      let mock = new mockserver()
+      mock.listen()
+      mock.onnewconnection( ( sock ) => {
+        sock.on( "data", async ( data ) => {
 
-    proxy.close()
-    n.destroy()
+          message.parsemessage( ourstate, data, async ( msg ) => {
+
+            expect( msg ).to.have.property( "status" ).that.is.a( "object" )
+            expect( msg.status ).to.have.property( "workercount" ).that.is.a( "number" )
+            expect( msg.status ).to.have.property( "instance" ).that.is.a( "string" )
+            expect( msg.status ).to.have.property( "channel" ).that.is.a( "object" )
+            expect( msg.status.channel ).to.have.property( "available" ).that.is.a( "number" )
+            expect( msg.status.channel ).to.have.property( "current" ).that.is.a( "number" )
+
+            await mock.close()
+            completed()
+          } )
+        } )
+      } )
+
+      let ournode = await prtp.proxy.connect( mock.port )
+    } )
   } )
 
-  it( `create a remote (albeit local through the proxy) channel`, async function() {
+  it( `connect and open channel`, async function() {
 
-    let proxy = prtp.proxy.listen()
-    let n = await prtp.proxy.connect()
+    await new Promise( async ( completed ) => {
+      let ourstate = message.newstate()
+      let mock = new mockserver()
+      mock.listen()
+      let state = "begin"
+      mock.onnewconnection( ( sock ) => {
+        sock.on( "data", async ( data ) => {
+          message.parsemessage( ourstate, data, async ( msg ) => {
 
-    await proxy.waitfornewconnection()
-    expect( prtp.proxy.stats().server.nodecount ).to.equal( 1 )
+            switch( state ) {
+              case "begin": {
+                /* We should receive our status after connecting */
+                expect( msg ).to.have.property( "status" ).that.is.a( "object" )
+                expect( msg.status ).to.have.property( "workercount" ).that.is.a( "number" )
+                expect( msg.status ).to.have.property( "instance" ).that.is.a( "string" )
+                expect( msg.status ).to.have.property( "channel" ).that.is.a( "object" )
+                expect( msg.status.channel ).to.have.property( "available" ).that.is.a( "number" )
+                expect( msg.status.channel ).to.have.property( "current" ).that.is.a( "number" )
+                state = "open"
+                sock.write(
+                  message.createmessage( {
+                    "id": "54",
+                    "channel": "open"
+                  } ) )
+                return
+              }
+              case "open": {
+                /* a confirmed open message */
+                expect( msg ).to.have.property( "id" ).that.is.a( "string" )
+                expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
+                expect( msg ).to.have.property( "local" ).that.is.a( "object" )
+                expect( msg.local ).to.have.property( "port" ).that.is.a( "number" )
+                expect( msg.local ).to.have.property( "address" ).that.is.a( "string" )
+                expect( msg.local ).to.have.property( "dtls" ).that.is.a( "object" )
+                expect( msg.local.dtls ).to.have.property( "fingerprint" ).that.is.a( "string" )
+                expect( msg.local.dtls ).to.have.property( "enabled" ).that.is.a( "boolean" )
 
-    await prtp.openchannel()
-
-    proxy.close()
-    n.destroy()
+                state = "close"
+                sock.write(
+                  message.createmessage( {
+                    "id": msg.id,
+                    "channel": "close",
+                    "uuid": msg.uuid
+                  } ) )
+                return
+              }
+              case "close": {
+                /* The fullness of this object is tested elsewhere - but confirm it is a close object we receive */
+                expect( msg ).to.have.property( "id" ).that.is.a( "string" )
+                expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
+                expect( msg ).to.have.property( "stats" ).that.is.a( "object" )
+                expect( msg.stats ).to.have.property( "in" ).that.is.a( "object" )
+                expect( msg.stats ).to.have.property( "out" ).that.is.a( "object" )
+                expect( msg.stats ).to.have.property( "tick" ).that.is.a( "object" )
+                await mock.close()
+                completed()
+                return
+              }
+            }
+          } )
+        } )
+      } )
+      let ournode = await prtp.proxy.connect( mock.port )
+    } )
   } )
 } )
