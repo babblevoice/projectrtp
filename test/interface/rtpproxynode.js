@@ -1,3 +1,10 @@
+/*
+TODO
+More of our interface requires testing. Engouh to ensure all data is passed
+over our proxy correctly. The correctness of a channel is tested in channel
+tests.
+*/
+
 const expect = require( "chai" ).expect
 const mockserver = require( "../mock/mockproxyserver.js" )
 const prtp = require( "../../index.js" ).projectrtp
