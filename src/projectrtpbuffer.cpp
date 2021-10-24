@@ -19,6 +19,7 @@ rtpbuffer::rtpbuffer( int buffercount, int waterlevel ) :
   availablertpdata(),
   orderedrtpdata(),
   reserved( nullptr ),
+  peekedpopped( nullptr ),
   buffercount( buffercount ),
   waterlevel( waterlevel ),
   outsn( 0 ),
@@ -44,8 +45,9 @@ rtpbuffer::pointer rtpbuffer::create( int buffercount, int waterlevel ) {
 Returns the next packet in order - does not modify our structure.
 */
 rtppacket* rtpbuffer::peek( void ) {
+  if( nullptr != this->peekedpopped ) return this->peekedpopped;
   rtppacket *out = this->orderedrtpdata.at( this->outsn % this->buffercount );
-  if( nullptr == out ) return nullptr;
+  this->peekedpopped = out;
   return out;
 }
 
@@ -57,18 +59,15 @@ rtppacket* rtpbuffer::pop( void ) {
   uint16_t oldsn = this->outsn;
   this->outsn++;
 
-  if( nullptr == out ) {
-    return nullptr;
-  }
+  this->peekedpopped = nullptr;
+  if( nullptr == out ) return nullptr;
 
   if( nullptr != this->orderedrtpdata.at( oldsn % this->buffercount ) ) {
     this->orderedrtpdata.at( oldsn % this->buffercount ) = nullptr;
     this->availablertpdata.push( out );
   }
 
-  if( out->getsequencenumber() != oldsn ) {
-    return nullptr;
-  }
+  if( out->getsequencenumber() != oldsn ) return nullptr;
   return out;
 }
 
@@ -128,7 +127,10 @@ rtppacket* rtpbuffer::reserve( void ) {
 
   for ( auto i = 0; i < this->buffercount; i++ ) {
     this->orderedrtpdata.at( i ) = nullptr;
-    this->availablertpdata.push( &this->buffer.at( i ) );
+
+    if( this->peekedpopped != &this->buffer.at( i ) ) {
+      this->availablertpdata.push( &this->buffer.at( i ) );
+    }
   }
 
   this->reserved = this->availablertpdata.front();
@@ -297,6 +299,19 @@ static napi_value bufferpeek( napi_env env, napi_callback_info info ) {
 /**
 
 */
+static napi_value buffersize( napi_env env, napi_callback_info info ) {
+  rtpbuffer::pointer pb = getrtpbufferfromthis( env, info );
+  if( nullptr == pb ) return NULL;
+
+  napi_value returnval;
+  double buffersize = pb->size();
+  if( napi_ok != napi_create_double( env, buffersize, &returnval ) ) return NULL;
+  return returnval;
+}
+
+/**
+
+*/
 static napi_value bufferpush( napi_env env, napi_callback_info info ) {
 
   size_t argc = 1;
@@ -364,7 +379,7 @@ static napi_value buffercreate( napi_env env, napi_callback_info info ) {
 
   size_t argc = 1;
   napi_value argv[ 1 ];
-  napi_value npush, npop, npeek, nsize, nwater;
+  napi_value npush, npop, npeek, nsize, nwater, nbuffersize;
 
   int32_t packetcount, packetwaterlevel;
 
@@ -398,6 +413,9 @@ static napi_value buffercreate( napi_env env, napi_callback_info info ) {
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, bufferpeek, nullptr, &npeek ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "peek", npeek ) ) return NULL;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, buffersize, nullptr, &nbuffersize ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "size", nbuffersize ) ) return NULL;
 
   return result;
 }

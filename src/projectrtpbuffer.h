@@ -46,6 +46,8 @@ public:
   rtppacket* reserve( void );
   uint64_t getdropped( void ) { return this->dropped; }
 
+  int size( void ) { return this->buffercount; }
+
   typedef std::vector< rtppacket > rtppackets;
   typedef std::vector< rtppacket* > rtppacketptrs;
   typedef std::queue< rtppacket* > qrtppacketptrs;
@@ -63,6 +65,8 @@ private:
   qrtppacketptrs availablertpdata;
   rtppacketptrs orderedrtpdata;
   rtppacket *reserved;
+  /* Used to ensure we maintain consistency between a peek and a pop */
+  rtppacket *peekedpopped;
 
   int buffercount;
   int waterlevel;

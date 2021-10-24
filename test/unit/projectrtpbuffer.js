@@ -155,4 +155,29 @@ describe( "rtpbuffer", function() {
       }
     }
   } )
+
+  it( `ensure our peeked buffer is maintained`, async function() {
+    let b = projectrtp.rtpbuffer.create()
+    let buffersize = b.size()
+    let halffull = Math.floor( buffersize / 2 )
+
+    let step = 0
+    for ( ; step < halffull; step++ ) {
+      b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0xff, step, 0x00, 0x00, 0x00, 0x00 ] ) } )
+      b.pop()
+    }
+
+    let pk = b.peek()
+    expect( pk[ 3 ] ).to.equal( 0 )
+
+    /* trash the whole buffer */
+    for ( ; step < buffersize; step++ ) {
+      b.push( { "payload": Buffer.from( [ 0x80, 0x00, 0xff, step, 0x00, 0x00, 0x00, 0x00 ] ) } )
+    }
+
+    /* our peeked should be safe */
+    let poppedpk = b.pop()
+    expect( pk[ 3 ] ).to.equal( 0 )
+
+  } )
 } )

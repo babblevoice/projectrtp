@@ -95,11 +95,6 @@ void projectchannelmux::mixall( void ) {
     this->subtracted.zero();
     this->subtracted.copy( this->added );
 
-    /*
-     There is a small chance that rtp bottom may have flipped from nullptr to something.
-     We will get a little noise as a result. We could get rid of this by marking the
-     channel somehow?
-    */
     if( chan->recv ) {
       AQUIRESPINLOCK( chan->rtpbufferlock );
       rtppacket *src = chan->inbuff->pop();
