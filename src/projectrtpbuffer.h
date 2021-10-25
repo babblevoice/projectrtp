@@ -41,6 +41,7 @@ public:
                          int waterlevel = BUFFERPACKETCAP /* the level we build up before allowing a read */ );
 
   rtppacket* peek( void );
+  rtppacket* poppeeked( void );
   rtppacket* pop( void );
   void push( void );
   rtppacket* reserve( void );

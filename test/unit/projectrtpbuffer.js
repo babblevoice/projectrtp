@@ -176,8 +176,16 @@ describe( "rtpbuffer", function() {
     }
 
     /* our peeked should be safe */
-    let poppedpk = b.pop()
+    let poppedpk = b.poppeeked()
     expect( pk[ 3 ] ).to.equal( 0 )
+
+    pk = b.peek()
+    poppedpk = b.poppeeked()
+    expect( pk[ 3 ] ).to.equal( 1 )
+
+    pk = b.peek()
+    poppedpk = b.poppeeked()
+    expect( pk[ 3 ] ).to.equal( 2 )
 
   } )
 } )

@@ -76,7 +76,9 @@ void projectchannelmux::mixall( void ) {
         }
       }
 
-      chan->inbuff->pop();
+      AQUIRESPINLOCK( chan->rtpbufferlock );
+      chan->inbuff->poppeeked();
+      RELEASESPINLOCK( chan->rtpbufferlock );
     }
 
     if( nullptr != src ) {
@@ -97,11 +99,14 @@ void projectchannelmux::mixall( void ) {
 
     if( chan->recv ) {
       AQUIRESPINLOCK( chan->rtpbufferlock );
-      rtppacket *src = chan->inbuff->pop();
+      rtppacket *src = chan->inbuff->peek();
       RELEASESPINLOCK( chan->rtpbufferlock );
       if( nullptr != src ) {
         this->subtracted -= chan->incodec;
       }
+      AQUIRESPINLOCK( chan->rtpbufferlock );
+      chan->inbuff->poppeeked();
+      RELEASESPINLOCK( chan->rtpbufferlock );
     }
 
     chan->outcodec << codecx::next;

@@ -46,8 +46,26 @@ Returns the next packet in order - does not modify our structure.
 */
 rtppacket* rtpbuffer::peek( void ) {
   if( nullptr != this->peekedpopped ) return this->peekedpopped;
-  rtppacket *out = this->orderedrtpdata.at( this->outsn % this->buffercount );
-  this->peekedpopped = out;
+  this->peekedpopped = this->orderedrtpdata.at( this->outsn % this->buffercount );
+  return this->peekedpopped;
+}
+
+/* Will only return something if peek has already been called
+and returned a packet */
+rtppacket* rtpbuffer::poppeeked( void ) {
+  uint16_t oldsn = this->outsn;
+  this->outsn++;
+
+  if( nullptr == this->peekedpopped ) return nullptr;
+  rtppacket *out = this->peekedpopped;
+  this->peekedpopped = nullptr;
+
+  if( nullptr != this->orderedrtpdata.at( oldsn % this->buffercount ) ) {
+    this->orderedrtpdata.at( oldsn % this->buffercount ) = nullptr;
+    this->availablertpdata.push( out );
+  }
+
+  if( out->getsequencenumber() != oldsn ) return nullptr;
   return out;
 }
 
@@ -275,6 +293,27 @@ static napi_value bufferpop( napi_env env, napi_callback_info info ) {
   return result;
 }
 
+static napi_value bufferpoppeeked( napi_env env, napi_callback_info info ) {
+
+  napi_value result;
+  void *outdata;
+
+  rtpbuffer::pointer pb = getrtpbufferfromthis( env, info );
+  if( nullptr == pb ) return NULL;
+
+
+  rtppacket *p = pb->poppeeked();
+  if( nullptr == p ) {
+    return NULL;
+  }
+
+  if( napi_ok != napi_create_buffer_copy( env, p->length, ( const void* ) p->pk, &outdata, &result ) ) {
+    return NULL;
+  }
+
+  return result;
+}
+
 static napi_value bufferpeek( napi_env env, napi_callback_info info ) {
 
   napi_value result;
@@ -379,7 +418,7 @@ static napi_value buffercreate( napi_env env, napi_callback_info info ) {
 
   size_t argc = 1;
   napi_value argv[ 1 ];
-  napi_value npush, npop, npeek, nsize, nwater, nbuffersize;
+  napi_value npush, npop, npeek, nsize, nwater, nbuffersize, npoppeeked;
 
   int32_t packetcount, packetwaterlevel;
 
@@ -410,6 +449,9 @@ static napi_value buffercreate( napi_env env, napi_callback_info info ) {
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, bufferpop, nullptr, &npop ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "pop", npop ) ) return NULL;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, bufferpoppeeked, nullptr, &npoppeeked ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "poppeeked", npoppeeked ) ) return NULL;
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, bufferpeek, nullptr, &npeek ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "peek", npeek ) ) return NULL;
