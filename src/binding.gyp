@@ -2,7 +2,7 @@
   "targets": [
     {
       "target_name": "projectrtp",
-      "defines": [ "NODE_MODULE" ],
+      "defines": [ "NODE_MODULE", "BOOST_NO_EXCEPTIONS" ],
       "cflags_cc": [
         "-O3",
         "-Wall",
