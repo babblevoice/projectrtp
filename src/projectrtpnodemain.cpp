@@ -9,6 +9,7 @@
 #include <thread>
 
 #include <boost/asio.hpp>
+#include <boost/exception/diagnostic_information.hpp>
 
 #include "projectrtpnodemain.h"
 #include "projectrtpbuffer.h"
@@ -20,6 +21,11 @@
 boost::asio::io_context workercontext;
 static napi_async_work workhandle;
 static bool started = false;
+
+void boost::throw_exception( std::exception const & e ) {
+  std::string err = boost::diagnostic_information( e );
+  fprintf( stderr, err.c_str() );
+}
 
 /* our work queue requires some work to not exit */
 static ourhighrestimer periodictimer( workercontext );
