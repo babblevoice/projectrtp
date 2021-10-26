@@ -282,7 +282,8 @@ void projectrtpchannel::incrtsout( void ) {
 Our timer to send data - use this for when we are a single channel. Mixing tick is done in mux.
 */
 void projectrtpchannel::handletick( const boost::system::error_code& error ) {
-  if ( error == boost::asio::error::operation_aborted ) return;
+  if( error == boost::asio::error::operation_aborted ) return;
+  if( !this->active ) return;
 
   if( this->_requestclose ) {
     this->doclose();
@@ -638,9 +639,8 @@ void projectrtpchannel::readsomertp( void ) {
     boost::asio::ip::tcp::socket::wait_read,
     [ this ]( const boost::system::error_code& error ) {
 
-      if( boost::asio::error::operation_aborted == error ) {
-        return;
-      }
+      if( boost::asio::error::operation_aborted == error ) return;
+      if( !this->active ) return;
 
       AQUIRESPINLOCK( this->rtpdtlslock );
       dtlssession::pointer currentdtlssession = this->rtpdtls;
