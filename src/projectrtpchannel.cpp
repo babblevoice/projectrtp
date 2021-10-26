@@ -200,9 +200,6 @@ Clean up
 */
 projectrtpchannel::~projectrtpchannel( void ) {
 
-  this->rtpsocket.close();
-  this->rtcpsocket.close();
-
   AQUIRESPINLOCK( availableportslock );
   availableports.push( this->getport() );
   RELEASESPINLOCK( availableportslock );
@@ -256,6 +253,9 @@ void projectrtpchannel::doclose( void ) {
   this->rtpsocket.cancel();
   this->rtcpsocket.cancel();
   this->resolver.cancel();
+
+  this->rtpsocket.close();
+  this->rtcpsocket.close();
 
   postdatabacktojsfromthread( shared_from_this(), "close", this->closereason );
 }
