@@ -25,6 +25,7 @@ static bool started = false;
 void boost::throw_exception( std::exception const & e ) {
   std::string err = boost::diagnostic_information( e );
   fprintf( stderr, err.c_str() );
+  exit( EXIT_FAILURE );
 }
 
 /* our work queue requires some work to not exit */
