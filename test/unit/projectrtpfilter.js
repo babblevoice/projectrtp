@@ -5,7 +5,7 @@ is going on. It is not part of the normal test.
 To plot the data to see filters in action:
 node ./projectrtpfilter.js plot
 */
-const projectrtp = require( "../index.js" ).projectrtp
+const projectrtp = require( "../../index.js" ).projectrtp
 const expect = require( "chai" ).expect
 
 function int16bebuffer2array( inbuffer ) {
