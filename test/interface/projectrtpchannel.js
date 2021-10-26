@@ -91,7 +91,7 @@ describe( "rtpchannel", function() {
       let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
-
+          expect( d.reason ).to.equal( "requested" )
           expect( receviedpkcount ).to.equal( 50 )
           expect( d.stats.in.count ).to.equal( 50 )
           expect( d.stats.in.mos ).to.equal( 4.5 )
