@@ -34,12 +34,11 @@ static ourhighrestimer periodictimer( workercontext );
 std::atomic_bool running;
 
 static void ontimer( const boost::system::error_code& e ) {
-  if ( e != boost::asio::error::operation_aborted ) {
-    if( running ) {
-      periodictimer.expires_at( periodictimer.expiry() + std::chrono::seconds( 1 ) );
-      periodictimer.async_wait( &ontimer );
-    }
-  }
+  if ( e == boost::asio::error::operation_aborted ) return;
+  if( !running ) return;
+
+  periodictimer.expires_at( periodictimer.expiry() + std::chrono::seconds( 1 ) );
+  periodictimer.async_wait( &ontimer );
 }
 
 static void workerbee( void ) {
