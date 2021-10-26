@@ -88,6 +88,8 @@ static void runworkcomplete( napi_env env, napi_status status, void *data ) {
 
 static napi_value stopserver( napi_env env, napi_callback_info info ) {
 
+  /* If we are not running we may already have an outstanding unresolved promise */
+  if( !running ) return NULL;
   napi_value stoppingpromise;
 
   if( napi_ok != napi_create_promise( env, &stoppingdefferedpromise, &stoppingpromise ) ) {
