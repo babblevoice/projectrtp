@@ -14,6 +14,7 @@
 
 extern boost::asio::io_context workercontext;
 std::queue < unsigned short >availableports;
+std::atomic_bool availableportslock( false );
 uint32_t channelscreated = 0;
 
 /*
@@ -153,13 +154,23 @@ void projectrtpchannel::doopen( void ) {
   this->outcodec.reset();
   this->incodec.reset();
 
+  boost::asio::socket_base::reuse_address reuseoption( true );
   this->rtpsocket.open( boost::asio::ip::udp::v4() );
+  this->rtpsocket.set_option( reuseoption );
   this->rtpsocket.bind( boost::asio::ip::udp::endpoint(
       boost::asio::ip::udp::v4(), this->port ) );
 
   this->rtcpsocket.open( boost::asio::ip::udp::v4() );
+  this->rtcpsocket.set_option( reuseoption );
   this->rtcpsocket.bind( boost::asio::ip::udp::endpoint(
       boost::asio::ip::udp::v4(), this->port + 1 ) );
+
+  if( !this->rtpsocket.is_open() || !this->rtcpsocket.is_open() ) {
+    fprintf( stderr, "No more sockets available - refusing a new channel\n" );
+    this->requestclose( "error.nosocket" );
+    this->doclose();
+    return;
+  }
 
   this->active = true;
 
@@ -188,6 +199,14 @@ void projectrtpchannel::doopen( void ) {
 Clean up
 */
 projectrtpchannel::~projectrtpchannel( void ) {
+
+  this->rtpsocket.close();
+  this->rtcpsocket.close();
+
+  AQUIRESPINLOCK( availableportslock );
+  availableports.push( this->getport() );
+  RELEASESPINLOCK( availableportslock );
+
   channelscreated--;
 }
 
@@ -234,8 +253,8 @@ void projectrtpchannel::doclose( void ) {
   }
 
   this->recorders.clear();
-  this->rtpsocket.close();
-  this->rtcpsocket.close();
+  this->rtpsocket.cancel();
+  this->rtcpsocket.cancel();
   this->resolver.cancel();
 
   postdatabacktojsfromthread( shared_from_this(), "close", this->closereason );
@@ -735,11 +754,14 @@ void projectrtpchannel::readsomertcp( void ) {
   this->rtcpsocket.async_receive_from(
   boost::asio::buffer( &this->rtcpdata[ 0 ], RTCPMAXLENGTH ), this->rtcpsenderendpoint,
     [ this ]( boost::system::error_code ec, std::size_t bytes_recvd ) {
-      if ( !ec && bytes_recvd > 0 && bytes_recvd <= RTCPMAXLENGTH ) {
+
+      if( ec ) return;
+
+      if ( bytes_recvd > 0 && bytes_recvd <= RTCPMAXLENGTH ) {
         this->handlertcpdata();
       }
 
-      if( !ec && bytes_recvd && this->active ) {
+      if( bytes_recvd > 0 && this->active ) {
         this->readsomertcp();
       }
     } );
@@ -1624,7 +1646,6 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
 
   /* our final call - allow js to clean up */
   if( "close" == ev->event ) {
-    availableports.push( p->getport() );
     napi_release_threadsafe_function( p->cb, napi_tsfn_abort );
   }
 
@@ -1638,8 +1659,10 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   napi_value ntarget, nport, naddress, ncodec;
 
   napi_value result;
+  AQUIRESPINLOCK( availableportslock );
   auto ourport = availableports.front();
   availableports.pop();
+  RELEASESPINLOCK( availableportslock );
 
   int32_t targetport;
   char targetaddress[ 128 ];
@@ -1855,7 +1878,12 @@ void getchannelstats( napi_env env, napi_value &result ) {
   if( napi_ok != napi_set_named_property( env, result, "channel", channel ) ) return;
 
   napi_value av, chcount;
-  if( napi_ok != napi_create_double( env, availableports.size(), &av ) ) return;
+
+  AQUIRESPINLOCK( availableportslock );
+  auto availableportssize = availableports.size();
+  RELEASESPINLOCK( availableportslock );
+
+  if( napi_ok != napi_create_double( env, availableportssize, &av ) ) return;
   if( napi_ok != napi_create_double( env, channelscreated, &chcount ) ) return;
 
   if( napi_ok != napi_set_named_property( env, channel, "available", av ) ) return;
