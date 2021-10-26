@@ -1,8 +1,8 @@
 # ProjectRTP
 
-An RTP node addon which offers functionality to process RTP data streams and mix them. Al performance tasks are implemented in C++ and use boost::asio for IO completion ports for high concurrency.
+An RTP node addon which offers functionality to process RTP data streams and mix them. All performance tasks are implemented in C++ and use boost::asio for IO completion ports for high concurrency.
 
-ProjectRTP is designed to scale to multiple servers serving other signalling servers. RTP and signalling should be kept separate and this architecture allows that.
+ProjectRTP is designed to scale to multiple servers serving other signalling servers. RTP and signalling should be kept separate and this architecture allows that. It is provided with a proxy server and client to allow for remote nodes.
 
 ProjectRTP is designed to provide all the functions required for a PBX, including channel bridging, recording, playback and all the functions required for IVR.
 
@@ -16,6 +16,40 @@ Features
 * WAV playback using sound soup descriptions to play complex sentences from parts
 * DTMF (RFC 2833) - send, receive and bridge
 * DTLS SRTP (WebRTC)
+
+## Version numbers
+
+We use semantic version numbering.
+
+Given a version number MAJOR.MINOR.PATCH, increment the:
+
+1. MAJOR version when you make incompatible API changes,
+2. MINOR version when you add functionality in a backwards compatible manner, and
+3. PATCH version when you make backwards compatible bug fixes.
+
+As part of this, we maintain jsdoc documentation to document our public interface to this programme.
+
+Only when we release version 1.0.0 will the public API be settled.
+
+## Tests
+
+We now have 3 different sets of tests.
+
+### `npm test`
+
+All tests are run from node. From the root directory run `npm test`. These test all our interfaces and should test expected outputs. These tests use mocha.
+
+The folder is separated out into interface, unit and mock. The mock folder contains mock objects/functions required for testing. Unit tests are to help test internal functions. Interface tests are used to guarantee a stable interface for a specific version number. If these tests require changing (other than bug fixing i.e. a material API change) then a major version update will happen.
+
+### node stress/index.js
+
+These are designed to create real world scenarios - opening and closing multiple channels and random times and at load. This is designed to test for unexpected behaviour. These test do not provide a pass/fail - but might crash or produce unexpected output on bad behaviour. These have concurrency/race condition tests in mind.
+
+### C++
+
+Some tests are provided in C++. They are built with the compiler flags `-fsanitize=address -fsanitize=leak` to catch buffer overruns and leaks.
+
+To build the test executable run `make` from the src directory.
 
 ## Dependencies
 
@@ -53,26 +87,6 @@ Or
 ```
 node-gyp build --debug
 ```
-
-### Test
-
-We now have 3 different sets of tests.
-
-#### `npm test`
-
-All tests are run from node. From the root directory run `npm test`. These test all our interfaces and should test expected outputs. These tests use mocha.
-
-#### node stress/index.js
-
-These are designed to create real world scenarios - opening and closing multiple channels and random times and at load. This is designed to test for unexpected behaviour. These test do not provide a pass/fail - but might crash or produce unexpected output on bad behaviour. These have concurrency/race condition tests in mind.
-
-#### C++
-
-Some tests are provided in C++. They are built with the compiler flags `-fsanitize=address -fsanitize=leak` to catch buffer overruns and leaks.
-
-To build the test executable run `make` from the src directory.
-
-More C++ tests need writing.
 
 ## RPM
 
