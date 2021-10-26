@@ -4,7 +4,7 @@ const expect = require( "chai" ).expect
 const fs = require( "fs" )
 const fspromises = fs.promises
 const dgram = require( "dgram" )
-const projectrtp = require( "../index.js" ).projectrtp
+const projectrtp = require( "../../index.js" ).projectrtp
 
 /* use nodeplotlib to display audio data */
 const showplots = false

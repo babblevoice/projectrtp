@@ -2,7 +2,7 @@
 Currently we use ourselelves to test us working - which is not ideal but better than nothing.
 */
 const expect = require( "chai" ).expect
-const projectrtp = require( "../index.js" ).projectrtp
+const projectrtp = require( "../../index.js" ).projectrtp
 const fs = require( "fs" )
 
 /* Tests */

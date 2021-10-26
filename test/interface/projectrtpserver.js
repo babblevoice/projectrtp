@@ -1,7 +1,7 @@
 
 
 const expect = require( "chai" ).expect
-const projectrtp = require( "../index.js" ).projectrtp
+const projectrtp = require( "../../index.js" ).projectrtp
 
 before( () => {
   projectrtp.run()

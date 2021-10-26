@@ -4,7 +4,7 @@ Call the function and check we have output files. Further testing.
 */
 
 const expect = require( "chai" ).expect
-const projectrtp = require( "../index.js" ).projectrtp
+const projectrtp = require( "../../index.js" ).projectrtp
 
 describe( "tonegen", function() {
   it( `tone.generate exists`, async function() {

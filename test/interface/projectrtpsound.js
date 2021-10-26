@@ -8,7 +8,7 @@ when playing in node. For now, leave checking of timing.
 const expect = require( "chai" ).expect
 const fs = require( "fs" )
 const dgram = require( "dgram" )
-const projectrtp = require( "../index.js" ).projectrtp
+const projectrtp = require( "../../index.js" ).projectrtp
 
 
 /**

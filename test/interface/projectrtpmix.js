@@ -5,7 +5,7 @@ const expect = require( "chai" ).expect
 const fs = require( "fs" )
 const fspromises = fs.promises
 const dgram = require( "dgram" )
-const projectrtp = require( "../index.js" ).projectrtp
+const projectrtp = require( "../../index.js" ).projectrtp
 
 function sendpk( sn, sendtime, dstport, server, data = undefined ) {
 
