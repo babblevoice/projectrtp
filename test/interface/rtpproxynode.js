@@ -1,6 +1,6 @@
 /*
 TODO
-More of our interface requires testing. Engouh to ensure all data is passed
+More of our interface requires testing. Enough to ensure all data is passed
 over our proxy correctly. The correctness of a channel is tested in channel
 tests.
 */
@@ -37,7 +37,7 @@ describe( "rtpproxy node", function() {
         } )
       } )
 
-      let ournode = await prtp.proxy.connect( mock.port )
+      await prtp.proxy.connect( mock.port )
     } )
   } )
 
@@ -106,7 +106,7 @@ describe( "rtpproxy node", function() {
           } )
         } )
       } )
-      let ournode = await prtp.proxy.connect( mock.port )
+      await prtp.proxy.connect( mock.port )
     } )
   } )
 
@@ -166,7 +166,7 @@ describe( "rtpproxy node", function() {
           } )
         } )
       } )
-      let ournode = await prtp.proxy.connect( mock.port )
+      await prtp.proxy.connect( mock.port )
     } )
   } )
 
@@ -218,7 +218,90 @@ describe( "rtpproxy node", function() {
           } )
         } )
       } )
+      await prtp.proxy.connect( mock.port )
+    } )
+  } )
+
+  it( `echo with onpre and onpost`, async function() {
+
+    await new Promise( async ( completed ) => {
+      let ourstate = message.newstate()
+      let mock = new mockserver()
+      mock.listen()
+      let state = "begin"
+      mock.onnewconnection( ( sock ) => {
+        sock.on( "data", async ( data ) => {
+          message.parsemessage( ourstate, data, async ( msg ) => {
+            switch( state ) {
+              case "begin": {
+                state = "open"
+                sock.write(
+                  message.createmessage( {
+                    "id": "54",
+                    "channel": "open"
+                  } ) )
+                return
+              }
+              case "open": {
+                state = "close"
+                sock.write(
+                  message.createmessage( {
+                    "id": msg.id,
+                    "channel": "echo",
+                    "uuid": msg.uuid
+                  } ) )
+                sock.write(
+                  message.createmessage( {
+                    "id": msg.id,
+                    "channel": "close",
+                    "uuid": msg.uuid
+                  } ) )
+                return
+              }
+              case "close": {
+                /* The fullness of this object is tested elsewhere - but confirm it is a close object we receive */
+                expect( msg ).to.have.property( "action" ).that.is.a( "string" ).to.be.equal( "close" )
+                await mock.close()
+
+                expect( onprecount ).to.equal( 3 )
+                expect( onpostcount ).to.equal( 2 )
+                completed()
+                return
+              }
+            }
+          } )
+        } )
+      } )
       let ournode = await prtp.proxy.connect( mock.port )
+
+      let onprecount = 0
+      const expectedpremessages = [
+        { "channel": "open" },
+        { "channel": "echo" },
+        { "channel": "close" }
+      ]
+
+      /*
+      The onpre and onpost methods registers callbacks which can be used
+      by external framework before we action a command or sendback
+      a responce.
+      */
+      ournode.onpre( ( msg, cb ) => {
+        expect( msg ).to.deep.include( expectedpremessages[ onprecount ] )
+        onprecount++
+        cb( msg )
+      } )
+
+      let onpostcount = 0
+      const expectedpostmessages = [
+        { "action": "open" },
+        { "action": "close" }
+      ]
+      ournode.onpost( ( msg, cb ) => {
+        expect( msg ).to.deep.include( expectedpostmessages[ onpostcount ] )
+        onpostcount++
+        cb( msg )
+      } )
     } )
   } )
 } )
