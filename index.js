@@ -73,6 +73,54 @@ and make param and cb optional.
 This is also where we will hook into to pass requests over to
 remote projectrtp nodes if we have remote nodes rather than local addon.
 */
+
+/**
+Callback for events we pass back to inerested parties.
+@callback channelcallback
+@param {object} event
+@listens close
+@listens record
+@listens play
+@listens telephone-event
+*/
+
+/**
+Channel closed event
+@event close
+@type {object}
+@property {string} action - "close"
+@property {string} reason - the reason the channel was closed
+@property {object} tick - statistics related to the channels interval timer
+@property {object} in - in traffic statistics
+@property {object} out - out traffic statistics
+*/
+
+/**
+Channel recording events
+@event record
+@type {object}
+@property {string} action - "record"
+@property {string} file - filename of the recording
+@property {string} event - details of what happened
+*/
+
+/**
+Events realated to sound file playback
+@event play
+@type {object}
+@property {string} action - "play"
+@property {string} event - what the event was
+@property {string} reason - more details regarding the event
+*/
+
+/**
+RFC 2833 telephone-event
+@event telephone-event
+@type {object}
+@property {string} action - "telephone-event"
+@property {string} event - the DTMF character pressed
+*/
+
 /**
 @function openchannel
 @summary Opens a channel and returns a channel object.
