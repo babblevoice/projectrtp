@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require( "uuid" )
 const server = require( "./lib/server.js" )
 const node = require( "./lib/node.js" )
 
+let localaddress = "127.0.0.1"
 
 /*
 We are using our test files to doc the interface as well as test it as
@@ -10,7 +11,6 @@ I can't find any decent toolset to extract this informaton from c++ comments.
 */
 
 /**
-@module projectrtp
 @description
 Addon module for an RTP server for audio mixing/recording and playback etc.
 */
@@ -137,9 +137,10 @@ RFC 2833 telephone-event
 @param {boolean} [properties.direction.send=true]
 @param {boolean} [properties.direction.recv=true]
 @param {Array<string>} [properties.related] - an array of related channel UUID to help in the decision of which node to create the channel on
-@param {function} [callback] - events are passed back to the caller via this callback
+@param {channelcallback} [callback] - events are passed back to the caller via this callback
 @returns {Promise<channel>} - the newly created channel
 */
+
 let oc = module.exports.projectrtp.openchannel
 Object.defineProperty( module.exports.projectrtp, "openchannel", {
   value: async function( x, y ) {
@@ -163,7 +164,7 @@ Object.defineProperty( module.exports.projectrtp, "openchannel", {
       let chan = oc( params, cb )
       /* I can't find a way of defining a getter in napi - so here we override */
       /* TODO finish address */
-      chan.local.address = ""
+      chan.local.address = localaddress
 
       if( undefined === params.id ) {
         chan.id = uuidv4()
@@ -229,3 +230,7 @@ class proxy {
 }
 
 module.exports.projectrtp.proxy = new proxy()
+
+module.exports.projectrtp.setaddress = ( address ) => {
+  localaddress = address
+}
