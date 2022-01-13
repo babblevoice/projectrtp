@@ -199,7 +199,7 @@ class proxy {
   @return {rtpserver}
   */
   listen( port = 9002, address = "127.0.0.1" ) {
-    return server.listen( module.exports.projectrtp, port, address )
+    return server.listen( port, address )
   }
 
   /**
