@@ -3,6 +3,9 @@ const { v4: uuidv4 } = require( "uuid" )
 const server = require( "./lib/server.js" )
 const node = require( "./lib/node.js" )
 
+const fs = require( "fs" )
+const { spawnSync } = require( "child_process" )
+
 let localaddress = "127.0.0.1"
 
 /*
@@ -64,6 +67,34 @@ if( process.platform == "win32" && process.arch == "x64" ) {
   throw "Platform not currently supported"
 }
 
+/* Generate a self signed if none present */
+const keypath = require( "os" ).homedir() + "/.projectrtp/certs/"
+if( !fs.existsSync( keypath + "dtls-srtp.pem" ) ) {
+
+  if ( !fs.existsSync( keypath ) ) fs.mkdirSync( keypath, { recursive: true } )
+  
+  const serverkey = keypath + "server-key.pem"
+  const servercsr = keypath + "server-csr.pem"
+  const servercert = keypath + "server-cert.pem"
+  const combined = keypath + "dtls-srtp.pem"
+
+  const openssl = spawnSync( "openssl", [ "genrsa", "-out", serverkey, "4096" ] )
+  if( 0 !== openssl.status ) throw "Failed to genrsa: " + openssl.status
+
+  const request = spawnSync( "openssl", [ "req", "-new", "-key", serverkey , "-out", servercsr, "-subj", "/C=GB/CN=projectrtp" ] )
+  if( 0 !== request.status ) throw "Failed to generate csr: " + request.status
+
+  const sign = spawnSync( "openssl", [ "x509", "-req", "-in", servercsr, "-signkey", serverkey, "-out", servercert ] )
+  if( 0 !== sign.status ) throw "Failed to sign key: " + sign.status
+
+  let serverkeydata = fs.readFileSync( serverkey )
+  let servercertdata = fs.readFileSync( servercert )
+  fs.writeFileSync( combined, serverkeydata + servercertdata )
+  fs.unlinkSync( serverkey )
+  fs.unlinkSync( servercsr )
+  fs.unlinkSync( servercert )
+  /* we will be left with combined */
+}
 
 module.exports.projectrtp = require( "./src/build/Release/projectrtp" )
 
@@ -128,7 +159,7 @@ RFC 2833 telephone-event
 @param {string} [properties.id] Unique id provided which is simply returned in the channel object
 @param {Object} [properties.target]
 @param {number} properties.target.port - the target port - must be an Int and should be even
-@param {string} properties.target.address - the target (remote) hostname
+@param {string} properties.target.address - the target (remote) host address
 @param {number} properties.target.codec - the target codec as a number
 @param {Object} [properties.target.dtls]
 @param {string} properties.target.dtls.fingerprint - the fingerprint we verify the remote against
@@ -224,7 +255,7 @@ class proxy {
   @param {string} host
   @return {rtpnode}
   */
-  connect( port=9002, host="127.0.0.1" ) {
+  connect( port = 9002, host = "127.0.0.1" ) {
     return node.connect( module.exports.projectrtp, port, host )
   }
 }
