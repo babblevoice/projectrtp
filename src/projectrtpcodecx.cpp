@@ -302,7 +302,7 @@ bool codecx::ilbctol16( void )
 
   /* roughly compression size with some leg room. */
   this->l168kref.malloc( L16PAYLOADSAMPLES, sizeof( int16_t ), L168KPAYLOADTYPE );
-  WebRtc_Word16 speechType;
+  int16_t speechType;
 
   if( nullptr == this->ilbcdecoder ) {
     /* Only support 20mS ATM to make the mixing simpler */
@@ -310,10 +310,10 @@ bool codecx::ilbctol16( void )
     WebRtcIlbcfix_DecoderInit( this->ilbcdecoder, 20 );
   }
 
-  WebRtc_Word16 l168klength = WebRtcIlbcfix_Decode( this->ilbcdecoder,
-                        ( WebRtc_Word16* ) this->ilbcref.c_str(),
+  int16_t l168klength = WebRtcIlbcfix_Decode( this->ilbcdecoder,
+                        ( ilbcencodedval ) this->ilbcref.c_str(),
                         this->ilbcref.size(),
-                        ( WebRtc_Word16 * )this->l168kref.c_str(),
+                        ( ilbcdecodedval )this->l168kref.c_str(),
                         &speechType
                       );
 
@@ -375,10 +375,10 @@ bool codecx::l16toilbc( void ) {
     WebRtcIlbcfix_EncoderInit( this->ilbcencoder, 20 );
   }
 
-  WebRtc_Word16 len = WebRtcIlbcfix_Encode( this->ilbcencoder,
-                            ( WebRtc_Word16 * ) this->l168kref.c_str(),
+  int16_t len = WebRtcIlbcfix_Encode( this->ilbcencoder,
+                            ( ilbcdecodedval ) this->l168kref.c_str(),
                             this->l168kref.size(),
-                            ( WebRtc_Word16* ) this->ilbcref.c_str()
+                            ( ilbcencodedval ) this->ilbcref.c_str()
                           );
   if ( len > 0 ) {
     this->ilbcref.size( len );

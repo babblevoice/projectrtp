@@ -13,6 +13,19 @@
 #include "globals.h"
 #include "projectrtpfirfilter.h"
 
+/* ilbc v2/v3 differences */
+#ifdef G_CONST /* ilbc v2 */
+typedef WebRtc_Word16* ilbcencodedval;
+typedef WebRtc_Word16* ilbcdecodedval;
+
+typedef iLBC_decinst_t ilbcdecinst;
+typedef iLBC_encinst_t ilbcencinst;
+#else
+typedef uint8_t* ilbcencodedval;
+typedef int16_t* ilbcdecodedval;
+typedef IlbcDecoderInstance ilbcdecinst;
+typedef IlbcEncoderInstance ilbcencinst;
+#endif
 
 /*
 Helper class for sound to manipulate sound - before or after a rtppacket is required.
@@ -67,8 +80,8 @@ private:
   g722_encode_state_t *g722encoder;
   g722_decode_state_t *g722decoder;
 
-  iLBC_encinst_t *ilbcencoder;
-  iLBC_decinst_t *ilbcdecoder;
+  ilbcencinst *ilbcencoder;
+  ilbcdecinst *ilbcdecoder;
 
   /* If we require downsampling */
   lowpass3_4k16k lpfilter;
