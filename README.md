@@ -1,6 +1,6 @@
 # ProjectRTP
 
-An RTP node addon which offers functionality to process RTP data streams and mix them. All performance tasks are implemented in C++ and use boost::asio for IO completion ports for high concurrency.
+An RTP node addon which offers functionality to process RTP data streams and mix it. All performance tasks are implemented in C++ and use boost::asio for IO completion ports for high concurrency.
 
 ProjectRTP is designed to scale to multiple servers serving other signalling servers. RTP and signalling should be kept separate and this architecture allows that. It is provided with a proxy server and client to allow for remote nodes.
 
@@ -58,6 +58,7 @@ To build the test executable run `make` from the src directory.
 * boost
 * gnutls
 * libsrtp
+* openssl (for now the node scripts use openssl to generate a self signed cert for DTLS)
 
 ### Fedora
 
@@ -88,14 +89,11 @@ Or
 node-gyp build --debug
 ```
 
-## RPM
-
-In the root directory there is buildrpm script which will build an RPM of application. This needs running
-if you want to build a docker image with projectrtp in it.
-
 ## Docker/Podman
 
-The buildah directory contains 2 scripts and a readme.md. Refer to that doc to build a docker image. It actually uses podman to do the work.
+In the root is the script buildimage and Dockerfile. We pull from node latest and alpine Linux. The default image which can be used as a base or on its own.
+
+podman run -it --rm --name=prtp --pod ourpod projectrtp:latest
 
 ## Codecs
 
@@ -108,28 +106,23 @@ ProjectRTP supports transcoding for the following CODECs
 
 ## Usage
 
-### AWS
-
-As projectrtp is designed to be distributed it allows sessions to be created by the main control server (SIP). Each projectrtp instance is assigned its own public address (--pa) so that when a main control server opens a channel on that server then projectrtp can inform the control server what the public address is for this connection.
-
-projectrtp --fg --pa $(curl http://checkip.amazonaws.com) --connect 127.0.0.1 --chroot ../out/
-
-| Flag        | Description                                                                                  |
-| ----------- | -------------------------------------------------------------------------------------------- |
-| --fg        | Run in the foreground                                                                        |
-| --pa        | Set the public address - either set it statically or use $(curl ...)                         |
-| --connect   | The address of the control server to connect to                                              |
-| --chroot    | The directory to chroot to for sound files, in commands to play a file a / to this directory |
+2 example scripts can be found in the examples folder. The simplenode.js is used in the Docker container as it's main entry.
 
 ## Control
 
-The server is managed via a control socket. I am designing it so that multiple RTP servers can connect to a call control server to create a flexible voice switch.
+The server is managed via a control socket. It is designed so that multiple RTP servers can connect to a call control server to create a flexible voice switch.
 
-projectrtp --fg --pa 192.168.0.141 --connect 127.0.0.1
+The simplest way to spin up a projectrtp node is to use Docker.
 
-See projectrtpmain.cpp for all options. In this example, the --pa is the IP address to instruct the control server which IP to include in SDP. --connect is the address of the control server. Node library coming soon.
+### Enviroment variables
+
+* PORT - the port to connect to
+* HOST - the host to connect to
+* PA - the public address of this host - this is passed back over the control socket so it can be published to the client - if absent the script polls https://checkip.amazonaws.com for what looks like our public address.
 
 ### Protocol
+
+To be reviewed.
 
 The control protocol is simple. A 5 byte header is sent:
 
