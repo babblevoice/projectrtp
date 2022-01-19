@@ -163,7 +163,7 @@ continueloop:
 
   /* Write */
   int file = open( filename.c_str(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR );
-  __off_t position = lseek( file, 0, SEEK_END );
+  off_t position = lseek( file, 0, SEEK_END );
   if( 0 == position )
   {
     write( file, &outwavheader, sizeof( wavheader ) );
