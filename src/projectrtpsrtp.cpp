@@ -1,4 +1,5 @@
 
+#include <string>
 #include <sstream>
 #include <cstring>
 #include <iostream>
@@ -18,13 +19,13 @@
 /* min etc */
 #include <algorithm>
 
+/* getenv */
+#include <cstdlib>
+
 #include "projectrtpsrtp.h"
 
 static gnutls_certificate_credentials_t xcred;
 static std::string fingerprintsha256;
-
-const char *pemfile = "dtls-srtp.pem";
-
 
 #ifdef DTLSDEBUGOUTPUT
 static void serverlogfunc(int level, const char *str) {
@@ -329,16 +330,18 @@ void dtlsinit( void ) {
   /* sets the system trusted CAs for Internet PKI */
   gnutls_certificate_set_x509_system_trust( xcred );
 
+  std::string pemfile = std::string( std::getenv( "HOME" ) ) + "/.projectrtp/certs/dtls-srtp.pem";
+
   gnutls_certificate_set_x509_crl_file( xcred,
-                                            pemfile,
+                                            pemfile.c_str(),
                                             GNUTLS_X509_FMT_PEM );
 
   int idx;
   if( ( idx = gnutls_certificate_set_x509_key_file( xcred,
-                                              pemfile,
-                                              pemfile,
+                                              pemfile.c_str(),
+                                              pemfile.c_str(),
                                               GNUTLS_X509_FMT_PEM ) ) < 0 ) {
-    fprintf( stderr, "No certificate or key found - quiting\n" );
+    fprintf( stderr, "No private key and certificate found (%s) - quiting\n", pemfile.c_str() );
     exit( 1 );
   }
 
