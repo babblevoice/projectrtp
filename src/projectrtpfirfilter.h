@@ -18,7 +18,7 @@ public:
   int16_t execute( int16_t val );
 
 private:
-  u_char round;
+  uint8_t round;
   float history[ lowpass3_4k16kfl ];
 };
 
@@ -34,7 +34,7 @@ public:
   inline int get( void ) { return this->rtotal / this->l; }
 
 private:
-  u_char round;
+  uint8_t round;
   int l;
   int32_t rtotal;
   float history[ ma_length ];
