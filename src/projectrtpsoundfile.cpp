@@ -308,7 +308,7 @@ bool soundfilereader::read( rawsound &out ) {
   this->cbwavblock[ this->currentcbindex ].aio_offset = lastreadoffset + this->blocksize;
   this->cbwavblock[ this->currentcbindex ].aio_nbytes = this->blocksize;
 
-  if( this->cbwavblock[ this->currentcbindex ].aio_offset > ( __off_t ) ( this->ourwavheader.chunksize + sizeof( wavheader ) ) ) {
+  if( this->cbwavblock[ this->currentcbindex ].aio_offset > ( off_t ) ( this->ourwavheader.chunksize + sizeof( wavheader ) ) ) {
     this->cbwavblock[ this->currentcbindex ].aio_offset = sizeof( wavheader );
   }
 
@@ -373,12 +373,12 @@ void soundfilereader::setposition( long mseconds ) {
 }
 
 long soundfilereader::offtomsecs( void ) {
-  __off_t position = this->cbwavblock[ this->currentcbindex ].aio_offset - sizeof( wavheader );
+  off_t position = this->cbwavblock[ this->currentcbindex ].aio_offset - sizeof( wavheader );
   return position / ( ( this->ourwavheader.bit_depth / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) );
 }
 
 long soundfilereader::getposition( void ) {
-  if( this->cbwavblock[ this->currentcbindex ].aio_offset <= ( __off_t ) sizeof( wavheader ) ) {
+  if( this->cbwavblock[ this->currentcbindex ].aio_offset <= ( off_t ) sizeof( wavheader ) ) {
     return 0;
   }
 
