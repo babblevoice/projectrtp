@@ -1,7 +1,7 @@
 # Config
 config/
-
 src/build
+_tmpbuild/
 
 # For the moment ignore docs - jsdoc all works but I need to decide on how we use them
 docs
