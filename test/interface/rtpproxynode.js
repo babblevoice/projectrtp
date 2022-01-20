@@ -31,13 +31,58 @@ describe( "rtpproxy node", function() {
             expect( msg.status.channel ).to.have.property( "available" ).that.is.a( "number" )
             expect( msg.status.channel ).to.have.property( "current" ).that.is.a( "number" )
 
+            ournode.destroy()
             await mock.close()
             completed()
           } )
         } )
       } )
 
-      await prtp.proxy.connect( mock.port )
+      let ournode = await prtp.proxy.connect( mock.port )
+    } )
+  } )
+
+  it( `connect to server then drop the re-go`, async function() {
+
+    this.timeout( 2000 )
+    this.slow( 1500 )
+
+    let ourstate = message.newstate()
+
+    await new Promise( async ( completed ) => {
+      let mock = new mockserver()
+      mock.listen()
+      mock.onnewconnection( ( sock ) => {
+        sock.on( "data", async ( data ) => {
+
+          message.parsemessage( ourstate, data, async ( msg ) => {
+
+            expect( msg ).to.have.property( "status" ).that.is.a( "object" )
+            expect( msg.status ).to.have.property( "workercount" ).that.is.a( "number" )
+            expect( msg.status ).to.have.property( "instance" ).that.is.a( "string" )
+            expect( msg.status ).to.have.property( "channel" ).that.is.a( "object" )
+            expect( msg.status.channel ).to.have.property( "available" ).that.is.a( "number" )
+            expect( msg.status.channel ).to.have.property( "current" ).that.is.a( "number" )
+
+            /* drop the connection */
+            for( let sock in mock.socks ) {
+              try{
+                mock.socks[ sock ].destroy()
+              } catch( e ){ console.log( e ) }
+            }
+
+            if( 1 === connectcount ) {
+              ournode.destroy()
+              await mock.close()
+              completed()
+            }
+            connectcount++
+          } )
+        } )
+      } )
+
+      let connectcount = 0
+      let ournode = await prtp.proxy.connect( mock.port )
     } )
   } )
 
@@ -98,6 +143,8 @@ describe( "rtpproxy node", function() {
                 expect( msg.stats ).to.have.property( "in" ).that.is.a( "object" )
                 expect( msg.stats ).to.have.property( "out" ).that.is.a( "object" )
                 expect( msg.stats ).to.have.property( "tick" ).that.is.a( "object" )
+
+                ournode.destroy()
                 await mock.close()
                 completed()
                 return
@@ -106,7 +153,7 @@ describe( "rtpproxy node", function() {
           } )
         } )
       } )
-      await prtp.proxy.connect( mock.port )
+      let ournode = await prtp.proxy.connect( mock.port )
     } )
   } )
 
@@ -158,6 +205,7 @@ describe( "rtpproxy node", function() {
               case "closed": {
                 /* The fullness of this object is tested elsewhere - but confirm it is a close object we receive */
                 expect( msg ).to.have.property( "action" ).that.is.a( "string" ).to.be.equal( "close" )
+                ournode.destroy()
                 await mock.close()
                 completed()
                 return
@@ -166,7 +214,7 @@ describe( "rtpproxy node", function() {
           } )
         } )
       } )
-      await prtp.proxy.connect( mock.port )
+      let ournode = await prtp.proxy.connect( mock.port )
     } )
   } )
 
@@ -210,6 +258,7 @@ describe( "rtpproxy node", function() {
               case "close": {
                 /* The fullness of this object is tested elsewhere - but confirm it is a close object we receive */
                 expect( msg ).to.have.property( "action" ).that.is.a( "string" ).to.be.equal( "close" )
+                ournode.destroy()
                 await mock.close()
                 completed()
                 return
@@ -218,7 +267,7 @@ describe( "rtpproxy node", function() {
           } )
         } )
       } )
-      await prtp.proxy.connect( mock.port )
+      let ournode = await prtp.proxy.connect( mock.port )
     } )
   } )
 
@@ -261,6 +310,7 @@ describe( "rtpproxy node", function() {
               case "close": {
                 /* The fullness of this object is tested elsewhere - but confirm it is a close object we receive */
                 expect( msg ).to.have.property( "action" ).that.is.a( "string" ).to.be.equal( "close" )
+                ournode.destroy()
                 await mock.close()
 
                 expect( onprecount ).to.equal( 3 )
