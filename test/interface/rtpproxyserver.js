@@ -26,7 +26,7 @@ describe( "rtpproxy server", function() {
     n.connect( listenport )
     await p.waitfornewconnection()
     n.destroy()
-    await p.close()
+    await p.destroy()
 
     p = await prtp.proxy.listen( listenport, "127.0.0.1" )
     n = new mocknode()
@@ -34,7 +34,7 @@ describe( "rtpproxy server", function() {
     n.connect( listenport )
     await p.waitfornewconnection()
     n.destroy()
-    await p.close()
+    await p.destroy()
   } )
 
   it( `check open json`, async function() {
@@ -56,7 +56,7 @@ describe( "rtpproxy server", function() {
     n.setmessagehandler( "close", ( onmsg ) => {
       closereceived = true
       n.destroy()
-      p.close()
+      p.destroy()
     } )
 
     let p = await prtp.proxy.listen( listenport, "127.0.0.1" )
@@ -112,7 +112,7 @@ describe( "rtpproxy server", function() {
     let closereceived = false
     n.setmessagehandler( "close", ( onmsg ) => {
       n.destroy()
-      p.close()
+      p.destroy()
       closereceived = true
     } )
 
@@ -158,7 +158,7 @@ describe( "rtpproxy server", function() {
     let closereceived = false
     n.setmessagehandler( "close", ( onmsg ) => {
       n.destroy()
-      p.close()
+      p.destroy()
       closereceived = true
     } )
 
@@ -211,7 +211,7 @@ describe( "rtpproxy server", function() {
     let closereceived = false
     n.setmessagehandler( "close", ( msg ) => {
       n.destroy()
-      p.close()
+      p.destroy()
       closereceived = true
     } )
 
@@ -262,7 +262,7 @@ describe( "rtpproxy server", function() {
     let closereceived = false
     n.setmessagehandler( "close", ( msg ) => {
       n.destroy()
-      p.close()
+      p.destroy()
       closereceived = true
     } )
 
@@ -320,7 +320,7 @@ describe( "rtpproxy server", function() {
     let closereceived = false
     n.setmessagehandler( "close", ( msg ) => {
       n.destroy()
-      p.close()
+      p.destroy()
       closereceived = true
     } )
 
