@@ -35,6 +35,7 @@ async function connect() {
   if( undefined !== process.env.HOST ) host = process.env.HOST
 
   prtp.projectrtp.proxy.connect( port, host )
+  prtp.projectrtp.run()
 }
 
 connect()
