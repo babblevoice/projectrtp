@@ -34,5 +34,6 @@ COPY --from=builder /lib/libilbc* /lib/
 
 RUN npm install /usr/local/lib/node_modules/projectrtp/
 
+EXPOSE 10000-2000
 CMD [ "node", "simplenode.js" ]
 
