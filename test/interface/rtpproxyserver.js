@@ -44,8 +44,8 @@ describe( "rtpproxy server", function() {
       n.sendmessage( {
           "action": "open",
           "id": onmsg.id,
-          "channel": {
-            "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+          "local": {
             "port": 10002,
             "address": "192.168.0.141"
             }
@@ -96,8 +96,8 @@ describe( "rtpproxy server", function() {
       n.sendmessage( {
           "action": "open",
           "id": onmsg.id,
+          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
           "channel": {
-            "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
             "port": 10002,
             "address": "192.168.0.141"
             }
@@ -138,8 +138,8 @@ describe( "rtpproxy server", function() {
       n.sendmessage( {
           "action": "open",
           "id": onmsg.id,
+          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
           "channel": {
-            "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
             "port": 10002,
             "address": "192.168.0.141"
             }
@@ -183,8 +183,8 @@ describe( "rtpproxy server", function() {
       n.sendmessage( {
           "action": "open",
           "id": msg.id,
+          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
           "channel": {
-            "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
             "port": 10002,
             "address": "192.168.0.141"
             }
@@ -241,8 +241,8 @@ describe( "rtpproxy server", function() {
       n.sendmessage( {
           "action": "open",
           "id": msg.id,
+          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
           "channel": {
-            "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
             "port": 10002,
             "address": "192.168.0.141"
             }
@@ -289,8 +289,8 @@ describe( "rtpproxy server", function() {
       n.sendmessage( {
           "action": "open",
           "id": msg.id,
+          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
           "channel": {
-            "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
             "port": 10002,
             "address": "192.168.0.141"
             }
