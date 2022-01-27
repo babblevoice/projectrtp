@@ -93,7 +93,17 @@ node-gyp build --debug
 
 In the root is the script buildimage and Dockerfile. We pull from node latest and alpine Linux. The default image which can be used as a base or on its own.
 
-podman run -it --rm --name=prtp --pod ourpod projectrtp:latest
+The enviroment variable HOST should contain the host address of the control server - its default is 127.0.0.1. The variable PORT contains the port number to communicate over - with a default of 9002.
+
+The enviroment variable PA is takes the below form- where the address is passed back to the control server so it can be published in SDP - i.e. this allows for multiple RTP nodes all on different IP addresses. If you do not pass this in, then the default script will determin your public IP address by calling https://checkip.amazonaws.com to obtain your IP.
+
+podman run --restart=always --net=host -d -it --env PA=127.0.0.1 --name=prtp projectrtp:latest
+
+## Example scripts
+
+The examples folder contains 2 scripts. The simplenode can be used where no special funtionality is required. The standard projectrtp docker image points to this - so starting a docker instance will run up as a node and attempt to connect to a central control server.
+
+The advancednode.js is an example which contains pre and post processing - which can be used, for example, downloading recordings, performing text to speach or uploading recordings when it has completed.
 
 ## Codecs
 
