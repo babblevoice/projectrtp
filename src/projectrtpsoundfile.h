@@ -109,7 +109,7 @@ public:
   bool read( rawsound &out );
   bool complete( void );
 
-  void setposition( long seconds );
+  void setposition( long mseconds );
   long getposition( void );
 
   inline bool isopen( void ) { return this->file != -1; }
