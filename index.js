@@ -247,6 +247,14 @@ class proxy {
   }
 
   /**
+  @summary Returns details of all of the nodes connected to us.
+  @return { Object }
+  */
+  nodes() {
+    return server.nodes()
+  }
+
+  /**
   @summary Listen for connections from RTP nodes which can offer their services
   to us. When we listen for other nodes, we can configure them so that it is invisable
   to the main node as to where the channel is being handled.
