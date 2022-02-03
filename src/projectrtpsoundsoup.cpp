@@ -96,7 +96,7 @@ bool soundsoup::read( rawsound &out ) {
 
   if ( playing->sf->complete() ) {
     this->plusone( playing );
-  } else if ( -1 != playing->stop && playing->sf->getposition() > playing->stop ) {
+  } else if ( -1 != playing->stop && playing->sf->getposition() >= playing->stop ) {
     this->plusone( playing );
   }
 
@@ -223,6 +223,7 @@ static soundsoupfile::pointer parsefileobj( soundsoup::pointer p, napi_env env, 
 
   ssf->sf = soundfilereader::create( filename );
   if( !ssf->sf->isopen() ) {
+    fprintf( stderr, "Couldn't open soundsoup file %s\n", filename.c_str() );
     return nullptr;
   }
 
@@ -242,6 +243,7 @@ soundsoup::pointer soundsoupcreate( napi_env env, napi_value obj, int channelcod
     napi_is_array( env, nfiles, &isarray );
 
     if( !isarray ) {
+      fprintf( stderr, "Bad files array in soundsoup\n" );
       return nullptr;
     }
 
@@ -249,6 +251,7 @@ soundsoup::pointer soundsoupcreate( napi_env env, napi_value obj, int channelcod
     napi_get_array_length( env, nfiles, &numfiles );
 
     if( 0 == numfiles ) {
+      fprintf( stderr, "Zero length files array in soundsoup\n" );
       return nullptr;
     }
 
@@ -258,7 +261,10 @@ soundsoup::pointer soundsoupcreate( napi_env env, napi_value obj, int channelcod
       napi_value filei;
       napi_get_element( env, nfiles, i, &filei );
       soundsoupfile::pointer ssp = parsefileobj( p, env, filei, channelcodec );
-      if( nullptr == ssp ) return nullptr;
+      if( nullptr == ssp ) {
+        fprintf( stderr, "Bad file object - ignoring request\n" );
+        return nullptr;
+      }
       p->addfile( ssp, i );
     }
 
@@ -287,6 +293,7 @@ soundsoup::pointer soundsoupcreate( napi_env env, napi_value obj, int channelcod
     return p;
   }
 
+  fprintf( stderr, "Unknown error parsing soundsoup\n" );
   return nullptr;
 }
 
