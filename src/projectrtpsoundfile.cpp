@@ -148,7 +148,7 @@ soundfilereader::soundfilereader( std::string &url ) :
     memset( &this->cbwavblock[ i ], 0, sizeof( aiocb ) );
     this->cbwavblock[ i ].aio_nbytes = L16WIDEBANDBYTES;
     this->cbwavblock[ i ].aio_fildes = this->file;
-    this->cbwavblock[ i ].aio_offset = sizeof( wavheader );
+    this->cbwavblock[ i ].aio_offset = sizeof( wavheader ) + ( i * L16WIDEBANDBYTES );
     this->cbwavblock[ i ].aio_buf = this->buffer + ( i * L16WIDEBANDBYTES );
   }
 
@@ -272,17 +272,7 @@ bool soundfilereader::read( rawsound &out ) {
   }
 
   if( this->initseekmseconds > 0 ) {
-    off_t init_aio_offset = 0;
-    init_aio_offset = ( this->ourwavheader.bit_depth / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * this->initseekmseconds;
-    init_aio_offset = ( this->cbwavblock[ this->currentcbindex ].aio_offset / this->blocksize ) * this->blocksize;
-    this->cbwavblock[ this->currentcbindex ].aio_offset = sizeof( wavheader ) + init_aio_offset;
-    this->initseekmseconds = 0;
-
-    if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
-      close( this->file );
-      this->file = -1;
-    }
-
+    this->setposition( this->initseekmseconds );
     return false;
   }
 
@@ -353,14 +343,24 @@ void soundfilereader::setposition( long mseconds ) {
 
 
   if( this->headerread ) {
+    while( AIO_NOTCANCELED == aio_cancel( this->file, NULL ) );
+
     this->currentcbindex = ( this->currentcbindex + 1 ) % SOUNDFILENUMBUFFERS;
 
     off_t our_aio_offset = ( this->ourwavheader.bit_depth /*16*/ / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * mseconds; /* bytes per sample */
     our_aio_offset = ( our_aio_offset / this->blocksize ) * this->blocksize; /* realign to the nearest block */
     our_aio_offset += sizeof( wavheader );
-    this->cbwavblock[ this->currentcbindex ].aio_offset = our_aio_offset;
+
+    for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
+      memset( &this->cbwavblock[ i ], 0, sizeof( aiocb ) );
+      this->cbwavblock[ i ].aio_nbytes = L16WIDEBANDBYTES;
+      this->cbwavblock[ i ].aio_fildes = this->file;
+      this->cbwavblock[ i ].aio_offset = sizeof( wavheader ) + our_aio_offset + ( i * L16WIDEBANDBYTES );
+      this->cbwavblock[ i ].aio_buf = this->buffer + ( i * L16WIDEBANDBYTES );
+    }
 
     /* read ahead */
+    this->currentcbindex = 0;
     if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
       close( this->file );
       this->file = -1;
