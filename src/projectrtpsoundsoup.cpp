@@ -53,9 +53,11 @@ Move onto the next item in the sound soup. If there is no more to play
 return false otherwise return true.
 */
 bool soundsoup::plusone( soundsoupfile::pointer playing ) {
+
+  playing->sf->setposition( playing->start );
+
   /* Do we loop this file? */
   if( playing->loopcount > 0 ) {
-    playing->sf->setposition( playing->start );
     playing->loopcount--;
     return true;
   }
@@ -67,12 +69,9 @@ bool soundsoup::plusone( soundsoupfile::pointer playing ) {
 
       for( auto it = this->files.begin(); it != this->files.end(); it++ ) {
         (*it)->loopcount = (*it)->maxloop;
-        if( (*it)->sf ) {
-          (*it)->sf->setposition( (*it)->start );
-        }
       }
-      this->currentfile = 0;
 
+      this->currentfile = 0;
       return true;
     }
     this->finished = true;
@@ -80,9 +79,6 @@ bool soundsoup::plusone( soundsoupfile::pointer playing ) {
   }
 
   this->currentfile++;
-  soundsoupfile::pointer next = this->files[ this->currentfile ];
-  next->sf->setposition( next->start );
-
   return true;
 }
 
@@ -92,7 +88,7 @@ bool soundsoup::read( rawsound &out ) {
   }
 
   soundsoupfile::pointer playing = this->files[ this->currentfile ];
-  playing->sf->read( out );
+  if( !playing->sf->read( out ) ) return false;
 
   if ( playing->sf->complete() ) {
     this->plusone( playing );

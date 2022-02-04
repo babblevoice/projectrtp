@@ -273,7 +273,7 @@ bool soundfilereader::read( rawsound &out ) {
 
   if( this->initseekmseconds > 0 ) {
     this->setposition( this->initseekmseconds );
-    return false;
+    return true;
   }
 
   if( aio_error( &this->cbwavblock[ this->currentcbindex ] ) == EINPROGRESS ) {
@@ -284,7 +284,8 @@ bool soundfilereader::read( rawsound &out ) {
   /* success? */
   int numbytes = aio_return( &this->cbwavblock[ this->currentcbindex ] );
 
-  if( -1 == numbytes || 0 == numbytes ) {
+  if( -1 == numbytes ) {
+    fprintf( stderr, "Bad call to aio_return\n" );
     return false;
   }
 
@@ -295,12 +296,13 @@ bool soundfilereader::read( rawsound &out ) {
   auto lastreadoffset = this->cbwavblock[ this->currentcbindex ].aio_offset;
   this->currentcbindex = ( this->currentcbindex + 1 ) % SOUNDFILENUMBUFFERS;
 
-  this->cbwavblock[ this->currentcbindex ].aio_offset = lastreadoffset + this->blocksize;
-  this->cbwavblock[ this->currentcbindex ].aio_nbytes = this->blocksize;
-
-  if( this->cbwavblock[ this->currentcbindex ].aio_offset > ( off_t ) ( this->ourwavheader.chunksize + sizeof( wavheader ) ) ) {
+  if( this->cbwavblock[ this->currentcbindex ].aio_offset > this->ourwavheader.chunksize ) {
     this->cbwavblock[ this->currentcbindex ].aio_offset = sizeof( wavheader );
+  } else {
+    this->cbwavblock[ this->currentcbindex ].aio_offset = lastreadoffset + this->blocksize;
   }
+  
+  this->cbwavblock[ this->currentcbindex ].aio_nbytes = this->blocksize;
 
   /* read next block */
   if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
@@ -321,7 +323,7 @@ bool soundfilereader::complete( void ) {
     return false;
   }
 
-  return this->cbwavblock[ this->currentcbindex ].aio_offset > this->ourwavheader.chunksize;
+  return ( this->cbwavblock[ this->currentcbindex ].aio_offset + this->blocksize ) > this->ourwavheader.chunksize;
 }
 
 /*!md
