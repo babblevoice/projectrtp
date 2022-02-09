@@ -342,6 +342,8 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
     bool playernew = false;
     AQUIRESPINLOCK( this->newplaylock );
     if( nullptr != this->newplaydef ) {
+      this->doecho = false;
+
       if( nullptr != this->player ) {
         playerreplaced = true;
       }
@@ -360,7 +362,20 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
     }
   }
 
-  if( this->player ) {
+  if( this->doecho ) {
+    if( this->player ) {
+      postdatabacktojsfromthread( shared_from_this(), "play", "end", "doecho" );
+      this->player = nullptr;
+    }
+
+    if( nullptr != src ) {
+      this->outcodec << *src;
+
+      rtppacket *dst = this->gettempoutbuf();
+      dst << this->outcodec;
+      this->writepacket( dst );
+    }
+  } else if( this->player ) {
     rtppacket *out = this->gettempoutbuf();
     rawsound r;
     if( this->player->read( r ) ) {
@@ -373,15 +388,7 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
       this->player = nullptr;
       postdatabacktojsfromthread( shared_from_this(), "play", "end", "completed" );
     }
-  } else if( this->doecho ) {
-    if( nullptr != src ) {
-      this->outcodec << *src;
-
-      rtppacket *dst = this->gettempoutbuf();
-      dst << this->outcodec;
-      this->writepacket( dst );
-    }
-  }
+  } 
 
   this->writerecordings();
 
