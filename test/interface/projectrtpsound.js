@@ -135,7 +135,7 @@ describe( "rtpsound", function() {
     channel.close()
     server.close()
 
-    expect( receviedpkcount ).to.equal( 50 )
+    expect( receviedpkcount ).to.be.within( 48, 50 )
   } )
 
   it( `loop in soundsoup and check udp data`, function( done ) {
@@ -272,7 +272,7 @@ describe( "rtpsound", function() {
       8000 samples looped twice. 100 packets (50 packets/S).
     */
 
-    expect( receviedpkcount ).to.equal( 100 )
+    expect( receviedpkcount ).to.be.within( 97, 100 )
   } )
 
   it( `slightly more complex soundsoup file and check udp data`, async function() {
@@ -297,35 +297,31 @@ describe( "rtpsound", function() {
         { "wav": "/tmp/flat3.wav", "start": 40, "stop": 60 },  should be 2 packets
       ] }
       */
-      if( receviedpkcount <= 100 ) {
+      if( 75 == receviedpkcount ) {
         /* flat.wav */
         expect( msg[ 17 ] ).to.equal( 153 /* 0x99 */ )
         expect( msg[ 150 ] ).to.equal( 153 /* 0x99 */ )
-      } else if( receviedpkcount > 100 && receviedpkcount <= 150 ) {
+      } else if( 125 == receviedpkcount ) {
         /* flat2.wav */
         expect( msg[ 17 ] ).to.equal( 3 )
         expect( msg[ 150 ] ).to.equal( 3 )
-      } else if( receviedpkcount > 150 && receviedpkcount <= 200 ) {
+      } else if( 175 == receviedpkcount ) {
         /* flat.wav */
         expect( msg[ 17 ] ).to.equal( 153 /* 0x99 */ )
         expect( msg[ 150 ] ).to.equal( 153 /* 0x99 */ )
-      } else if( receviedpkcount > 200 && receviedpkcount <= 202 ) {
-        /* flat3.wav */
-        expect( msg[ 17 ] ).to.equal( 54 )
-        expect( msg[ 150 ] ).to.equal( 54 )
-      } else if( receviedpkcount > 202 && receviedpkcount <= 302 ) {
+      } else if( 250 == receviedpkcount ) {
         /* flat.wav */
         expect( msg[ 17 ] ).to.equal( 153 )
         expect( msg[ 150 ] ).to.equal( 153 )
-      } else if( receviedpkcount > 302 && receviedpkcount <= 352 ) {
+      } else if( 325 == receviedpkcount ) {
         /* flat2.wav */
         expect( msg[ 17 ] ).to.equal( 3 )
         expect( msg[ 150 ] ).to.equal( 3 )
-      } else if( receviedpkcount > 352 && receviedpkcount <= 402 ) {
+      } else if( 375 == receviedpkcount ) {
         /* flat.wav */
         expect( msg[ 17 ] ).to.equal( 153 )
         expect( msg[ 150 ] ).to.equal( 153 )
-      } else if( receviedpkcount > 402 && receviedpkcount <= 404 ) {
+      } else if( 403 == receviedpkcount ) {
         /* flat3.wav */
         expect( msg[ 17 ] ).to.equal( 54 )
         expect( msg[ 150 ] ).to.equal( 54 )
@@ -355,7 +351,7 @@ describe( "rtpsound", function() {
     /*
       8000 samples looped twice with 3 sections to play. 400 packets (50 packets/S).
     */
-    expect( receviedpkcount ).to.equal( 404 )
+    expect( receviedpkcount ).to.be.within( 390, 405 )
   } )
 
   before( async () => {
