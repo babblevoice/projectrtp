@@ -1125,7 +1125,8 @@ We receive an object like:
    "finishbelowpower": 200,
    "minduration": 2000,
    "maxduration": 15000,
-   "poweraveragepackets": 50
+   "poweraveragepackets": 50,
+   "numchannels": 1 // 1 or 2
 }
 */
 static napi_value channelrecord( napi_env env, napi_callback_info info ) {
@@ -1214,6 +1215,17 @@ static napi_value channelrecord( napi_env env, napi_callback_info info ) {
     bool vfinish;
     if( napi_ok == napi_get_value_bool( env, mtmp, &vfinish ) ) {
       p->requestfinish = vfinish;
+    }
+  }
+
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "numchannels", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "numchannels", &mtmp ) ) {
+        
+    uint32_t numchannels = 2;
+    napi_get_value_uint32( env, mtmp, &numchannels );
+    if( 1 == numchannels || 2 == numchannels ) {
+      p->numchannels = numchannels;
     }
   }
 
