@@ -117,6 +117,17 @@ int16_t ma_filter::execute( int16_t val ) {
   return this->rtotal / this->l;
 }
 
+dcfilter::dcfilter():
+  xm( 0 ),
+  ym( 0 ) {
+
+}
+  
+void dcfilter::reset() {
+  this->xm = 0;
+  this->ym = 0;
+}
+
 #ifdef TESTSUITE
 
 /*

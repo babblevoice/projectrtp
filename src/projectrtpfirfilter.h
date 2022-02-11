@@ -40,6 +40,34 @@ private:
   float history[ ma_length ];
 };
 
+
+/* 
+DC filter - thank you https://www.dsprelated.com/freebooks/filters/DC_Blocker.html
+
+x = current input
+y = current output
+xm1 and ym1 are delayed by 1 samples and start from zero
+y = x - xm1 + 0.995 * ym1;
+xm1 = x;
+ym1 = y;
+*/
+class dcfilter {
+public:
+  dcfilter();
+  void reset();
+  inline int16_t execute( int16_t x ) {
+    int16_t y = x - this->xm + 0.995 * this->ym;
+    this->xm = x;
+    this->ym = y;
+
+    return y;
+  }
+
+private:
+  int16_t xm;
+  int16_t ym;
+};
+
 #ifdef TESTSUITE
 void testlowpass( void );
 void testma( void );
