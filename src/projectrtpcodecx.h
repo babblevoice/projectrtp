@@ -95,7 +95,10 @@ private:
   rawsound g722ref;
   rawsound ilbcref;
 
+  dcfilter dcpowerfilter;
+
   bool _hasdata;
+  uint32_t inpkcount;
 };
 
 /* Functions */
