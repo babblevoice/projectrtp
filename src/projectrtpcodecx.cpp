@@ -92,7 +92,9 @@ codecx::codecx() :
   pcmuref(),
   g722ref(),
   ilbcref(),
-  _hasdata( false )
+  dcpowerfilter(),
+  _hasdata( false ),
+  inpkcount( 0 )
 {
 
 }
@@ -132,6 +134,7 @@ void codecx::reset()
 
   this->restart();
   this->_hasdata = false;
+  this->inpkcount = 0;
 }
 
 /*!md
@@ -141,6 +144,7 @@ Do enough to manage missing packets.
 void codecx::restart( void )
 {
   this->lpfilter.reset();
+  this->dcpowerfilter.reset();
   this->resamplelastsample = 0;
   this->_hasdata = false;
 }
@@ -602,22 +606,19 @@ rawsound& codecx::getref( int pt ) {
 ## Calculate the power in a packet
 Rely on compiler to use SSE + rsqrtss for sqrt. If this ever gets ported to a different
 processor with limited functions like this then fast inverse sqrt should be implemented.
-
-Do we need to filter out DC?
-int16_t y = x - this->xm1 + 0.995 * this->ym1;
-this->xm1 = x;
-this->ym1 = y;
 */
 uint16_t codecx::power( void )
 {
+  if( this->inpkcount < 100 ) return 0; /* ensure the rtp has established */
   rawsound &ref = this->requirel16();
   if ( 0 == ref.size() ) return 0;
 
   uint32_t stotsq = 0;
   int16_t *s = ( int16_t* ) ref.c_str();
-  for( size_t i = 0; i < ref.size(); i++ )
-  {
-    stotsq += (*s) * (*s);
+  int16_t filtered;
+  for( size_t i = 0; i < ref.size(); i++ ) {
+    filtered = this->dcpowerfilter.execute( *s );
+    stotsq += filtered * filtered;
     s++;
   }
 
@@ -638,6 +639,7 @@ Have a think about if this is where we want to mix audio data.
 */
 codecx& operator << ( codecx& c, rtppacket& pk )
 {
+  c.inpkcount++;
   rawsound r = rawsound( pk );
   c << r;
   return c;
