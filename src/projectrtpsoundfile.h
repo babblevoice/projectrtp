@@ -23,6 +23,7 @@
 
 /* number of soundfile async buffers */
 #define SOUNDFILENUMBUFFERS 2
+#define MAXNUMBEROFCHANNELS 2
 
 typedef struct {
     /* RIFF Header */
