@@ -596,7 +596,7 @@ void projectrtpchannel::writerecordings( void ) {
       auto pav = rec->poweravg( power );
       if( !rec->isactive() && pav > rec->startabovepower ) {
         rec->active();
-        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording" );
+        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording.abovepower" );
       }
     }
 
