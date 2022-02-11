@@ -537,7 +537,7 @@ bool projectrtpchannel::checkfordtmf( rtppacket *src ) {
         uint8_t pm = src->getpacketmarker();
 
         /* Have we lost our mark packet */
-        if( 0 == pm &&
+        if( 0 == pm && 0 == endbit &&
             0 == this->lasttelephoneevent ) {
           pm = 1;
         }
