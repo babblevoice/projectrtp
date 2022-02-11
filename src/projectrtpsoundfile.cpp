@@ -19,7 +19,7 @@ soundfile::soundfile() :
     Soundfile blindly reads the format and passes to the codec - so it must be in a format we support - or there will be silence.
     Our macro player (to be written) will choose the most appropriate file to play based on the codec of the channel.
   */
-  this->buffer = new uint8_t[ L16WIDEBANDBYTES * SOUNDFILENUMBUFFERS ];
+  this->buffer = new uint8_t[ L16WIDEBANDBYTES * SOUNDFILENUMBUFFERS * MAXNUMBEROFCHANNELS * 2 /* 16 bit */ ];
 
   /* As it is asynchronous - we read wav header + ahead */
   memset( &this->cbwavheader, 0, sizeof( aiocb ) );
