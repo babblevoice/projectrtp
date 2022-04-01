@@ -10,7 +10,7 @@ let localaddress = "127.0.0.1"
 
 /*
 We are using our test files to doc the interface as well as test it as
-I can't find any decent toolset to extract this informaton from c++ comments.
+I can't find any decent toolset to extract this information from c++ comments.
 */
 
 /**
@@ -106,7 +106,7 @@ remote projectrtp nodes if we have remote nodes rather than local addon.
 */
 
 /**
-Callback for events we pass back to inerested parties.
+Callback for events we pass back to interested parties.
 @callback channelcallback
 @param {object} event
 @listens close
@@ -136,7 +136,7 @@ Channel recording events
 */
 
 /**
-Events realated to sound file playback
+Events related to sound file playback
 @event play
 @type {object}
 @property {string} action - "play"
@@ -223,7 +223,7 @@ Object.defineProperty( module.exports.projectrtp, "stats", {
 class proxy {
   /**
   @summary Listen for connections from RTP nodes which can offer their services
-  to us. When we listen for other nodes, we can configure them so that it is invisable
+  to us. When we listen for other nodes, we can configure them so that it is invisible
   to the main node as to where the channel is being handled.
   @param {Object} target - see channel.create
   @return {rtpserver}
@@ -234,7 +234,7 @@ class proxy {
 
   /**
   @summary Listen for connections from RTP nodes which can offer their services
-  to us. When we listen for other nodes, we can configure them so that it is invisable
+  to us. When we listen for other nodes, we can configure them so that it is invisible
   to the main node as to where the channel is being handled.
   @param {Object} target - see channel.create
   @return {rtpserver}
@@ -256,7 +256,7 @@ class proxy {
 
   /**
   @summary Listen for connections from RTP nodes which can offer their services
-  to us. When we listen for other nodes, we can configure them so that it is invisable
+  to us. When we listen for other nodes, we can configure them so that it is invisible
   to the main node as to where the channel is being handled.
   @param {number} port
   @param {string} host
