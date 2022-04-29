@@ -17,7 +17,7 @@ module.exports = ( packets = utils.between( 50, 50*60*5 ) ) => {
 
     let ourport = client.address().port
 
-    let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, async function( d ) {
+    let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, async function( d ) {
       if( "close" === d.action ) {
         utils.cancelremainingscheduled( client )
         client.close()

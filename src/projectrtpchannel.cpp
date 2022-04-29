@@ -67,7 +67,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   confirmedrtpsenderendpoint(),
   rtcpsenderendpoint(),
   receivedrtp( false ),
-  targetconfirmed( false ),
+  remoteconfirmed( false ),
   mixerlock( false ),
   mixer( nullptr ),
   mixing( false ),
@@ -85,8 +85,8 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   recorders(),
   rtpdtls( nullptr ),
   rtpdtlslock( false ),
-  targetaddress(),
-  targetport( 0 ),
+  remoteaddress(),
+  remoteport( 0 ),
   queueddigits(),
   queuddigitslock( false ),
   lastdtmfsn( 0 ),
@@ -99,9 +99,16 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
 /*
 ## requestopen
 */
-void projectrtpchannel::requestopen( void ) {
+uint32_t projectrtpchannel::requestopen( void ) {
+
+  /* this shouldn't happen */
+  if( this->active ) return this->ssrcout;
+  this->ssrcout = rand();
+
   boost::asio::post( workercontext,
         boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
+
+  return this->ssrcout;
 }
 
 void projectrtpchannel::requestclose( std::string reason ) {
@@ -110,14 +117,14 @@ void projectrtpchannel::requestclose( std::string reason ) {
   }
 }
 
-void projectrtpchannel::target( std::string address,
+void projectrtpchannel::remote( std::string address,
                                 unsigned short port,
                                 uint32_t codec,
                                 dtlssession::mode m,
                                 std::string fingerprint ) {
-  this->targetconfirmed = false;
-  this->targetaddress = address;
-  this->targetport = port;
+  this->remoteconfirmed = false;
+  this->remoteaddress = address;
+  this->remoteport = port;
   this->codec = codec;
 
   if( dtlssession::none != m ) {
@@ -128,7 +135,7 @@ void projectrtpchannel::target( std::string address,
     newsession->ondata( [ p ] ( const void *d , size_t l ) -> void {
       /* Note to me, I need to confirm that gnutls maintains the buffer ptr until after the handshake is confirmed (or
          at least until we have sent the packet). */
-      if( p->targetconfirmed ) {
+      if( p->remoteconfirmed ) {
         p->rtpsocket.async_send_to(
                           boost::asio::buffer( d, l ),
                           p->confirmedrtpsenderendpoint,
@@ -143,7 +150,7 @@ void projectrtpchannel::target( std::string address,
     RELEASESPINLOCK( this->rtpdtlslock );
   }
 
-  if( this->active ) this->dotarget();
+  if( this->active ) this->doremote();
 }
 
 /*
@@ -180,7 +187,7 @@ void projectrtpchannel::doopen( void ) {
   this->tsout = std::chrono::system_clock::to_time_t( std::chrono::system_clock::now() );
   this->snout = rand();
 
-  if( 0 != this->targetport ) this->dotarget();
+  if( 0 != this->remoteport ) this->doremote();
 
   this->readsomertp();
   this->readsomertcp();
@@ -827,7 +834,7 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
     }
   }
 
-  if( this->receivedrtp || this->targetconfirmed ) {
+  if( this->receivedrtp || this->remoteconfirmed ) {
     this->snout++;
 
     this->rtpsocket.async_send_to(
@@ -840,28 +847,28 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
   }
 }
 
-void projectrtpchannel::dotarget( void ) {
-  if( "" == this->targetaddress ) return;
+void projectrtpchannel::doremote( void ) {
+  if( "" == this->remoteaddress ) return;
 
   this->receivedrtp = false;
   boost::asio::ip::udp::resolver::query query(
     boost::asio::ip::udp::v4(),
-    this->targetaddress,
-    std::to_string( this->targetport ) );
+    this->remoteaddress,
+    std::to_string( this->remoteport ) );
 
   /* Resolve the address */
   this->resolver.async_resolve( query,
-      boost::bind( &projectrtpchannel::handletargetresolve,
+      boost::bind( &projectrtpchannel::handleremoteresolve,
         shared_from_this(),
         boost::asio::placeholders::error,
         boost::asio::placeholders::iterator ) );
 }
 
 /*!md
-## handletargetresolve
-We have resolved the target address and port now use it. Further work could be to inform control there is an issue.
+## handleremoteresolve
+We have resolved the remote address and port now use it. Further work could be to inform control there is an issue.
 */
-void projectrtpchannel::handletargetresolve (
+void projectrtpchannel::handleremoteresolve (
             boost::system::error_code e,
             boost::asio::ip::udp::resolver::iterator it ) {
   boost::asio::ip::udp::resolver::iterator end;
@@ -870,12 +877,12 @@ void projectrtpchannel::handletargetresolve (
 
   if( it == end ) {
     /* Failure - silent (the call will be as well!) */
-    this->requestclose( "failed.target" );
+    this->requestclose( "failed.remote" );
     return;
   }
 
   this->confirmedrtpsenderendpoint = *it;
-  this->targetconfirmed = true;
+  this->remoteconfirmed = true;
 
   /* allow us to re-auto correct */
   this->receivedrtp = false;
@@ -1369,13 +1376,13 @@ static napi_value channeldirection( napi_env env, napi_callback_info info ) {
 }
 
 /* Can be called on a running channel so must be thread safe */
-static napi_value channeltarget( napi_env env, napi_callback_info info ) {
+static napi_value channelremote( napi_env env, napi_callback_info info ) {
 
   size_t argc = 1;
   napi_value argv[ 1 ];
 
   napi_value nport, naddress, ncodec;
-  int32_t targetport;
+  int32_t remoteport;
 
   if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ||
       1 != argc ) {
@@ -1391,7 +1398,7 @@ static napi_value channeltarget( napi_env env, napi_callback_info info ) {
     return createnapibool( env, false );
   }
 
-  napi_get_value_int32( env, nport, &targetport );
+  napi_get_value_int32( env, nport, &remoteport );
 
   if( napi_ok != napi_get_named_property( env, argv[ 0 ], "address", &naddress ) ) {
     return createnapibool( env, false );
@@ -1405,10 +1412,10 @@ static napi_value channeltarget( napi_env env, napi_callback_info info ) {
   napi_get_value_uint32( env, ncodec, &codecval );
 
   size_t bytescopied;
-  char targetaddress[ 128 ];
+  char remoteaddress[ 128 ];
 
-  napi_get_value_string_utf8( env, naddress, targetaddress, sizeof( targetaddress ), &bytescopied );
-  if( 0 == bytescopied || bytescopied >= sizeof( targetaddress ) ) {
+  napi_get_value_string_utf8( env, naddress, remoteaddress, sizeof( remoteaddress ), &bytescopied );
+  if( 0 == bytescopied || bytescopied >= sizeof( remoteaddress ) ) {
     return createnapibool( env, false );
   }
 
@@ -1445,7 +1452,7 @@ static napi_value channeltarget( napi_env env, napi_callback_info info ) {
     }
   }
 
-  chan->target( targetaddress, targetport, codecval, dtlsmode, vfingerprint );
+  chan->remote( remoteaddress, remoteport, codecval, dtlsmode, vfingerprint );
 
   return createnapibool( env, true );
 }
@@ -1676,7 +1683,7 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
   size_t argc = 2;
   napi_value argv[ 2 ];
-  napi_value ntarget, nport, naddress, ncodec;
+  napi_value nremote, nport, naddress, ncodec;
 
   napi_value result;
   AQUIRESPINLOCK( availableportslock );
@@ -1684,9 +1691,9 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   availableports.pop();
   RELEASESPINLOCK( availableportslock );
 
-  int32_t targetport;
-  char targetaddress[ 128 ];
-  targetaddress[ 0 ] = 0;
+  int32_t remoteport;
+  char remoteaddress[ 128 ];
+  remoteaddress[ 0 ] = 0;
 
   bool hasit;
   bool dtlsenabled = false;
@@ -1700,21 +1707,21 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
   projectrtpchannel::pointer p = projectrtpchannel::create( ourport );
 
-  /* optional - target */
+  /* optional - remote */
   dtlssession::mode dtlsmode = dtlssession::none;
   char vfingerprint[ 128 ];
   vfingerprint[ 0 ] = 0;
   uint32_t codecval = 0;
 
-  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "target", &hasit ) &&
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "remote", &hasit ) &&
       hasit &&
-      napi_ok == napi_get_named_property( env, argv[ 0 ], "target", &ntarget ) ) {
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "remote", &nremote ) ) {
 
     /* optional - DTLS */
     napi_value dtls;
-    if ( napi_ok == napi_has_named_property( env, ntarget, "dtls", &hasit ) &&
+    if ( napi_ok == napi_has_named_property( env, nremote, "dtls", &hasit ) &&
          hasit &&
-         napi_ok == napi_get_named_property( env, ntarget, "dtls", &dtls ) ) {
+         napi_ok == napi_get_named_property( env, nremote, "dtls", &dtls ) ) {
 
       napi_value nfingerprint, nactpass;
       if( napi_ok == napi_has_named_property( env, dtls, "fingerprint", &hasit ) &&
@@ -1742,29 +1749,29 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
       }
     }
 
-    if( napi_ok != napi_get_named_property( env, ntarget, "port", &nport ) ) {
-      napi_throw_error( env, "1", "Missing port in target object" );
+    if( napi_ok != napi_get_named_property( env, nremote, "port", &nport ) ) {
+      napi_throw_error( env, "1", "Missing port in remote object" );
       return NULL;
     }
 
-    napi_get_value_int32( env, nport, &targetport );
+    napi_get_value_int32( env, nport, &remoteport );
 
-    if( napi_ok != napi_get_named_property( env, ntarget, "address", &naddress ) ) {
-      napi_throw_error( env, "1", "Missing address in target object" );
+    if( napi_ok != napi_get_named_property( env, nremote, "address", &naddress ) ) {
+      napi_throw_error( env, "1", "Missing address in remote object" );
       return NULL;
     }
 
-    if( napi_ok != napi_get_named_property( env, ntarget, "codec", &ncodec ) ) {
-      napi_throw_error( env, "1", "Missing codec in target object" );
+    if( napi_ok != napi_get_named_property( env, nremote, "codec", &ncodec ) ) {
+      napi_throw_error( env, "1", "Missing codec in remote object" );
       return NULL;
     }
 
     napi_get_value_uint32( env, ncodec, &codecval );
 
     size_t bytescopied;
-    napi_get_value_string_utf8( env, naddress, targetaddress, sizeof( targetaddress ), &bytescopied );
-    if( 0 == bytescopied || bytescopied >= sizeof( targetaddress ) ) {
-      napi_throw_error( env, "1", "Target host address too long" );
+    napi_get_value_string_utf8( env, naddress, remoteaddress, sizeof( remoteaddress ), &bytescopied );
+    if( 0 == bytescopied || bytescopied >= sizeof( remoteaddress ) ) {
+      napi_throw_error( env, "1", "Remote host address too long" );
       return NULL;
     }
   }
@@ -1832,8 +1839,8 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   }
 
   p->jsthis = result;
-  p->target( targetaddress, targetport, codecval, dtlsmode, vfingerprint );
-  p->requestopen();
+  p->remote( remoteaddress, remoteport, codecval, dtlsmode, vfingerprint );
+  uint32_t ssrc = p->requestopen();
 
   /* methods */
   napi_value mfunc;
@@ -1861,21 +1868,23 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
       napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channeldtmf, nullptr, &mfunc ) ||
       napi_ok != napi_set_named_property( env, result, "dtmf", mfunc ) ||
 
-      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channeltarget, nullptr, &mfunc ) ||
-      napi_ok != napi_set_named_property( env, result, "target", mfunc )
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelremote, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "remote", mfunc )
     ) {
     delete pb;
     return NULL;
   }
 
   /* values */
-  napi_value nlocal, nourport, ndtls, fp;
+  napi_value nlocal, nourport, ndtls, fp, nssrc;
   if( napi_ok != napi_create_object( env, &nlocal ) ||
       napi_ok != napi_set_named_property( env, result, "local", nlocal ) ||
 
       napi_ok != napi_create_int32( env, ourport, &nourport ) ||
       napi_ok != napi_set_named_property( env, nlocal, "port", nourport ) ||
 
+      napi_ok != napi_create_uint32( env, ssrc, &nssrc ) ||
+      napi_ok != napi_set_named_property( env, nlocal, "ssrc", nssrc ) ||
 
       napi_ok != napi_create_object( env, &ndtls ) ||
       napi_ok != napi_set_named_property( env, nlocal, "dtls", ndtls ) ||

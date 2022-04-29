@@ -63,11 +63,11 @@ describe( "dtls", function() {
     targeta.dtls.fingerprint = channelb.local.dtls.fingerprint
     targeta.port = channelb.local.port
 
-    expect( channela.target( targeta ) ).to.be.true
+    expect( channela.remote( targeta ) ).to.be.true
 
     targetb.port = channela.local.port
 
-    expect( channelb.target( targetb ) ).to.be.true
+    expect( channelb.remote( targetb ) ).to.be.true
 
     channela.play( { "loop": true, "files": [
                       { "wav": "/tmp/ukringing.wav" } ] } )
@@ -79,7 +79,7 @@ describe( "dtls", function() {
     channela.close()
     channelb.close()
 
-    await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ukringing.wav", ( err ) => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ukringing.wav", ( err ) => { resolve() } ) } )
 
   } )
 } )

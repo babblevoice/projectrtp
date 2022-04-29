@@ -67,19 +67,19 @@ public:
   typedef std::shared_ptr< projectrtpchannel > pointer;
   static pointer create( unsigned short port );
 
-  void target( std::string address,
+  void remote( std::string address,
                unsigned short port,
                uint32_t codec,
                dtlssession::mode,
                std::string fingerprint );
 
-  void requestopen( void );
+  uint32_t requestopen( void );
   std::atomic_bool _requestclose;
   void requestclose( std::string reason );
   std::string closereason;
   void requestecho( bool e = true );
 
-  void dotarget( void );
+  void doremote( void );
   void doclose( void );
   void doopen( void );
 
@@ -157,7 +157,7 @@ private:
 
   /* confirmation of where the other end of the RTP stream is */
   std::atomic_bool receivedrtp;
-  std::atomic_bool targetconfirmed;
+  std::atomic_bool remoteconfirmed;
 
   void readsomertp( void );
   void readsomertcp( void );
@@ -172,7 +172,7 @@ private:
   void senddtmf( void );
 
   void handlertcpdata( void );
-  void handletargetresolve (
+  void handleremoteresolve (
               boost::system::error_code e,
               boost::asio::ip::udp::resolver::iterator it );
 
@@ -206,8 +206,8 @@ private:
   dtlssession::pointer rtpdtls;
   std::atomic_bool rtpdtlslock;
 
-  std::string targetaddress;
-  unsigned short targetport;
+  std::string remoteaddress;
+  unsigned short remoteport;
 
   /* outbound DTMF */
   std::string queueddigits;

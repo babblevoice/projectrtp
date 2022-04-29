@@ -26,7 +26,7 @@ module.exports = async ( packets = utils.between( 50, 50*60*5 ) ) => {
   await new Promise( ( resolve, reject ) => { clientb.on( "listening", function() { resolve() } ) } )
   const clientbport = clientb.address().port
 
-  let channela = await projectrtp.openchannel( { "target": { "address": "localhost", "port": clientaport, "codec": 0 } }, function( d ) {
+  let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clientaport, "codec": 0 } }, function( d ) {
     if( "close" === d.action ) {
       utils.cancelremainingscheduled( clienta )
       clienta.close()
@@ -35,7 +35,7 @@ module.exports = async ( packets = utils.between( 50, 50*60*5 ) ) => {
   } )
   utils.lognewchannel()
 
-  let channelb = await projectrtp.openchannel( { "target": { "address": "localhost", "port": clientbport, "codec": bcodec } }, function( d ) {
+  let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clientbport, "codec": bcodec } }, function( d ) {
     if( "close" === d.action ) {
       utils.cancelremainingscheduled( clientb )
       clientb.close()

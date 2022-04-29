@@ -49,7 +49,7 @@ describe( "rtpchannel", function() {
     this.timeout( 2000 )
     this.slow( 1500 )
 
-    let channel = await projectrtp.openchannel( { "id": "4", "target": { "address": "localhost", "port": 20000, "codec": 0 } } )
+    let channel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": 20000, "codec": 0 } } )
 
     expect( channel ).to.be.an( "object" )
     expect( channel.close ).to.be.an( "function" )
@@ -60,7 +60,7 @@ describe( "rtpchannel", function() {
     expect( channel.record ).to.be.an( "function" )
     expect( channel.direction ).to.be.an( "function" )
     expect( channel.dtmf ).to.be.an( "function" )
-    expect( channel.target ).to.be.an( "function" )
+    expect( channel.remote ).to.be.an( "function" )
     expect( channel.local ).to.have.property( "port" ).that.is.a( "number" )
     expect( channel.local ).to.have.property( "address" ).that.is.a( "string" )
     expect( channel.uuid ).that.is.a( "string" )
@@ -88,7 +88,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
           expect( d.reason ).to.equal( "requested" )
@@ -135,7 +135,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
           expect( receviedpkcount ).to.equal( 50 - 6 )
@@ -196,7 +196,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -243,7 +243,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -315,7 +315,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -374,7 +374,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -416,7 +416,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -461,7 +461,7 @@ describe( "rtpchannel", function() {
 
       let ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -496,7 +496,7 @@ describe( "rtpchannel", function() {
     this.timeout( 21000 )
     this.slow( 20000 )
 
-    projectrtp.openchannel( { "target": { "address": "localhost", "port": 20765, "codec": 0 } }, function( d ) {
+    projectrtp.openchannel( { "remote": { "address": "localhost", "port": 20765, "codec": 0 } }, function( d ) {
 
       if( "close" === d.action ) {
 

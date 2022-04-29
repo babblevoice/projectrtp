@@ -159,7 +159,7 @@ Open and return port number to publish to client.
 ```json
 {
   "channel": "open",
-  "target": {
+  "remote": {
     "port": 56802,
     "ip": "192.168.0.141",
     "dtls": {

@@ -157,13 +157,13 @@ RFC 2833 telephone-event
 @summary Opens a channel and returns a channel object.
 @param {Object} [properties]
 @param {string} [properties.id] Unique id provided which is simply returned in the channel object
-@param {Object} [properties.target]
-@param {number} properties.target.port - the target port - must be an Int and should be even
-@param {string} properties.target.address - the target (remote) host address
-@param {number} properties.target.codec - the target codec as a number
-@param {Object} [properties.target.dtls]
-@param {string} properties.target.dtls.fingerprint - the fingerprint we verify the remote against
-@param {string} properties.target.dtls.setup - "act" or "pass"
+@param {Object} [properties.remote]
+@param {number} properties.remote.port - the remote port - must be an Int and should be even
+@param {string} properties.remote.address - the remote (remote) host address
+@param {number} properties.remote.codec - the remote codec as a number
+@param {Object} [properties.remote.dtls]
+@param {string} properties.remote.dtls.fingerprint - the fingerprint we verify the remote against
+@param {string} properties.remote.dtls.setup - "act" or "pass"
 @param {Object} [properties.direction] - direction from our perspective
 @param {boolean} [properties.direction.send=true]
 @param {boolean} [properties.direction.recv=true]
@@ -225,7 +225,7 @@ class proxy {
   @summary Listen for connections from RTP nodes which can offer their services
   to us. When we listen for other nodes, we can configure them so that it is invisible
   to the main node as to where the channel is being handled.
-  @param {Object} target - see channel.create
+  @param {Object} remote - see channel.create
   @return {rtpserver}
   */
   listen( port = 9002, address = "127.0.0.1" ) {
@@ -236,7 +236,7 @@ class proxy {
   @summary Listen for connections from RTP nodes which can offer their services
   to us. When we listen for other nodes, we can configure them so that it is invisible
   to the main node as to where the channel is being handled.
-  @param {Object} target - see channel.create
+  @param {Object} remote - see channel.create
   @return {rtpserver}
   */
   stats() {

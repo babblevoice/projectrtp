@@ -73,7 +73,7 @@ describe( "rtpproxy server", function() {
     expect( channel.record ).to.be.an( "function" )
     expect( channel.direction ).to.be.an( "function" )
     expect( channel.dtmf ).to.be.an( "function" )
-    expect( channel.target ).to.be.an( "function" )
+    expect( channel.remote ).to.be.an( "function" )
     expect( channel.local ).to.have.property( "port" ).that.is.a( "number" )
     expect( channel.local ).to.have.property( "address" ).that.is.a( "string" )
     expect( channel.local.port ).to.equal( 10002 )
@@ -233,7 +233,7 @@ describe( "rtpproxy server", function() {
 
   } )
 
-  it( `check target`, async function() {
+  it( `check remote`, async function() {
 
     /* set up our mock node object */
     let n = new mocknode()
@@ -249,14 +249,14 @@ describe( "rtpproxy server", function() {
           } )
     } )
 
-    let targetreceived = false
-    n.setmessagehandler( "target", ( msg ) => {
-      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "target" )
+    let remotereceived = false
+    n.setmessagehandler( "remote", ( msg ) => {
+      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "remote" )
       expect( msg ).to.have.property( "id" ).that.is.a( "string" )
       expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
-      expect( msg ).to.have.property( "target" ).that.is.a( "string" ).to.equal( "wouldbeatargetobject" )
+      expect( msg ).to.have.property( "remote" ).that.is.a( "string" ).to.equal( "wouldbearemoteobject" )
 
-      targetreceived = true
+      remotereceived = true
     } )
 
     let closereceived = false
@@ -270,12 +270,12 @@ describe( "rtpproxy server", function() {
     n.connect( listenport )
     await p.waitfornewconnection()
     let channel = await prtp.openchannel()
-    channel.target( "wouldbeatargetobject" )
+    channel.remote( "wouldbearemoteobject" )
 
     channel.close()
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
 
-    expect( targetreceived ).to.be.true
+    expect( remotereceived ).to.be.true
     expect( closereceived ).to.be.true
 
   } )

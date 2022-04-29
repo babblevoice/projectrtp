@@ -93,7 +93,7 @@ describe( "record", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) {
           server.close()
         }
@@ -168,7 +168,7 @@ describe( "record", function() {
 
     server.on( "listening", async function() {
 
-      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
         if( "close" === d.action ) {
@@ -226,7 +226,7 @@ describe( "record", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) {
           server.close()
         }
@@ -312,17 +312,16 @@ describe( "record", function() {
 
     let expectedmessagecount = 0
     const expectedmessages = [
-      { action: 'record', file: '/tmp/ourpowerrecording.wav', event: 'recording' },
+      { action: 'record', file: '/tmp/ourpowerrecording.wav', event: 'recording.abovepower' },
       { action: 'record', file: '/tmp/ourpowerrecording.wav', event: 'finished.belowpower' },
       { action: 'close' }
     ]
 
     server.bind()
     let delayedjobs = []
-    let recording = false
     server.on( "listening", async function() {
 
-      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
 
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
@@ -396,7 +395,7 @@ describe( "record", function() {
     let delayedjobs = []
     server.on( "listening", async function() {
 
-      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
 
         if( "record" === d.action && "finished.timeout" == d.event ) {
           channel.close()
@@ -474,7 +473,7 @@ describe( "record", function() {
     */
     const expectedmessages = [
       { action: 'record', file: '/tmp/dualrecording.wav', event: 'recording' },
-      { action: 'record', file: '/tmp/dualrecordingpower.wav', event: 'recording' },
+      { action: 'record', file: '/tmp/dualrecordingpower.wav', event: 'recording.abovepower' },
       { action: 'record', file: '/tmp/dualrecordingpower.wav', event: 'finished.belowpower' },
       { action: 'record', file: '/tmp/dualrecording.wav', event: 'finished.channelclosed' },
       { action: 'close' }
@@ -483,7 +482,7 @@ describe( "record", function() {
 
     server.on( "listening", async function() {
 
-      channel = await projectrtp.openchannel( { "target": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
 
