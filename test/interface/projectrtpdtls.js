@@ -39,8 +39,10 @@ describe( "dtls", function() {
       "port": 0,
       "codec": 0,
       "dtls": {
-        "fingerprint": "",
-        "mode": "act" // - is this in the right place and the right way round!
+        "fingerprint": {
+          "hash": ""
+        },
+        "mode": "active" // - is this in the right place and the right way round!
       }
     }
 
@@ -49,8 +51,10 @@ describe( "dtls", function() {
       "port": 12008,
       "codec": 0,
       "dtls": {
-        "fingerprint": projectrtp.dtls.fingerprint,
-        "mode": "pass"
+        "fingerprint": {
+          "hash": projectrtp.dtls.fingerprint
+        },
+        "mode": "passive"
       }
     }
 
@@ -60,7 +64,7 @@ describe( "dtls", function() {
     let channelb = await projectrtp.openchannel( {}, function( d ) {
     } )
 
-    targeta.dtls.fingerprint = channelb.local.dtls.fingerprint
+    targeta.dtls.fingerprint.hash = channelb.local.dtls.fingerprint
     targeta.port = channelb.local.port
 
     expect( channela.remote( targeta ) ).to.be.true
