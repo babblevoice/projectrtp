@@ -63,11 +63,12 @@ describe( "rtpchannel", function() {
     expect( channel.remote ).to.be.an( "function" )
     expect( channel.local ).to.have.property( "port" ).that.is.a( "number" )
     expect( channel.local ).to.have.property( "address" ).that.is.a( "string" )
+    expect( channel.local ).to.have.property( "icepwd" ).that.is.a( "string" ).to.have.lengthOf.above( 20 )
     expect( channel.uuid ).that.is.a( "string" )
     expect( channel.id ).that.is.a( "string" )
     expect( channel.id ).to.equal( "4" )
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 100 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
     channel.close()
   } )
 
