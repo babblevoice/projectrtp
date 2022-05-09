@@ -163,7 +163,7 @@ RFC 2833 telephone-event
 @param {number} properties.remote.codec - the remote codec as a number
 @param {Object} [properties.remote.dtls]
 @param {string} properties.remote.dtls.fingerprint - the fingerprint we verify the remote against
-@param {string} properties.remote.dtls.setup - "act" or "pass"
+@param {string} properties.remote.dtls.setup - "active" or "passive"
 @param {Object} [properties.direction] - direction from our perspective
 @param {boolean} [properties.direction.send=true]
 @param {boolean} [properties.direction.recv=true]
