@@ -16,18 +16,16 @@
 
 #include <stdint.h>
 
+#include <functional>
+
 #include "projectrtppacket.h"
 #include "projectrtpcodecx.h"
 
-/* min 2 for write buffers on 2 channel audio */
+/* number of soundfile async buffers */
 #define SOUNDFILENUMBUFFERS 2
+#define MAXNUMBEROFCHANNELS 2
 
-/*!md
-
-*/
-
-typedef struct
-{
+typedef struct {
     /* RIFF Header */
     uint8_t riff_header[ 4 ]; /* Contains "RIFF" */
     uint32_t chunksize; /* Size of the wav portion of the file, which follows the first 8 bytes. File size - 8 */
@@ -60,26 +58,15 @@ typedef struct
 #define  WAVE_FORMAT_POLYCOM_G722 0xA112 /* Polycom - there are other versions */
 #define  WAVE_FORMAT_GLOBAL_IP_ILBC 0xA116 /* Global IP */
 
-class soundfile
-{
+class soundfile {
 public:
-  soundfile( std::string &url );
-  soundfile( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
+  soundfile();
   ~soundfile();
 
-  typedef std::shared_ptr< soundfile > pointer;
-  static pointer create( std::string &url );
-  static pointer create( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
-  std::string &geturl( void ) { return this->url; };
-
-  bool read( rawsound &out );
-  bool write( codecx &in, codecx &out );
-
-  void setposition( long seconds );
-  long getposition( void );
-  uint32_t getwriteduration( void ); /* Return umber of mS since start of recording (recorded data) */
-  bool complete( void );
-  inline bool isopen( void ) { return this->file != -1; }
+  soundfile( const soundfile& ) = delete;              // copy ctor
+  soundfile( soundfile&& ) = delete;                   // move ctor
+  soundfile& operator=( const soundfile& ) = delete;   // copy assignment
+  soundfile& operator=( soundfile&& ) = delete;        // move assignment
 
   inline uint16_t getwavformat( void ) { return this->ourwavheader.audio_format; }
   /* Gets the current wav file format and converts to equiv RTP payload type */
@@ -88,35 +75,85 @@ public:
   /* converts from values like PCMUPAYLOADTYPE to WAVE_FORMAT_MULAW */
   static uint16_t wavformatfrompt( uint8_t pt );
   static int getsampleratefrompt( uint8_t pt );
+  uint32_t getwriteduration( void ); /* Return umber of mS since start of recording (recorded data) */
 
-private:
-  long offtomsecs( void );
+  std::string &geturl( void ) { return this->url; };
+
+protected:
   int file;
   std::string url;
-  uint8_t *readbuffer;
-  int readbuffercount;
-  int currentreadindex;
-  aiocb cbwavheader;
   wavheader ourwavheader;
+
+  /* asynchronous variables */
+  int currentcbindex;
+  aiocb cbwavheader;
   aiocb cbwavblock[ SOUNDFILENUMBUFFERS ];
 
-  bool opened;
-  bool badheader;
-
-  long newposition;
-  bool headerread;
-
-  /* For writing */
-  uint8_t *writebuffer;
-  int currentwriteindex;
-  int32_t tickcount;
+  /* buffer for data */
+  uint8_t *buffer;
 };
 
 
+class soundfilereader : public soundfile {
+public:
+  soundfilereader( std::string &url );
+  ~soundfilereader();
+
+  soundfilereader( const soundfilereader& ) = delete;              // copy ctor
+  soundfilereader( soundfilereader&& ) = delete;                   // move ctor
+  soundfilereader& operator=( const soundfilereader& ) = delete;   // copy assignment
+  soundfilereader& operator=( soundfilereader&& ) = delete;        // move assignment
+
+  typedef std::shared_ptr< soundfilereader > pointer;
+  static pointer create( std::string url );
+
+  bool read( rawsound &out );
+  bool complete( void );
+
+  void setposition( long mseconds );
+  long getposition( void );
+
+  inline bool isopen( void ) { return this->file != -1; }
+
+private:
+  long offtomsecs( void );
+
+  int blocksize;
+  bool badheader;
+  bool headerread;
+  long initseekmseconds;
+  int ploadtype;
+};
 
 
-void wavinfo( const char *file );
+class soundfilewriter : public soundfile {
+public:
+  soundfilewriter( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
+  ~soundfilewriter();
+
+  typedef std::shared_ptr< soundfilewriter > pointer;
+  static pointer create( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
+
+  soundfilewriter( const soundfilewriter& ) = delete;              // copy ctor
+  soundfilewriter( soundfilewriter&& ) = delete;                   // move ctor
+  soundfilewriter& operator=( const soundfilewriter& ) = delete;   // copy assignment
+  soundfilewriter& operator=( soundfilewriter&& ) = delete;        // move assignment
+
+  bool write( codecx &in, codecx &out );
+
+private:
+  int32_t tickcount;
+
+};
+
+
 void initwav( wavheader *, int samplerate = 8000 );
+
+#ifdef NODE_MODULE
+#include <node_api.h>
+void initrtpsoundfile( napi_env env, napi_value &result );
+#endif
+
 
 
 #endif /* PROJECTRTPSOUNDFILE_H */

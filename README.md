@@ -1,10 +1,10 @@
 # ProjectRTP
 
-A simple RTP server which offers functionality to process RTP data streams and mix them. Channels will be able to be mixed with other channels or local functions like recording or file playback. Instructions to create and manipulate RTP streams via a TCP connection (control connection). Enabling the ability to have 1 SIP/control server to manage multiple RTP servers to increase scalability of the system.
+An RTP node addon which offers functionality to process RTP data streams and mix it. All performance tasks are implemented in C++ and use boost::asio for IO completion ports for high concurrency.
+
+ProjectRTP is designed to scale to multiple servers serving other signalling servers. RTP and signalling should be kept separate and this architecture allows that. It is provided with a proxy server and client to allow for remote nodes.
 
 ProjectRTP is designed to provide all the functions required for a PBX, including channel bridging, recording, playback and all the functions required for IVR.
-
-This is currently work in progress.
 
 Features
 
@@ -12,27 +12,45 @@ Features
 * CODEC transcoding (between supported CODECs listed below)
 * Call recording (WAV)
   * Multiple recorders per channel
-  * Start and end based on power detection or on command
+  * Start, pause and end based on power detection or on command
 * WAV playback using sound soup descriptions to play complex sentences from parts
-* DTMF (RFC 2833)
+* DTMF (RFC 2833) - send, receive and bridge
 * DTLS SRTP (WebRTC)
+* Highly scalable - server/node solution to scale out media nodes
 
-ProjectRTP connects to a control server - which I anticipate is generally a SIP server of some form (but doesn't need to be). This server can have multiple RTP servers connected which allows the control server to farm out work to balance workload.
+## Version numbers
 
-## Usage
+We use semantic version numbering.
 
-### AWS
+Given a version number MAJOR.MINOR.PATCH, increment the:
 
-As projectrtp is designed to be distributed it allows sessions to be created by the main control server (SIP). Each projectrtp instance is assigned its own public address (--pa) so that when a main control server opens a channel on that server then projectrtp can inform the control server what the public address is for this connection.
+1. MAJOR version when you make incompatible API changes,
+2. MINOR version when you add functionality in a backwards compatible manner, and
+3. PATCH version when you make backwards compatible bug fixes.
 
-projectrtp --fg --pa $(curl http://checkip.amazonaws.com) --connect 127.0.0.1 --chroot ../out/
+As part of this, we maintain jsdoc documentation to document our public interface to this programme.
 
-| Flag        | Description                                                                                  |
-| ----------- | -------------------------------------------------------------------------------------------- |
-| --fg        | Run in the foreground                                                                        |
-| --pa        | Set the public address - either set it statically or use $(curl ...)                         |
-| --connect   | The address of the control server to connect to                                              |
-| --chroot    | The directory to chroot to for sound files, in commands to play a file a / to this directory |
+Only when we release version 1.0.0 will the public API be settled.
+
+## Tests
+
+We now have 3 different sets of tests.
+
+### `npm test`
+
+All tests are run from node. From the root directory run `npm test`. These test all our interfaces and should test expected outputs. These tests use mocha.
+
+The folder is separated out into interface, unit and mock. The mock folder contains mock objects/functions required for testing. Unit tests are to help test internal functions. Interface tests are used to guarantee a stable interface for a specific version number. If these tests require changing (other than bug fixing i.e. a material API change) then a major version update will happen.
+
+### node stress/index.js
+
+These are designed to create real world scenarios - opening and closing multiple channels and random times and at load. This is designed to test for unexpected behaviour. These test do not provide a pass/fail - but might crash or produce unexpected output on bad behaviour. These have concurrency/race condition tests in mind.
+
+### C++
+
+Some tests are provided in C++. They are built with the compiler flags `-fsanitize=address -fsanitize=leak` to catch buffer overruns and leaks.
+
+To build the test executable run `make` from the src directory.
 
 ## Dependencies
 
@@ -41,30 +59,52 @@ projectrtp --fg --pa $(curl http://checkip.amazonaws.com) --connect 127.0.0.1 --
 * boost
 * gnutls
 * libsrtp
+* openssl (for now the node scripts use openssl to generate a self signed cert for DTLS)
 
 ### Fedora
 
 After installing standard build tools - including g++.
 
+```
 dnf install ilbc-devel spandsp-devel boost gnutls libsrtp libsrtp-devel
+```
 
-# Build
+## Node Module
 
-cd src
-make
+node-gyp is required to build the module:
 
-This will build the executable and also generate some UK sounds.
+```
+sudo npm install -g node-gyp
+sudo npm install -g node-addon-api
+```
 
-There is also a debug target which includes debug symbols.
+From the src folder
+```
+node-gyp configure
+node-gyp build
+```
 
-## RPM
+Or
 
-In the root directory there is buildrpm script which will build an RPM of application. This needs running
-if you want to build a docker image with projectrtp in it.
+```
+node-gyp build --debug
+```
 
 ## Docker/Podman
 
-The buildah directory contains 2 scripts and a readme.md. Refer to that doc to build a docker image. It actually uses podman to do the work.
+In the root is the script buildimage and Dockerfile. We pull from node latest and alpine Linux. The default image which can be used as a base or on its own.
+
+The enviroment variable HOST should contain the host address of the control server - its default is 127.0.0.1. The variable PORT contains the port number to communicate over - with a default of 9002.
+
+The enviroment variable PA is takes the below form- where the address is passed back to the control server so it can be published in SDP - i.e. this allows for multiple RTP nodes all on different IP addresses. If you do not pass this in, then the default script will determin your public IP address by calling https://checkip.amazonaws.com to obtain your IP.
+
+podman run --restart=always --net=host -d -it --env PA=127.0.0.1 --name=prtp projectrtp:latest
+
+## Example scripts
+
+The examples folder contains 2 scripts. The simplenode can be used where no special funtionality is required. The standard projectrtp docker image points to this - so starting a docker instance will run up as a node and attempt to connect to a central control server.
+
+The advancednode.js is an example which contains pre and post processing - which can be used, for example, downloading recordings, performing text to speach or uploading recordings when it has completed.
 
 ## Codecs
 
@@ -75,138 +115,66 @@ ProjectRTP supports transcoding for the following CODECs
 * G722
 * iLBC
 
-## Control
+## Usage
 
-The server is managed via a control socket. I am designing it so that multiple RTP servers can connect to a call control server to create a flexible voice switch.
+2 example scripts can be found in the examples folder. The simplenode.js is used in the Docker container as it's main entry.
 
-projectrtp --fg --pa 192.168.0.141 --connect 127.0.0.1
+## Enviroment variables
 
-See projectrtpmain.cpp for all options. In this example, the --pa is the IP address to instruct the control server which IP to include in SDP. --connect is the address of the control server. Node library coming soon.
+These are parsed in the simplenode.js example.
 
-### Protocol
+* PORT - the port to connect to
+* HOST - the host to connect to
+* PA - the public address of this host - this is passed back over the control socket so it can be published to the client - if absent the script polls https://checkip.amazonaws.com for what looks like our public address.
 
-The control protocol is simple. A 5 byte header is sent:
+## Little Example
 
-```c++
-class controlheader
-{
-public:
-  char magik;
-  uint16_t version;
-  uint16_t length;
-};
+This project contains all the functionality to use it as a local resource or as multiple nodes processing media. Switching between the 2 modes is seamless. When used in the node mode it has a simple protocol to communcate between server and nodes.
+
+Each active node connects to the main server to offer its services to the main server. The main server then opens RTP channels (WebRTC or normal RTP) on any available. The protocol used can be viewed in the files in /lib.
+
+Example:
+
+```js
+
+const prtp = require( "projectrtp" ).projectrtp
+
+/* This switches this server to a central 
+server and requires nodes to connect to us
+to provide worker nodes */
+prtp.listen()
+
+const codec = 9 /* G722 */
+
+/* 
+Now just open our channel 
+The remote comes from your client (web browser?)
+including options for WebRTC if it is a web browser.
+*/
+let channela = prtp.openchannel( {
+      "remote": { address, port, codec }
+      } )
+
+
+let channelb = prtp.openchannel( {
+      "remote": { "address": otheraddress, "port": otherport, codec }
+      } )
+
+/*
+Offer both of these channels to the remote clients (convert to SDP?)
+*/
+
+/* Ask projectrtp to mix the audio of both channels */
+channela.mix( channelb )
+
+/* Keep calling the mix function with other channels to create a conference */
 ```
 
-* magik must be 0x33
-* version should currently be 0
-* length indicates the number of bytes to follow
 
-The string which follows must be length bytes long in JSON format. It is a 2 way protocol.
+## Stats
 
-### Open
-
-Open and return port number to publish to client.
-
-```json
-{
-  "channel": "open",
-  "target": {
-    "port": 56802,
-    "ip": "192.168.0.141"
-    },
-  "dtls": {
-    "fingerprint": "00:01:ff...",
-    "setup": "act"
-  },
-  "id": "44fd13298e7b427f782ec6cf1ce9482d"
-}
-```
-
-If "dtls" is populated then fingerprint and setup then will be enforced. The connection will close if the DTLS handshake fails
-or the fingerprint does not match to what is expected. "setup" is either "act" or "pass" (default).
-
-id is a transparent id, which is returned with a channel uuid to the server can associate the 2. Commands are then sent using the channel uuid. The port and ip are the expected remote source of the stream.
-
-Response
-```json
-{
-  "id": "44fd13298e7b427f782ec6cf1ce9482d",
-  "action": "open",
-  "channel": {
-    "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
-    "port": 10002,
-    "ip": "192.168.0.141"
-    },
-  "status": {
-    "channels": {
-      "active":2,
-      "available":507
-    }
-  }
-}
-```
-
-All responses include the server status message.
-
-### Mix
-
-Mix does exactly as it says. It mixes multiple channels to a mixer. It handles 2 at the same time but can be called repeatedly to create scenarios like conferences.
-
-```json
-{
-  "channel":"mix",
-  "uuid":
-  [
-    "61efa425-7371-41f2-b968-442c54346ccc",
-    "4b7d9275-5e4c-42cc-9795-1ae881157544"
-  ]
-}
-```
-
-Currently, we only support an array of 2 uuids. The call should be repeated for more channels to be mixed.
-
-### Close
-
-Close the channel.
-
-```json
-{
-  "channel": "close",
-  "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152"
-}
-```
-
-ProjectRTP will respond with a confirmation and some stats.
-
-```json
-{
-  "action":"close",
-  "id":"4daf51beeb229c4a69bc124be35a9a0c",
-  "uuid":"7dfc35d9-eafe-4d8b-8880-c48f528ec152",
-  "stats":
-  {
-    "in":
-    {
-      "mos":4.5,
-      "count":586,
-      "skip":0
-    },
-    "maxticktimeus":239,
-    "meanticktimeus":84
-  },
-  "status":
-  {
-    "instance":"a42b1e86-b6c2-4a9b-a839-bc20187663af",
-    "channels":
-    {
-      "active":0,
-      "available":509
-    }
-  }
-}
-```
-
-#### stats
+When we receive an object back from our node (or if standlone just ourself), the object contains information about the
+state of the sevrer. It includes items such as number of channels open, MOS quality score etc. 
 
 MOS is only included for our received measurements.
 
@@ -221,22 +189,22 @@ If there are multiple channels being mixed they will all receive the same tick t
 
 Play a sound 'soup'. This is a list of files to play, potentially including start and stop times of the file to play. ProjectRTP Supports wav files. An example soup:
 
-```json
-{
-  "channel": "play",
-  "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+```js
+
+channel.play( {
   "soup": {
     "loop": true,
     "files": [
       { "wav": "filename.wav", "start": 1000, "stop": 4000 }
     ]
   }
-}
+} )
+
 ```
 
 * loop can either be true (continuous - well - INT_MAX) or a number
 * loop can be in the main soup (i.e loop through all files) or on a file (i.e. loop through this file 3 times)
-* The filename can be either in the param "wav", "pcma", "pcmu", "l168k", "l1616k", "ilbc", "g722". See note below on what they are used for, all contain the name of the file for that format.
+* The filename can be either in the param "wav", "pcma", "pcmu", "l168k", "l1616k", "ilbc", "g722". See note below on what they are used for, all contain the name of the file for that format (not completed).
 * start - number of mS to start playback from (optional)
 * stop - number of mS to stop playback (optional)
 
@@ -246,21 +214,10 @@ The filename can be included in different param. If you supply the param, the RT
 
 #### Other soup examples
 
-```json
-{
-  "loop": true,
-  "files": [
-    { "pcma": "ourpcma.wav", "pcmu": "ourpcmu.wav" }
-  ]
-}
-```
-
-##### 2
-
 Queue announcement
 
-```json
-{
+```js
+channel.play( {
   "loop": true,
   "files": [
     { "wav": "ringing.wav", "loop": 6 },
@@ -268,13 +225,13 @@ Queue announcement
     { "wav": "first.wav" },
     { "wav": "inline.wav" }
   ]
-}
+} )
 ```
 
 We may also have combined some wav files:
 
-```json
-{
+```js
+channel.play( {
   "loop": true,
   "files": [
     { "wav": "ringing.wav", "loop": 6 },
@@ -282,7 +239,7 @@ We may also have combined some wav files:
     { "wav": "ordinals.wav", "start": 3000, "stop": 4500 },
     { "wav": "inline.wav" }
   ]
-}
+} )
 ```
 
 ### Record
@@ -295,13 +252,13 @@ uuid = <string> - channel uuid to record
 
 In seconds up to MA max size (5 seconds?), default is 1 second
 RMS power is calculated from each packet then averaged using a moving average filter.
-poweraverageduration = <int> moving average window to average power over
+poweraveragepackets = <int> moving average window to average power over
 
 must have started for this to kick in - if left out will just start
 startabovepower = <int>
 
 When to finish - if it falls below this amount
-finishbelowpower = <int >
+finishbelowpower = <int>
 
 used in conjunction with finishbelowpower - used in conjusnction with power thresholds
 i.e. power below finishbelowpower before this number of mS has passed
@@ -313,61 +270,13 @@ maxduration = < int > mSeconds
 Must be 1 or 2
 numchannels = < int > count
 
-```json
-{
-  "channel": "record",
-  "uuid":"3f78c0f1-a1e5-4372-87f3-1938f5cb30c4",
-  "file":"testfile.wav"
-}
+```js
+channel.record( {
+  "file": "/voicemail/greeting_1.wav",
+  "maxduration": 10 * 1000 /* mS */,
+  "numchannels": 1
+} )
 ```
-
-Record to a filename. UUID is the channel UUID that is returned when you open a file. File is the name - this file will be overwritten if it already exists.
-
-ProjectRTP will respond with
-
-```json
-{
-  "action":"record",
-  "id":"a752dc3c0f5671e067e320d4e632f159",
-  "uuid":"ab033164-3a55-4e4d-8f63-dedf71866d29",
-  "chaneluuid":"3f78c0f1-a1e5-4372-87f3-1938f5cb30c4",
-  "file":"testfile.wav",
-  "state":"recording",
-  "status":
-  {
-    "instance":"7ca96e59-6cef-454f-b752-333cdb94112e",
-    "channels":
-    {
-      "active":1,
-      "available":508
-    }
-  }
-}
-```
-
-In the initial response (which confirms the command) the uuid returned is the uuid of the recording instance. The channeluuid refers back to the channel uuid and the id refers to the channel id you provided to projectrtp when opening the channel. All messages sent to back contain the status so we are updated regarding the workload of the server and also the instance which is the uuid of the projectrtp instance.
-
-
-```json
-{
-  "action":"record",
-  "uuid":"ab033164-3a55-4e4d-8f63-dedf71866d29",
-  "state":"Finished",
-  "reason":"finishbelowpower",
-  "status":
-  {
-    "instance":"7ca96e59-6cef-454f-b752-333cdb94112e",
-    "channels":
-    {
-      "active":1,
-      "available":508
-    }
-  }
-}
-```
-
-This final message is sent when the recording has completed.
-
 
 ## Utils
 
@@ -377,7 +286,15 @@ In order to make the RTP as scalable as possible, we will not support on the fly
 
 What we need to provide is a utility to generate wav files which will generate tones for use in telecoms (i.e. ringing, DTMF etc).
 
-projectrtp --tone 350+440*0.75:1000 dialtone.wav
+
+```js
+
+const prtp = require( "projectrtp" ).projectrtp
+
+let filename = "/some/file.wav"
+prtp.tone.generate( "350+440*0.5:1000", filename )
+
+```
 
 The format attempts to closely follow the format in https://www.itu.int/dms_pub/itu-t/opb/sp/T-SP-E.180-2010-PDF-E.pdf - although that standard is not the clearest in some respects.
 
@@ -391,10 +308,16 @@ We currently support
 Examples
 
 #### UK Dial tone:
-projectrtp --tone 350+440*0.5:1000 dialtone.wav
+
+```js
+prtp.tone.generate( "350+440*0.5:1000" "dialtone.wav" )
+```
 
 #### UK Ringing
-projectrtp --tone 400+450*0.5/0/400+450*0.5/0:400/200/400/2000 ringing.wav
+
+```js
+prtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000" "ringing.wav" )
+```
 
 #### DTMF
 
@@ -407,9 +330,10 @@ projectrtp --tone 400+450*0.5/0/400+450*0.5/0:400/200/400/2000 ringing.wav
 
 Example, 1 would mix 1209Hz and 697Hz
 
-projectrtp --tone 697+1209*0.5:400 dtmf1.wav
-
-projectrtp --tone 697+1209*0.5/0/697+1336*0.5/0/697+1477*0.5/0:400/100 dtmf1-3.wav
+```js
+prtp.tone.generate( "697+1209*0.5:400" "dtmf1.wav" )
+prtp.tone.generate( "697+1209*0.5/0/697+1336*0.5/0/697+1477*0.5/0:400/100", "dtmf1-3.wav" )
+```
 
 ### --wavinfo
 

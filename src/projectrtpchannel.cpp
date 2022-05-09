@@ -8,663 +8,291 @@
 #include <iomanip>
 #include <utility>
 
+#include <queue>
+
+/* gnutls_rnd */
+#include <gnutls/crypto.h>
+
 #include "projectrtpchannel.h"
-#include "controlclient.h"
+#include "projectrtpstun.h"
+
+extern boost::asio::io_context workercontext;
+std::queue < unsigned short >availableports;
+std::atomic_bool availableportslock( false );
+uint32_t channelscreated = 0;
+
+/* useful for random string generation */
+const char alphanumsecret[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
 
 /*
-# channelrecorder
-c'stor and create
+# RTP Channel
 
-Track files we are recording to.
-*/
-channelrecorder::channelrecorder( std::string &file ) :
-  file( file ),
-  poweraverageduration( 1 ),
-  startabovepower( 0 ),
-  finishbelowpower( 0 ),
-  minduration( 0 ),
-  maxduration( 0 ),
-  numchannels( 2 ),
-  active( false ),
-  lastpowercalc( 0 ),
-  created( boost::posix_time::microsec_clock::local_time() ),
-  control( nullptr )
-{
-}
-
-channelrecorder::~channelrecorder()
-{
-  if( nullptr != this->control )
-  {
-    JSON::Object v;
-    v[ "action" ] = "record";
-    v[ "uuid" ] = this->uuid;
-    v[ "state" ] = "finished";
-    v[ "reason" ] = finishreason;
-
-    this->control->sendmessage( v );
-  }
-}
-
-uint16_t channelrecorder::poweravg( uint16_t power )
-{
-  if( this->poweraverageduration != this->powerfilter.getlength() )
-  {
-    this->powerfilter.reset( this->poweraverageduration );
-  }
-  this->lastpowercalc = this->powerfilter.execute( power );
-  return this->lastpowercalc;
-}
-
-channelrecorder::pointer channelrecorder::create( std::string &file )
-{
-  return pointer( new channelrecorder( file ) );
-}
-
-/*
-## c'stor && create
-*/
-projectchannelmux::projectchannelmux( boost::asio::io_context &iocontext ):
-  iocontext( iocontext ),
-  tick( iocontext ),
-  newchannels( MIXQUEUESIZE ),
-  failcount( 0 )
-{
-}
-
-projectchannelmux::~projectchannelmux()
-{
-  this->tick.cancel();
-}
-
-projectchannelmux::pointer projectchannelmux::create( boost::asio::io_context &iocontext )
-{
-  return pointer( new projectchannelmux( iocontext ) );
-}
-
-void projectchannelmux::mixall( void )
-{
-  /* First decide on a common rate (if we only have 8K channels it is pointless
-  upsampling them all and wasting resources) */
-  int l16krequired = L168KPAYLOADTYPE;
-  size_t insize = L16PAYLOADSAMPLES;
-
-  for( auto& chan: this->channels )
-  {
-    switch( chan->selectedcodec )
-    {
-      case G722PAYLOADTYPE:
-      case L1616KPAYLOADTYPE:
-      {
-        l16krequired = L1616KPAYLOADTYPE;
-        goto endofforloop;
-      }
-    }
-  }
-  endofforloop:
-
-  this->added.malloc( insize, sizeof( int16_t ), l16krequired );
-  this->subtracted.malloc( insize, sizeof( int16_t ), l16krequired );
-  this->added.zero();
-
-  /* We first have to add them all up */
-  for( auto& chan: this->channels )
-  {
-    rtppacket *src = chan->getrtpbottom();
-    if( nullptr != src )
-    {
-      chan->incodec << codecx::next;
-      chan->incodec << *src;
-      this->added += chan->incodec;
-    }
-  }
-
-  /* Now we subtract this channel to send to this channel. */
-  for( auto& chan: this->channels )
-  {
-    /*
-     There is a small chance that rtp bottom may have flipped from nullptr to something.
-     We will get a little noise as a result. We could get rid of this by marking the
-     channel somehow?
-    */
-    rtppacket *src = chan->getrtpbottom();
-    if( nullptr != src )
-    {
-      rtppacket *dst = chan->gettempoutbuf();
-
-      this->subtracted.zero();
-      this->subtracted.copy( this->added );
-      this->subtracted -= chan->incodec;
-
-      chan->outcodec << codecx::next;
-      chan->outcodec << this->subtracted;
-      dst << chan->outcodec;
-      chan->writepacket( dst );
-      chan->incrrtpbottom( src );
-    }
-  }
-}
-
-/*
-## mix2
-More effient mixer for 2 channels
-The caller has to ensure there are 2 channels.
-*/
-void projectchannelmux::mix2( void )
-{
-  auto chans = this->channels.begin();
-  auto chan1 = *chans++;
-  auto chan2 = *chans;
-
-  rtppacket *src;
-  if( ( src = chan1->getrtpbottom() ) != nullptr )
-  {
-    uint16_t workingonaheadby = src->getsequencenumber() - chan1->lastworkedonsn - 1;
-
-    chan1->receivedpkskip += workingonaheadby;
-    this->checkfordtmf( chan1, src );
-
-    this->postrtpdata( chan1, chan2, src, workingonaheadby );
-    chan1->incrrtpbottom( src );
-  }
-
-  if( ( src = chan2->getrtpbottom() ) != nullptr )
-  {
-    uint16_t workingonaheadby = src->getsequencenumber() - chan2->lastworkedonsn - 1;
-
-    chan2->receivedpkskip += workingonaheadby;
-    this->checkfordtmf( chan2, src );
-
-    this->postrtpdata( chan2, chan1, src, workingonaheadby );
-    chan2->incrrtpbottom( src );
-  }
-}
-
-/*
-Our timer handler.
-*/
-void projectchannelmux::handletick( const boost::system::error_code& error )
-{
-  if ( error != boost::asio::error::operation_aborted )
-  {
-    boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
-
-    this->checkfornewmixes();
-
-    for( auto& chan: this->channels )
-    {
-      chan->checkfornewrecorders();
-    }
-
-    /* Check for channels which have request removal */
-    {
-      bool anyremoved = false;
-      repeatremove:
-      for( auto& chan: this->channels )
-      {
-        projectchannelmux::pointer tmp = chan->others.load( std::memory_order_relaxed );
-        if( nullptr == tmp )
-        {
-          this->channels.remove( chan );
-          anyremoved = true;
-          goto repeatremove;
-        }
-      }
-
-      if( anyremoved )
-      {
-        if( this->channels.size() <= 1 )
-        {
-          if( 1 == this->channels.size() )
-          {
-            auto chan = this->channels.begin();
-            this->channels.erase( chan );
-          }
-          /* As we use auto pointers returning from this function without
-          readding a new pointer to a timer will clean things up */
-          return;
-        }
-      }
-    }
-
-    if( 2 == this->channels.size() )
-    {
-      this->mix2();
-    }
-    else if( this->channels.size() > 2 )
-    {
-      this->mixall();
-    }
-
-    for( auto& chan: this->channels )
-    {
-      chan->writerecordings();
-      chan->checkidlerecv();
-      chan->checkandfixoverrun();
-    }
-
-    /* calc our timer */
-    boost::posix_time::time_duration const diff = ( boost::posix_time::microsec_clock::local_time() - nowtime );
-    uint64_t tms = diff.total_microseconds();
-    for( auto& chan: this->channels )
-    {
-      chan->totalticktime += tms;
-      chan->totaltickcount++;
-      if( tms > chan->maxticktime ) chan->maxticktime = tms;
-    }
-
-
-    this->tick.expires_at( this->tick.expiry() + boost::asio::chrono::milliseconds( 20 ) );
-    this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
-                                        shared_from_this(),
-                                        boost::asio::placeholders::error ) );
-  }
-}
-
-void projectchannelmux::go( void )
-{
-
-  this->tick.expires_after( std::chrono::milliseconds( 20 ) );
-  this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
-                                        shared_from_this(),
-                                        boost::asio::placeholders::error ) );
-}
-
-/*
-Check for new channels to add to the mix in our own thread.
-*/
-void projectchannelmux::checkfornewmixes( void )
-{
-  std::shared_ptr< projectrtpchannel > chan;
-  while( this->newchannels.pop( chan ) )
-  {
-    for( auto& checkchan: this->channels )
-    {
-      if( checkchan == chan ) goto contin;
-    }
-
-    this->channels.push_back( chan );
-    this->channels.unique();
-    chan->others.exchange( shared_from_this() );
-
-    contin:;
-  }
-}
-
-void projectchannelmux::addchannel( std::shared_ptr< projectrtpchannel > chan )
-{
-  this->newchannels.push( chan );
-}
-
-/*
-## checkfordtmf
-*/
-void projectchannelmux::checkfordtmf( std::shared_ptr< projectrtpchannel > chan, rtppacket *src )
-{
-  /* The next section is sending to our recipient(s) */
-  if( 0 != chan->rfc2833pt && src->getpayloadtype() == chan->rfc2833pt )
-  {
-    /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
-    uint16_t sn = src->getsequencenumber();
-    uint8_t event = 0;
-    uint8_t endbit = 0;
-
-    /*
-    there really should be a packet - we should cater for multiple?
-    endbits can appear to be sent multiple times.
-    */
-    if( src->getpayloadlength() >= 4 )
-    {
-      uint8_t * pl = src->getpayload();
-      endbit = pl[ 1 ] >> 7;
-      event = pl[ 0 ];
-    }
-
-    uint8_t pm = src->getpacketmarker();
-    if( !pm && 0 != chan->lasttelephoneevent && abs( static_cast< long long int >( sn - chan->lasttelephoneevent ) ) > 20 )
-    {
-      pm = 1;
-    }
-
-    if( pm )
-    {
-      if( chan->control )
-      {
-        JSON::Object v;
-        v[ "action" ] = "telephone-event";
-        v[ "id" ] = chan->id;
-        v[ "uuid" ] = chan->uuid;
-        v[ "event" ] = ( JSON::Integer )event;
-
-        chan->control->sendmessage( v );
-      }
-    }
-
-    if( endbit )
-    {
-      chan->lasttelephoneevent = 0;
-    }
-    else
-    {
-      chan->lasttelephoneevent = sn;
-    }
-  }
-}
-
-/*
-## postrtpdata
-Send the data somewhere.
-*/
-void projectchannelmux::postrtpdata( std::shared_ptr< projectrtpchannel > srcchan,  std::shared_ptr< projectrtpchannel > dstchan, rtppacket *src, uint32_t skipcount )
-{
-  rtppacket *dst = dstchan->gettempoutbuf( skipcount );
-
-  if( nullptr == dst )
-  {
-    std::cerr << "We have a null out buffer" << std::endl;
-    return;
-  }
-
-  /* This needs testing */
-  if( 0 != srcchan->rfc2833pt && src->getpayloadtype() == srcchan->rfc2833pt )
-  {
-    dst->setpayloadtype( srcchan->rfc2833pt );
-    dst->copy( src );
-  }
-  else
-  {
-    srcchan->incodec << codecx::next;
-    srcchan->incodec << *src;
-
-    dstchan->outcodec << codecx::next;
-    dstchan->outcodec << *src;
-    dst << dstchan->outcodec;
-  }
-
-  dstchan->writepacket( dst );
-}
-
-/*!md
-# Project RTP Channel
-
-This file (class) represents an RP channel. That is an RTP stream (UDP) with its pair RTCP socket. Basic functions for
+This file represents an RP channel. That is an RTP stream (UDP) with
+its pair RTCP socket. Basic functions for
 
 1. Opening and closing channels
 2. bridging 2 channels
-3. Sending data to an endpoint based on us receiving data first or (to be implimented) the address and port given to us when opening in the channel.
+3. Sending data to an endpoint based on us receiving data first or (to be
+implimented) the address and port given to us when opening in the channel.
 
-
-## projectrtpchannel constructor
-Create the socket then wait for data
-
-echo "This is my data" > /dev/udp/127.0.0.1/10000
 */
-projectrtpchannel::projectrtpchannel( boost::asio::io_context &workercontext, boost::asio::io_context &iocontext, unsigned short port )
-  :
-  selectedcodec( 0 ),
-  ssrcout( 0 ),
+projectrtpchannel::projectrtpchannel( unsigned short port ):
+  /* public */
+  _requestclose( false ),
+  closereason(),
+  codec( 0 ),
   ssrcin( 0 ),
+  ssrcout( 0 ),
   tsout( 0 ),
-  seqout( 0 ),
-  toolatertppacket( nullptr ),
-  orderedinminsn( 0 ),
-  orderedinmaxsn( 0 ),
-  lastworkedonsn( 0 ),
-  rtpbuffercount( BUFFERPACKETCOUNT ),
-  rtpbufferlock( false ),
-  rtpoutindex( 0 ),
-  active( false ),
-  port( port ),
-  rfc2833pt( 0 ),
-  lasttelephoneevent( 0 ),
-  iocontext( iocontext ),
-  workercontext( workercontext ),
-  resolver( iocontext ),
-  rtpsocket( workercontext ),
-  rtcpsocket( workercontext ),
-  receivedrtp( false ),
-  targetconfirmed( false ),
-  reader( true ),
-  writer( true ),
-  receivedpkcount( 0 ),
-  receivedpkskip( 0 ),
-  others( nullptr ),
-  player( nullptr ),
-  newplaydef( nullptr ),
-  doecho( false ),
-  tick( workercontext ),
-  tickswithnortpcount( 0 ),
+  snout( 0 ),
   send( true ),
   recv( true ),
-  havedata( false ),
-  newrecorders( MIXQUEUESIZE ),
+  receivedpkcount( 0 ),
+  receivedpkskip( 0 ),
   maxticktime( 0 ),
   totalticktime( 0 ),
   totaltickcount( 0 ),
+  tickswithnortpcount( 0 ),
+  outpkcount( 0 ),
+  outpkskipcount( 0 ),
+  inbuff( rtpbuffer::create() ),
+  rtpbufferlock( false ),
+  rtpoutindex( 0 ),
+  icelocalpwd(),
+  iceremotepwd(),
+#ifdef NODE_MODULE
+  jsthis( NULL ),
+  cb( NULL ),
+#endif
+  /* private */
+  active( false ),
+  port( port ),
+  rfc2833pt( 101 ),
+  lasttelephoneevent( 0 ),
+  resolver( workercontext ),
+  rtpsocket( workercontext ),
+  rtcpsocket( workercontext ),
+  rtpsenderendpoint(),
+  confirmedrtpsenderendpoint(),
+  rtcpsenderendpoint(),
+  receivedrtp( false ),
+  remoteconfirmed( false ),
+  mixerlock( false ),
+  mixer( nullptr ),
+  mixing( false ),
+  removemixer( false ),
+  outcodec(),
+  incodec(),
+  player( nullptr ),
+  newplaydef( nullptr ),
+  newplaylock( false ),
+  doecho( false ),
+  tick( workercontext ),
+  nexttick( std::chrono::high_resolution_clock::now() ),
+  newrecorders(),
+  newrecorderslock( false ),
+  recorders(),
   rtpdtls( nullptr ),
-  rtpdtlshandshakeing( false )
-{
-  for( auto i = 0; i < BUFFERPACKETCOUNT; i ++ )
-  {
-    this->orderedrtpdata[ i ] = nullptr;
-    this->availablertpdata[ i ] = &this->rtpdata[ i ];
+  rtpdtlslock( false ),
+  remoteaddress(),
+  remoteport( 0 ),
+  queueddigits(),
+  queuddigitslock( false ),
+  lastdtmfsn( 0 ),
+  tickstarttime() {
+
+  channelscreated++;
+
+  gnutls_rnd( GNUTLS_RND_RANDOM, &this->ssrcout, 4 );
+
+  char localicepwd[ 25 ];
+  localicepwd[ 0 ] = 0;
+  if( 0 == gnutls_rnd( GNUTLS_RND_RANDOM, localicepwd, sizeof( localicepwd ) ) ) {
+    for( size_t i = 0; i < sizeof( localicepwd ) - 1; i++ ) {
+      localicepwd[ i ] = alphanumsecret[ localicepwd[ i ] % ( sizeof( alphanumsecret ) - 1 ) ];
+    }
+  }
+  localicepwd[ 24 ] = 0;
+
+  this->icelocalpwd = localicepwd;
+}
+
+
+/*
+## requestopen
+*/
+uint32_t projectrtpchannel::requestopen( void ) {
+
+  /* this shouldn't happen */
+  if( this->active ) return this->ssrcout;
+
+  boost::asio::post( workercontext,
+        boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
+
+  return this->ssrcout;
+}
+
+void projectrtpchannel::requestclose( std::string reason ) {
+  if( !this->_requestclose.exchange( true, std::memory_order_acquire ) ) {
+    this->closereason = reason;
   }
 }
 
-/*!md
-## projectrtpchannel destructor
-Clean up
-*/
-projectrtpchannel::~projectrtpchannel( void )
-{
-  this->player = nullptr;
-  this->others = nullptr;
+void projectrtpchannel::remote( std::string address,
+                                unsigned short port,
+                                uint32_t codec,
+                                dtlssession::mode m,
+                                std::string fingerprint ) {
+  this->remoteconfirmed = false;
+  this->remoteaddress = address;
+  this->remoteport = port;
+  this->codec = codec;
+
+  if( dtlssession::none != m ) {
+    dtlssession::pointer newsession = dtlssession::create( m );
+    newsession->setpeersha256( fingerprint );
+
+    projectrtpchannel::pointer p = shared_from_this();
+    newsession->ondata( [ p ] ( const void *d , size_t l ) -> void {
+      /* Note to me, I need to confirm that gnutls maintains the buffer ptr until after the handshake is confirmed (or
+         at least until we have sent the packet). */
+      if( p->remoteconfirmed ) {
+        p->rtpsocket.async_send_to(
+                          boost::asio::buffer( d, l ),
+                          p->confirmedrtpsenderendpoint,
+                          []( const boost::system::error_code& ec, std::size_t bytes_transferred ) -> void {
+                            /* We don't need to do anything */
+                          } );
+      }
+    } );
+
+    AQUIRESPINLOCK( this->rtpdtlslock );
+    this->rtpdtls = newsession;
+    RELEASESPINLOCK( this->rtpdtlslock );
+  }
+
+  if( this->active ) this->doremote();
 }
 
-/*!md
-# create
-
+/*
+Must be called in the workercontext.
 */
-projectrtpchannel::pointer projectrtpchannel::create( boost::asio::io_context &workercontext, boost::asio::io_context &iocontext, unsigned short port )
-{
-  return pointer( new projectrtpchannel( workercontext, iocontext, port ) );
-}
-
-/*!md
-## open
-Open the channel to read network data. Setup memory and pointers.
-*/
-void projectrtpchannel::open( std::string &id, std::string &uuid, controlclient::pointer c )
-{
-  this->id = id;
-  this->uuid = uuid;
-  this->control = c;
-
-  this->maxticktime = 0;
-  this->totalticktime = 0;
-  this->totaltickcount = 0;
-
-  this->receivedpkcount = 0;
-  this->receivedpkskip = 0;
-
-  this->rtpoutindex = 0;
+void projectrtpchannel::doopen( void ) {
 
   this->outcodec.reset();
   this->incodec.reset();
 
+  boost::asio::socket_base::reuse_address reuseoption( true );
   this->rtpsocket.open( boost::asio::ip::udp::v4() );
+  this->rtpsocket.set_option( reuseoption );
   this->rtpsocket.bind( boost::asio::ip::udp::endpoint(
       boost::asio::ip::udp::v4(), this->port ) );
 
   this->rtcpsocket.open( boost::asio::ip::udp::v4() );
+  this->rtcpsocket.set_option( reuseoption );
   this->rtcpsocket.bind( boost::asio::ip::udp::endpoint(
       boost::asio::ip::udp::v4(), this->port + 1 ) );
 
-  this->receivedrtp = false;
-  this->toolatertppacket = nullptr;
+  if( !this->rtpsocket.is_open() || !this->rtcpsocket.is_open() ) {
+    fprintf( stderr, "No more sockets available - refusing a new channel\n" );
+    this->requestclose( "error.nosocket" );
+    this->doclose();
+    return;
+  }
+
   this->active = true;
-  this->send = true;
-  this->recv = true;
-
-  this->codecs.clear();
-  this->selectedcodec = 0;
-
-  this->rfc2833pt = 0;
-  this->lasttelephoneevent = 0;
-
-  this->ssrcout = rand();
 
   /* anchor our out time to when the channel is opened */
   this->tsout = std::chrono::system_clock::to_time_t( std::chrono::system_clock::now() );
+  this->snout = rand();
 
-  this->seqout = 0;
+  if( 0 != this->remoteport ) this->doremote();
 
-  this->orderedinminsn = 0;
-  this->orderedinmaxsn = 0;
-  this->lastworkedonsn = 0;
-
-  this->tickswithnortpcount = 0;
-
-  this->havedata = false;
-}
-
-void projectrtpchannel::go( void )
-{
   this->readsomertp();
   this->readsomertcp();
 
-  this->tick.expires_after( std::chrono::milliseconds( 20 ) );
+  this->nexttick = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds( 20 );
+
+  this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
   this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
                                         shared_from_this(),
                                         boost::asio::placeholders::error ) );
+
 }
 
-void projectrtpchannel::enabledtls( dtlssession::mode m, std::string &fingerprint )
-{
-  this->rtpdtls = dtlssession::create( m );
-  this->rtpdtls->setpeersha256( fingerprint );
-
-  this->rtpdtlshandshakeing = true;
-
-  projectrtpchannel::pointer p = shared_from_this();
-  this->rtpdtls->ondata( [ p ] ( const void *d , size_t l ) -> void {
-    /* Note to me, I need to confirm that gnutls maintains the buffer ptr until after the handshake is confirmed (or
-       at least until we have sent the packet). */
-    p->rtpsocket.async_send_to(
-                      boost::asio::buffer( d, l ),
-                      p->confirmedrtpsenderendpoint,
-                      []( const boost::system::error_code& ec, std::size_t bytes_transferred ) -> void {
-                        /* We don't need to do anything */
-                      } );
-
-  } );
-}
-
-unsigned short projectrtpchannel::getport( void )
-{
-  return this->port;
-}
-
-/*!md
-## close
-Closes the channel.
+/*
+## projectrtpchannel destructor
+Clean up
 */
-void projectrtpchannel::close( void )
-{
-  this->active = false;
-  boost::asio::post( this->iocontext,
-        boost::bind( &projectrtpchannel::doclose, this ) );
-}
+projectrtpchannel::~projectrtpchannel( void ) {
 
-void projectrtpchannel::doclose( void )
-{
-  this->active = false;
-  this->tick.cancel();
-  this->player = nullptr;
-  this->newplaydef = nullptr;
-
-  /* remove oursevelse from our list of mixers */
-  this->others = nullptr;
-
-  /* close our session if we have one */
-  this->rtpdtls = nullptr;
-  this->rtpdtlshandshakeing = false;
-
-  for( auto i = 0; i < BUFFERPACKETCOUNT; i ++ )
-  {
-    this->orderedrtpdata[ i ] = nullptr;
-    this->availablertpdata[ i ] = &this->rtpdata[ i ];
-  }
-
-  /* close up any remaining recorders */
-  for( auto& rec: this->recorders )
-  {
-    rec->finishreason = "channel closed";
-  }
-
-  this->recorders.clear();
-
-  this->rtpbuffercount = BUFFERPACKETCOUNT;
-  this->rtpbufferlock.store( false, std::memory_order_release );
-
+  /* Close when we are confident all references have been released */
   this->rtpsocket.close();
   this->rtcpsocket.close();
 
-  if( this->control )
-  {
-    this->control->channelclosed( this->uuid );
+  AQUIRESPINLOCK( availableportslock );
+  availableports.push( this->getport() );
+  RELEASESPINLOCK( availableportslock );
 
-    JSON::Object v;
-    v[ "action" ] = "close";
-    v[ "id" ] = this->id;
-    v[ "uuid" ] = this->uuid;
-
-    /* calculate mos - calc borrowed from FS - thankyou. */
-    JSON::Object i;
-    if( this->receivedpkcount > 0 )
-    {
-      double r = ( ( this->receivedpkcount - this->receivedpkskip ) / this->receivedpkcount ) * 100.0;
-      if ( r < 0 || r > 100 ) r = 100;
-      double mos = 1 + ( 0.035 * r ) + (.000007 * r * ( r - 60 ) * ( 100 - r ) );
-
-      i[ "mos" ] = ( JSON::Double ) mos;
-    }
-    else
-    {
-      i[ "mos" ] = ( JSON::Double ) 0.0;
-    }
-    i[ "count" ] = ( JSON::Integer ) this->receivedpkcount;
-    i[ "skip" ] = ( JSON::Integer ) this->receivedpkskip;
-
-    JSON::Object s;
-    s[ "in" ] = i;
-
-    if( this->totaltickcount > 0 )
-    {
-      s[ "meanticktimeus" ] = ( JSON::Integer ) ( this->totalticktime / this->totaltickcount );
-    }
-    else
-    {
-      s[ "meanticktimeus" ] = ( JSON::Integer ) 0;
-    }
-    s[ "maxticktimeus" ] = ( JSON::Integer ) this->maxticktime;
-    s[ "tickswithnortpcount" ] = ( JSON::Integer ) this->tickswithnortpcount;
-    s[ "totaltickcount" ] = ( JSON::Integer ) this->totaltickcount;
-
-    v[ "stats" ] = s;
-
-    this->control->sendmessage( v );
-  }
+  channelscreated--;
 }
 
-bool projectrtpchannel::checkidlerecv( void )
-{
-  if( this->recv && this->active )
-  {
+/*
+# create
+
+*/
+projectrtpchannel::pointer projectrtpchannel::create( unsigned short port ) {
+  return pointer( new projectrtpchannel( port ) );
+}
+
+unsigned short projectrtpchannel::getport( void ) {
+  return this->port;
+}
+
+void projectrtpchannel::requestecho( bool e ) {
+  this->doecho = e;
+}
+
+void projectrtpchannel::doclose( void ) {
+
+  if( !this->active ) return;
+
+  this->active = false;
+  this->tick.cancel();
+
+  if( nullptr != this->player ) {
+    postdatabacktojsfromthread( shared_from_this(), "play", "end", "channelclosed" );
+  }
+
+  this->player = nullptr;
+  this->newplaydef = nullptr;
+
+  this->mixer = nullptr;
+  this->mixing = false;
+  this->removemixer = true;
+
+  /* close our session if we have one */
+  this->rtpdtls = nullptr;
+
+  /* close up any remaining recorders */
+  for( auto& rec: this->recorders ) {
+    postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.channelclosed" );
+  }
+
+  this->recorders.clear();
+  this->rtpsocket.cancel();
+  this->rtcpsocket.cancel();
+  this->resolver.cancel();
+
+  postdatabacktojsfromthread( shared_from_this(), "close", this->closereason );
+}
+
+bool projectrtpchannel::checkidlerecv( void ) {
+  if( this->recv && this->active ) {
     this->tickswithnortpcount++;
-    if( this->tickswithnortpcount > ( 50 * 20 ) ) /* 50 (@20mS ptime)/S */
-    {
-      this->close();
+    if( this->tickswithnortpcount > ( 50 * 20 ) ) { /* 50 (@20mS ptime)/S = 20S */
+      this->closereason = "idle";
+      this->doclose();
       return true;
     }
   }
@@ -672,315 +300,388 @@ bool projectrtpchannel::checkidlerecv( void )
   return false;
 }
 
-/*
-Check for new channels to add to the mix in our own thread.
-*/
-void projectrtpchannel::checkfornewrecorders( void )
-{
-  boost::shared_ptr< channelrecorder > rec;
-  while( this->newrecorders.pop( rec ) )
-  {
-    rec->sfile = soundfile::create(
-        rec->file,
-        soundfile::wavformatfrompt( this->selectedcodec ),
-        rec->numchannels,
-        soundfile::getsampleratefrompt( this->selectedcodec ) );
-
-    rec->control = this->control;
-    this->recorders.push_back( rec );
-
-    if( this->control )
-    {
-      JSON::Object v;
-      v[ "action" ] = "record";
-      v[ "id" ] = this->id;
-      v[ "uuid" ] = rec->uuid;
-      v[ "chaneluuid" ] = this->uuid;
-      v[ "file" ] = rec->file;
-      v[ "state" ] = "recording";
-
-      this->control->sendmessage( v );
-    }
-  }
+void projectrtpchannel::incrtsout( void ) {
+  this->tsout += G711PAYLOADBYTES;
 }
 
 /*!md
 ## handletick
 Our timer to send data - use this for when we are a single channel. Mixing tick is done in mux.
 */
-void projectrtpchannel::handletick( const boost::system::error_code& error )
-{
-  if ( error != boost::asio::error::operation_aborted )
+void projectrtpchannel::handletick( const boost::system::error_code& error ) {
+  if( error == boost::asio::error::operation_aborted ) return;
+  if( !this->active ) return;
+
+  if( this->_requestclose ) {
+    this->doclose();
+    return;
+  }
+
+  if( this->mixing ) {
+    this->setnexttick();
+    return;
+  };
+
+  this->startticktimer();
+
+  if( this->dtlsnegotiate() ) {
+    this->endticktimer();
+    this->setnexttick();
+    return;
+  }
+
+  this->incrtsout();
+  if( this->checkidlerecv() ) return;
+  this->checkfornewrecorders();
+
+  this->incodec << codecx::next;
+  this->outcodec << codecx::next;
+
+  AQUIRESPINLOCK( this->rtpdtlslock );
+  dtlssession::pointer currentdtlssession = this->rtpdtls;
+  RELEASESPINLOCK( this->rtpdtlslock );
+
+  rtppacket *src;
+  do {
+    AQUIRESPINLOCK( this->rtpbufferlock );
+    src = this->inbuff->pop();
+    RELEASESPINLOCK( this->rtpbufferlock );
+
+    if( nullptr != currentdtlssession &&
+        !currentdtlssession->rtpdtlshandshakeing ) {
+      if( !currentdtlssession->unprotect( src ) ) {
+        this->receivedpkskip++;
+        src = nullptr;
+      }
+    }
+  } while( this->checkfordtmf( src ) );
+
+  this->senddtmf();
+
+  if( nullptr != src ) {
+    this->incodec << *src;
+  }
+
+  /* check for new players */
   {
-    /* calc a timer */
-    boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
+    bool playerreplaced = false;
+    bool playernew = false;
+    AQUIRESPINLOCK( this->newplaylock );
+    if( nullptr != this->newplaydef ) {
+      this->doecho = false;
 
-    /* only us */
-    projectchannelmux::pointer mux = this->others;
-    if( nullptr == mux || 0 == mux->size() )
-    {
-      if( this->checkidlerecv() ) return;
-      this->checkandfixoverrun();
-      this->checkfornewrecorders();
-
-      rtppacket *src = this->getrtpbottom();
-      if( nullptr != src )
-      {
-        this->incodec << codecx::next;
-        this->incodec << *src;
-        this->incrrtpbottom( src );
+      if( nullptr != this->player ) {
+        playerreplaced = true;
       }
 
-      stringptr newplaydef = this->newplaydef.load();
-      if( newplaydef )
-      {
-        try
-        {
-          if( !this->player )
-          {
-            this->player = soundsoup::create();
-          }
+      this->player = this->newplaydef;
+      this->newplaydef = nullptr;
+      playernew = true;
+    }
+    RELEASESPINLOCK( this->newplaylock );
 
-          JSON::Value ob = JSON::parse( *newplaydef );
-          this->player->config( JSON::as_object( ob ), selectedcodec );
-        }
-        catch(...)
-        {
-          std::cerr << "Bad sound soup: " << *newplaydef << std::endl;
-        }
-        this->newplaydef = nullptr;
-      }
-      else if( this->player )
-      {
-        rtppacket *out = this->gettempoutbuf();
-        rawsound r;
-        if( this->player->read( r ) && r.size() > 0 )
-        {
-          this->outcodec << codecx::next;
-          this->outcodec << r;
-          out << this->outcodec;
-          this->writepacket( out );
-        }
-      }
-      else if( this->doecho )
-      {
-        if( nullptr != src )
-        {
-          this->outcodec << codecx::next;
-          this->outcodec << *src;
+    if( playerreplaced ) {
+      postdatabacktojsfromthread( shared_from_this(), "play", "end", "replaced" );
+    }
+    if( playernew ) {
+      postdatabacktojsfromthread( shared_from_this(), "play", "start", "new" );
+    }
+  }
 
-          rtppacket *dst = this->gettempoutbuf();
-          dst << this->outcodec;
-          this->writepacket( dst );
-        }
-      }
-
-      this->writerecordings();
+  if( this->doecho ) {
+    if( this->player ) {
+      postdatabacktojsfromthread( shared_from_this(), "play", "end", "doecho" );
+      this->player = nullptr;
     }
 
-    boost::posix_time::time_duration const diff = ( boost::posix_time::microsec_clock::local_time() - nowtime );
-    uint64_t tms = diff.total_microseconds();
-    this->totalticktime += tms;
-    this->totaltickcount++;
-    if( tms > this->maxticktime ) this->maxticktime = tms;
+    if( nullptr != src ) {
+      this->outcodec << *src;
 
-    /* The last thing we do */
-    this->tick.expires_at( this->tick.expiry() + boost::asio::chrono::milliseconds( 20 ) );
-    this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
-                                        shared_from_this(),
-                                        boost::asio::placeholders::error ) );
+      rtppacket *dst = this->gettempoutbuf();
+      dst << this->outcodec;
+      this->writepacket( dst );
+    }
+  } else if( this->player ) {
+    rtppacket *out = this->gettempoutbuf();
+    rawsound r;
+    if( this->player->read( r ) ) {
+      if( r.size() > 0 ) {
+        this->outcodec << r;
+        out << this->outcodec;
+        this->writepacket( out );
+      }
+    } else {
+      this->player = nullptr;
+      postdatabacktojsfromthread( shared_from_this(), "play", "end", "completed" );
+    }
+  } 
+
+  this->writerecordings();
+
+  this->endticktimer();
+
+  /* The last thing we do */
+  this->setnexttick();
+}
+
+void projectrtpchannel::startticktimer( void ) {
+  this->tickstarttime = boost::posix_time::microsec_clock::local_time();
+}
+
+void projectrtpchannel::endticktimer( void ) {
+  boost::posix_time::time_duration const diff = ( boost::posix_time::microsec_clock::local_time() - this->tickstarttime );
+  uint64_t tms = diff.total_microseconds();
+  this->totalticktime += tms;
+  this->totaltickcount++;
+  if( tms > this->maxticktime ) this->maxticktime = tms;
+}
+
+void projectrtpchannel::setnexttick( void ) {
+  this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
+
+  this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
+  this->tick.async_wait( boost::bind( &projectrtpchannel::handletick,
+                                      shared_from_this(),
+                                      boost::asio::placeholders::error ) );
+}
+
+void projectrtpchannel::requestplay( soundsoup::pointer newdef ) {
+  AQUIRESPINLOCK( this->newplaylock );
+  this->newplaydef = newdef;
+  RELEASESPINLOCK( this->newplaylock );
+}
+
+/*
+Post a request to record (or modify a param of a record). This function is typically
+called from a control thread (i.e. node).
+*/
+void projectrtpchannel::requestrecord( channelrecorder::pointer rec ) {
+  AQUIRESPINLOCK( this->newrecorderslock );
+  this->newrecorders.push_back( rec );
+  RELEASESPINLOCK( this->newrecorderslock );
+}
+
+/*
+Check for new channels to add to the mix in our own thread. This will be a different thread
+to requestrecord.
+*/
+void projectrtpchannel::checkfornewrecorders( void ) {
+  channelrecorder::pointer rec;
+  AQUIRESPINLOCK( this->newrecorderslock );
+
+  for ( auto const& newrec : this->newrecorders ) {
+
+    for( auto& currentrec: this->recorders ) {
+      if( currentrec->file == newrec->file ) {
+        currentrec->pause = newrec->pause;
+        currentrec->requestfinish = newrec->requestfinish;
+        goto endofwhileloop;
+      }
+    }
+
+    newrec->sfile = soundfilewriter::create(
+        newrec->file,
+        soundfile::wavformatfrompt( this->codec ),
+        newrec->numchannels,
+        soundfile::getsampleratefrompt( this->codec ) );
+
+    this->recorders.push_back( newrec );
+
+endofwhileloop:;
+  }
+
+  this->newrecorders.clear();
+
+  RELEASESPINLOCK( this->newrecorderslock );
+}
+
+void projectrtpchannel::removeoldrecorders( void ) {
+
+  for ( auto const& rec : this->recorders ) {
+    if( rec->isactive() ) {
+
+      boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
+      boost::posix_time::time_duration const diff = ( nowtime - rec->activeat );
+
+      if( diff.total_milliseconds() < rec->minduration  ) {
+        continue;
+      }
+
+      if( rec->requestfinish ) {
+        rec->completed = true;
+        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.requested" );
+        continue;
+      }
+
+      if( rec->lastpowercalc < rec->finishbelowpower ) {
+        rec->completed = true;
+        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.belowpower" );
+        continue;
+      }
+
+      if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
+        rec->completed = true;
+        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.timeout" );
+        continue;
+      }
+    }
+  }
+
+  for ( chanrecptrlist::iterator rec = this->recorders.begin();
+        rec != this->recorders.end(); ) {
+    if( ( *rec )->completed ) {
+      rec = this->recorders.erase( rec );
+    } else {
+      ++rec;
+    }
   }
 }
+
+/*
+## checkfordtmf
+
+We should receive a start packet with mark set to true. This should then continue until a packet with an
+end of event marked in the 2833 payload. But we might lose any one of these packets and should still work
+if we do.
+*/
+static char dtmfchars[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '#', 'A', 'B', 'C', 'D', 'F' };
+bool projectrtpchannel::checkfordtmf( rtppacket *src ) {
+  /* The next section is sending to our recipient(s) */
+  if( nullptr != src &&
+      0 != this->rfc2833pt &&
+      src->getpayloadtype() == this->rfc2833pt ) {
+
+    if( src->getpayloadlength() >= 4 ) {
+      /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
+      uint16_t sn = src->getsequencenumber();
+
+      uint8_t * pl = src->getpayload();
+      uint8_t endbit = pl[ 1 ] >> 7;
+      uint8_t event = pl[ 0 ] & 0x7f;
+
+      if( event <= 16 ) {
+        uint8_t pm = src->getpacketmarker();
+
+        /* Have we lost our mark packet */
+        if( 0 == pm && 0 == endbit &&
+            0 == this->lasttelephoneevent ) {
+          pm = 1;
+        }
+
+        /* did we lose the last end of event */
+        if( 0 != this->lasttelephoneevent &&
+            abs( static_cast< long long int >( sn - this->lasttelephoneevent ) ) > 20 ) {
+          pm = 1;
+        }
+
+        if( 1 == pm ) {
+          postdatabacktojsfromthread( shared_from_this(), "telephone-event", std::string( 1, dtmfchars[ event ] ) );
+        }
+
+        if( endbit ) {
+          this->lasttelephoneevent = 0;
+        } else {
+          this->lasttelephoneevent = sn;
+        }
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
 
 /*
 # writerecordings
 If our codecs (in and out) have data then write to recorded files.
 */
+void projectrtpchannel::writerecordings( void ) {
 
-static bool recorderfinished( boost::shared_ptr<channelrecorder> rec )
-{
-  boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
-  boost::posix_time::time_duration const diff = ( nowtime - rec->created );
+  if( 0 == this->recorders.size() ) return;
+  uint16_t power = 0;
 
-  if( diff.total_milliseconds() < rec->minduration  )
-  {
-    return false;
+  /* Decide if we need to calc power as it is expensive */
+  for( auto& rec: this->recorders ) {
+    if( ( !rec->isactive() && 0 != rec->startabovepower ) || 0 != rec->finishbelowpower ) {
+      power = this->incodec.power();
+      break;
+    }
   }
 
-  if( rec->active && rec->lastpowercalc < rec->finishbelowpower )
-  {
-    rec->finishreason = "finishbelowpower";
-    return true;
+  /* Check if we need to trigger the start of any recordings and write */
+  for( auto& rec: this->recorders ) {
+
+    if( rec->completed ) continue;
+
+    if( 0 == rec->startabovepower && 0 == rec->finishbelowpower ) {
+      if( !rec->isactive() ) {
+        rec->active();
+        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording" );
+      }
+    } else {
+      auto pav = rec->poweravg( power );
+      if( !rec->isactive() && pav > rec->startabovepower ) {
+        rec->active();
+        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording.abovepower" );
+      }
+    }
+
+    if( rec->isactive() && !rec->pause ) {
+      rec->sfile->write( this->incodec, this->outcodec );
+    }
   }
 
-  //std::cout << diff.total_milliseconds() << ":" << rec->maxduration << std::endl;
-  if( diff.total_milliseconds() > rec->maxduration )
-  {
-    rec->finishreason = "timeout";
+  this->removeoldrecorders();
+}
+
+bool projectrtpchannel::dtlsnegotiate( void ) {
+
+  AQUIRESPINLOCK( this->rtpdtlslock );
+  dtlssession::pointer oursession = this->rtpdtls;
+  RELEASESPINLOCK( this->rtpdtlslock );
+
+  if( nullptr == oursession ) return false;
+  if( !oursession->rtpdtlshandshakeing ) return false;
+
+  AQUIRESPINLOCK( this->rtpdtlslock );
+  auto dtlsstate = oursession->handshake();
+  RELEASESPINLOCK( this->rtpdtlslock );
+
+  if( GNUTLS_E_SUCCESS == dtlsstate ) {
+    oursession->rtpdtlshandshakeing = false;
+  }
+
+  return oursession->rtpdtlshandshakeing;
+}
+
+/**
+ * @brief 
+ * 
+ * @return true 
+ * @return false 
+ */
+bool projectrtpchannel::handlestun( uint8_t *pk, size_t len ) {
+
+  if( stun::is( pk, len ) ) {
+
+    size_t len = stun::handle( pk, this->stuntmpout, sizeof( this->stuntmpout ), this->rtpsenderendpoint, this->icelocalpwd, this->iceremotepwd );
+    if( len > 0 ) {
+      this->rtpsocket.async_send_to(
+                      boost::asio::buffer( this->stuntmpout, len ),
+                      this->rtpsenderendpoint, /* do we sometime tie this in with confirmedrtpsenderendpoint as the integrity check can auth it? */
+                      boost::bind( &projectrtpchannel::handlesend,
+                                    shared_from_this(),
+                                    boost::asio::placeholders::error,
+                                    boost::asio::placeholders::bytes_transferred ) );
+    }
+    
     return true;
   }
 
   return false;
 }
 
-void projectrtpchannel::writerecordings( void )
-{
-  if( 0 == this->recorders.size() ) return;
-
-  uint16_t power = 0;
-
-  /* Decide if we need to calc power as it is expensive */
-  for( auto& rec: this->recorders )
-  {
-    if( ( !rec->active && 0 != rec->startabovepower ) || 0 != rec->finishbelowpower )
-    {
-      power = this->incodec.power();
-      break;
-    }
-  }
-
-  for( auto& rec: this->recorders )
-  {
-    auto pav = rec->poweravg( power );
-    if( 0 == rec->startabovepower && 0 == rec->finishbelowpower )
-    {
-      rec->active = true;
-    }
-    else
-    {
-      if( !rec->active && pav > rec->startabovepower )
-      {
-        rec->active = true;
-      }
-    }
-
-    if( rec->active )
-    {
-      rec->sfile->write( this->incodec, this->outcodec );
-    }
-  }
-
-  this->recorders.remove_if( recorderfinished );
-}
-
 /*
-## getrtpbottom
-Gets our oldest RTP packet required processing.highcount and lowcount
-provide some hysteresis so we don't quickly stop and start a channel
-only really needed if we need to mix from multiple sources (i.e. conference).
-*/
-rtppacket *projectrtpchannel::getrtpbottom( uint16_t highcount, uint16_t lowcount )
-{
-  if( !this->receivedrtp ) return nullptr;
-
-  /* There probably has been a network delay and they are now coming through
-  which has filled up our RTP buffer - help clear out */
-  uint16_t diff = this->orderedinmaxsn - this->orderedinminsn;
-  if( diff > BUFFERPACKETCAP )
-  {
-    for( uint16_t i = 0; i < diff; i++ )
-    {
-      this->incrrtpbottom( this->orderedrtpdata[ this->orderedinminsn % BUFFERPACKETCOUNT ] );
-    }
-  }
-
-  rtppacket *src = this->orderedrtpdata[ this->orderedinminsn % BUFFERPACKETCOUNT ];
-
-  if( nullptr == src ) return nullptr;
-  auto sn = src->getsequencenumber();
-  if( this->orderedinminsn != sn ) return nullptr;
-
-  auto aheadby = this->orderedinmaxsn - sn;
-  auto delaycount = highcount;
-  if( this->havedata ) delaycount = lowcount;
-
-  /* We allow n to accumulate in our buffer before we work on them */
-  if( aheadby < delaycount )
-  {
-    this->havedata = false;
-    return nullptr;
-  }
-  this->havedata = true;
-
-  return src;
-}
-
-void projectrtpchannel::incrrtpbottom( rtppacket *from )
-{
-  if( nullptr == from ) return;
-  this->lastworkedonsn = from->getsequencenumber();
-  this->returnbuffer( this->orderedrtpdata[ this->lastworkedonsn % BUFFERPACKETCOUNT ] );
-  this->orderedrtpdata[ this->lastworkedonsn % BUFFERPACKETCOUNT ] = nullptr;
-  this->orderedinminsn++;
-}
-
-/*
-Get and return an avaiable memory buffer for an rtp packet. Use a spin lock for a tiny section.
-*/
-void projectrtpchannel::returnbuffer( rtppacket *buf )
-{
-  while( this->rtpbufferlock.exchange( true, std::memory_order_acquire ) );
-
-  this->availablertpdata[ this->rtpbuffercount ] = buf;
-  this->rtpbuffercount++;
-
-  this->rtpbufferlock.store( false, std::memory_order_release );
-}
-
-
-rtppacket* projectrtpchannel::getbuffer( void )
-{
-  rtppacket* buf = nullptr;
-  while( this->rtpbufferlock.exchange( true, std::memory_order_acquire ) );
-
-  if( this->rtpbuffercount == 0 )
-  {
-    goto getbufferend;
-  }
-
-  {
-    auto currentmax = --this->rtpbuffercount;
-
-    buf = this->availablertpdata[ currentmax ];
-    this->availablertpdata[ currentmax ] = nullptr;
-  }
-
-  getbufferend:
-  this->rtpbufferlock.store( false, std::memory_order_release );
-  return buf;
-}
-
-void projectrtpchannel::displaybuffer( void )
-{
-  std::string available;
-  uint16_t diff = this->orderedinmaxsn - this->orderedinminsn;
-  for( uint16_t i = 0; i < diff; i ++ )
-  {
-    rtppacket *src = this->orderedrtpdata[ ( this->orderedinminsn + i ) % BUFFERPACKETCOUNT ];
-    if( nullptr == src )
-    {
-      available += "u";
-    }
-    else if( ( this->orderedinminsn + i ) != src->getsequencenumber() )
-    {
-      available += "b";
-    }
-    else
-    {
-      available += "a";
-    }
-  }
-
-  rtppacket *src = this->orderedrtpdata[ this->orderedinminsn % BUFFERPACKETCOUNT ];
-  if( nullptr == src || this->orderedinminsn != src->getsequencenumber() )
-  {
-    available = 'u';
-  }
-
-  std::cout << this->uuid << ": " << this->orderedinminsn << "(" << diff << ") <-----(" << available << ")-----> " << this->orderedinmaxsn << std::endl;
-}
-
-/*!md
 ## handlereadsomertp
 Wait for RTP data. We have to re-order when required. Look after all of the round robin memory here.
 We should have enough time to deal with the in data before it gets overwritten.
@@ -988,410 +689,1377 @@ We should have enough time to deal with the in data before it gets overwritten.
 WARNING WARNING
 Order matters. We have multiple threads reading and writing variables using atomics and normal data.
 Any clashes should be handled by atomics.
+
+I have switched to using blocking functions - but only in responce to an async wait
+which should mean (not very well documented) that the read will not block.
 */
-void projectrtpchannel::readsomertp( void )
-{
-  rtppacket *buf = this->getbuffer();
-  if( nullptr == buf )
-  {
-    std::cerr << "ERROR: we should never get here - we have no more buffer available on port " << this->port << std::endl;
-    return;
-  }
+void projectrtpchannel::readsomertp( void ) {
 
-  this->rtpsocket.async_receive_from(
-    boost::asio::buffer( buf->pk, RTPMAXLENGTH ),
-                          this->rtpsenderendpoint,
-      [ this, buf ]( boost::system::error_code ec, std::size_t bytes_recvd )
-      {
-        if ( !ec && bytes_recvd > 0 && bytes_recvd <= RTPMAXLENGTH )
-        {
-          if( this->rtpdtlshandshakeing )
-          {
-            this->rtpdtls->write( buf, bytes_recvd );
-            auto dtlsstate = this->rtpdtls->handshake();
-            if( GNUTLS_E_AGAIN == dtlsstate )
-            {
-              this->readsomertp();
-            }
-            else if ( GNUTLS_E_SUCCESS == dtlsstate )
-            {
-              this->readsomertp();
-              this->rtpdtlshandshakeing = false;
-            }
+  this->rtpsocket.cancel();
+  this->rtpsocket.async_wait(
+    boost::asio::ip::tcp::socket::wait_read,
+    [ this ]( const boost::system::error_code& error ) {
 
-            return;
-          }
+      if( boost::asio::error::operation_aborted == error ) return;
+      if( !this->active ) return;
 
-          if( !this->recv )
-          {
-            /* silently drop */
-            this->returnbuffer( buf );
-            if( !ec && bytes_recvd && this->active )
-            {
-              this->readsomertp();
-            }
-            return;
-          }
+      AQUIRESPINLOCK( this->rtpdtlslock );
+      dtlssession::pointer currentdtlssession = this->rtpdtls;
+      RELEASESPINLOCK( this->rtpdtlslock );
 
-          /* As we check if there is any buffer left this should stop us ever running out and quitting trying
-          i.e. when we are very low imm return and retry - eventually our tick will process the backlog */
-          if( 0 == this->rtpbuffercount )
-          {
-            /* silently drop this packet and repeat until we have space in our buffer  */
-            std::cerr << "Discarding data due to low space in buffer on port " << this->port << std::endl;
-            for( size_t i = 0; i < ( BUFFERPACKETCOUNT - BUFFERHIGHDELAYCOUNT ); i++ )
-            {
-              rtppacket *bot = this->getrtpbottom();
-              if( nullptr != bot )
-              {
-                this->incrrtpbottom( bot );
-              }
-              else
-              {
-                std::cerr << "ERROR: how did we end up in this state?? on port " << this->port << std::endl;
-              }
-            }
-          }
+      if( nullptr != currentdtlssession &&
+          currentdtlssession->rtpdtlshandshakeing ) {
+        /* DTLS Handshake */
+        uint8_t dtlsbuf[ 1500 ];
+        auto bytesrecvd = this->rtpsocket.receive_from( boost::asio::buffer( dtlsbuf, sizeof( dtlsbuf ) ), this->rtpsenderendpoint );
+        if( !this->handlestun( dtlsbuf, bytesrecvd ) ) {
+          AQUIRESPINLOCK( this->rtpdtlslock );
+          currentdtlssession->write( dtlsbuf, bytesrecvd );
+          RELEASESPINLOCK( this->rtpdtlslock );
+        }
+        this->readsomertp();
+      } else {
+        /* RTP */
+        /* Grab a buffer */
+        AQUIRESPINLOCK( this->rtpbufferlock );
+        rtppacket* buf = this->inbuff->reserve();
+        RELEASESPINLOCK( this->rtpbufferlock );
+        if( nullptr == buf ) {
+          this->requestclose( "error.nobuffer" );
+          return;
+        }
 
-#ifdef SIMULATEDPACKETLOSSRATE
-          /* simulate packet loss */
-          if( 0 == rand() % SIMULATEDPACKETLOSSRATE )
-          {
-            this->returnbuffer( buf );
-            if( !ec && bytes_recvd && this->active )
-            {
-              this->readsomertp();
-            }
-            return;
-          }
-#endif
-          this->tickswithnortpcount = 0;
+        auto bytesrecvd = this->rtpsocket.receive_from( boost::asio::buffer( buf->pk, RTPMAXLENGTH ), this->rtpsenderendpoint );
+
+        if( RTPMAXLENGTH == bytesrecvd ) {
+          // Too large
           this->receivedpkcount++;
-          if( !this->receivedrtp )
-          {
-            if( 1 == this->receivedpkcount )
-            {
-              this->lastworkedonsn.store( buf->getsequencenumber() - 1 ); /* pseudo */
-              this->orderedinminsn.store( buf->getsequencenumber() );
-              this->orderedinmaxsn.store( buf->getsequencenumber() );
+          this->receivedpkskip++;
+          this->readsomertp();
+        } else if( bytesrecvd > 0 ) {
+
+          if( this->handlestun( buf->pk, bytesrecvd ) ) {
+            return;
+          }
+
+          /* We should still count packets we are instructed to drop */
+          this->receivedpkcount++;
+
+          if( !this->recv ) {
+            if( bytesrecvd > 0 && this->active ) {
+              this->readsomertp();
             }
+            return;
+          }
+
+          this->tickswithnortpcount = 0;
+
+          if( !this->receivedrtp ) {
             this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
             this->receivedrtp = true;
-          }
-          else
-          {
+            this->ssrcin = buf->getssrc();
+          } else {
             /* After the first packet - we only accept data from the verified source */
-            if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint )
-            {
-              this->returnbuffer( buf );
+            if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint ) {
               this->readsomertp();
               return;
             }
 
-            if( this->checkforoverrun( buf ) ) return;
-            if( this->checkforunderrun( buf ) ) return;
+            if( buf->getssrc() != this->ssrcin ) {
+              this->receivedpkskip++;
+              this->readsomertp();
+              return;
+            }
           }
 
-          /* store in the buffer */
-          buf->length = bytes_recvd;
+          buf->length = bytesrecvd;
 
-          /* Now order it */
-          uint16_t sn = buf->getsequencenumber();
-          this->orderedrtpdata[ sn % BUFFERPACKETCOUNT ].store( buf, std::memory_order_relaxed );
-          if( sn > this->orderedinmaxsn ) this->orderedinmaxsn = sn;
-          if( sn < this->orderedinminsn ) this->orderedinminsn = sn;
-        }
+          AQUIRESPINLOCK( this->rtpbufferlock );
+          this->inbuff->push();
+          RELEASESPINLOCK( this->rtpbufferlock );
 
-        if( !ec && bytes_recvd && this->active )
-        {
-          if( enabledisprtpbuff ) this->displaybuffer();
+
           this->readsomertp();
+        } else {
+          this->receivedpkcount++;
+          this->receivedpkskip++;
         }
-      } );
-}
-
-/*
-## checkforoverrun
-See if the received packet is within our window. If it does we have to trash
-existing items in our buffer so we have to hand this off to our tick.
-*/
-bool projectrtpchannel::checkforoverrun( rtppacket *buf )
-{
-  uint16_t diff = buf->getsequencenumber() - this->orderedinminsn;
-
-  if( diff > BUFFERPACKETCOUNT )
-  {
-    /* We have to clear the buffer and re-go */
-    this->toolatertppacket = buf;
-    return true;
-  }
-
-  return false;
-}
-
-/*
-## fixoverrun
-When we have received a packet which is too new - we need to clear our buffers
-and restart. This MUST be called from our tick.
-*/
-void projectrtpchannel::checkandfixoverrun( void )
-{
-  rtppacket *tmp = this->toolatertppacket.load( std::memory_order_relaxed );
-  if( nullptr != tmp )
-  {
-    for( size_t i = 0; i < BUFFERPACKETCOUNT; i++ )
-    {
-      if( nullptr != this->orderedrtpdata[ i ] )
-      {
-        this->returnbuffer( this->orderedrtpdata[ i ] );
-        this->orderedrtpdata[ i ] = nullptr;
       }
-    }
-
-    uint16_t sn = tmp->getsequencenumber();
-    this->orderedrtpdata[ sn % BUFFERPACKETCOUNT ].store( tmp, std::memory_order_relaxed );
-    this->orderedinminsn = this->orderedinmaxsn = sn;
-    this->toolatertppacket = nullptr;
-  }
+    } );
 }
 
 /*
-## checkforunderrun
-Received too late - do we just bin...
-*/
-bool projectrtpchannel::checkforunderrun( rtppacket *buf )
-{
-  uint16_t sn = buf->getsequencenumber();
-
-  auto diff = this->orderedinminsn - sn;
-  if( diff > 0 && diff < BUFFERPACKETCOUNT  )
-  {
-    this->returnbuffer( buf );
-    if( this->active )
-    {
-      this->readsomertp();
-    }
-    return true;
-  }
-  return false;
-}
-
-/*!md
 ## gettempoutbuf
-When we need a buffer to send data out (because we cannot guarantee our own buffer will be available) we can use the circular out buffer on this channel. This will return the next one available.
+When we need a buffer to send data out (because we cannot guarantee our
+own buffer will be available) we can use the circular out buffer on this
+channel. This will return the next one available.
 
-We assume this is called to send packets out in order, and at intervals required for each timestamp to be incremented in lou of it payload type.
+We assume this is called to send packets out in order, and at intervals
+ required for each timestamp to be incremented in lou of it payload type.
 */
-rtppacket *projectrtpchannel::gettempoutbuf( uint32_t skipcount )
-{
-  rtppacket *buf = &this->outrtpdata[ this->rtpoutindex ];
-  this->rtpoutindex = ( this->rtpoutindex + 1 ) % BUFFERPACKETCOUNT;
+rtppacket *projectrtpchannel::gettempoutbuf( void ) {
+
+  uint16_t outindex = this->rtpoutindex++;
+  rtppacket *buf = &this->outrtpdata[ ( outindex % OUTBUFFERPACKETCOUNT ) ];
 
   buf->init( this->ssrcout );
-  buf->setpayloadtype( this->selectedcodec );
-
-  this->seqout += skipcount;
-  buf->setsequencenumber( this->seqout );
-
-  if( skipcount > 0 )
-  {
-    this->tsout += ( buf->getticksperpacket() * skipcount );
-  }
-
+  buf->setpayloadtype( this->codec );
+  buf->setsequencenumber( this->snout );
   buf->settimestamp( this->tsout );
-
-  this->seqout++;
-
   return buf;
 }
 
-/*!md
+/*
 ## handlereadsomertcp
 Wait for RTP data
 */
-void projectrtpchannel::readsomertcp( void )
-{
+void projectrtpchannel::readsomertcp( void ) {
   this->rtcpsocket.async_receive_from(
   boost::asio::buffer( &this->rtcpdata[ 0 ], RTCPMAXLENGTH ), this->rtcpsenderendpoint,
-    [ this ]( boost::system::error_code ec, std::size_t bytes_recvd )
-    {
-      if ( !ec && bytes_recvd > 0 && bytes_recvd <= RTCPMAXLENGTH )
-      {
+    [ this ]( boost::system::error_code ec, std::size_t bytes_recvd ) {
+
+      if( ec ) return;
+
+      if ( bytes_recvd > 0 && bytes_recvd <= RTCPMAXLENGTH ) {
         this->handlertcpdata();
       }
 
-      if( !ec && bytes_recvd && this->active )
-      {
+      if( bytes_recvd > 0 && this->active ) {
         this->readsomertcp();
       }
     } );
 }
 
-/*!md
+/*
 ## isactive
 As it says.
 */
-bool projectrtpchannel::isactive( void )
-{
+bool projectrtpchannel::isactive( void ) {
   return this->active;
 }
 
-/*!md
+/*
 ## writepacket
 Send a [RTP] packet to our endpoint.
 */
-void projectrtpchannel::writepacket( rtppacket *pk )
-{
-  if( 0 == pk->length )
-  {
-    std::cerr << "We have been given an RTP packet of zero length??" << std::endl;
+void projectrtpchannel::writepacket( rtppacket *pk ) {
+
+  if( !this->active ) return;
+
+  if( nullptr == pk ) {
+    this->outpkskipcount++;
+    fprintf( stderr, "We have been given an nullptr RTP packet??\n" );
     return;
   }
 
-  if( !this->send )
-  {
+  if( 0 == pk->length ) {
+    this->outpkskipcount++;
+    fprintf( stderr, "We have been given an RTP packet of zero length??\n" );
+    return;
+  }
+
+  if( !this->send ) {
+    this->outpkskipcount++;
     /* silently drop - could we do this sooner to use less CPU? */
     return;
   }
 
-  if( this->receivedrtp || this->targetconfirmed )
-  {
-    this->tsout = pk->getnexttimestamp();
+  AQUIRESPINLOCK( this->rtpdtlslock );
+  dtlssession::pointer currentdtlssession = this->rtpdtls;
+  RELEASESPINLOCK( this->rtpdtlslock );
+
+  if( nullptr != currentdtlssession &&
+      currentdtlssession->rtpdtlshandshakeing ) {
+    this->outpkskipcount++;
+    return;
+  }
+
+  if( nullptr != currentdtlssession &&
+      !currentdtlssession->rtpdtlshandshakeing ) {
+    if( !currentdtlssession->protect( pk ) ) {
+      this->outpkskipcount++;
+      return;
+    }
+  }
+
+  if( this->receivedrtp || this->remoteconfirmed ) {
+    this->snout++;
 
     this->rtpsocket.async_send_to(
                       boost::asio::buffer( pk->pk, pk->length ),
                       this->confirmedrtpsenderendpoint,
                       boost::bind( &projectrtpchannel::handlesend,
-                                    this,
+                                    shared_from_this(),
                                     boost::asio::placeholders::error,
                                     boost::asio::placeholders::bytes_transferred ) );
   }
 }
 
-/*!md
-## target
-Our control can set the target of the RTP stream. This can be important in order to open holes in firewall for our reverse traffic.
-*/
-void projectrtpchannel::target( std::string &address, unsigned short port )
-{
+void projectrtpchannel::doremote( void ) {
+  if( "" == this->remoteaddress ) return;
+
   this->receivedrtp = false;
-  boost::asio::ip::udp::resolver::query query( boost::asio::ip::udp::v4(), address, std::to_string( port ) );
+  boost::asio::ip::udp::resolver::query query(
+    boost::asio::ip::udp::v4(),
+    this->remoteaddress,
+    std::to_string( this->remoteport ) );
 
   /* Resolve the address */
   this->resolver.async_resolve( query,
-      boost::bind( &projectrtpchannel::handletargetresolve,
+      boost::bind( &projectrtpchannel::handleremoteresolve,
         shared_from_this(),
         boost::asio::placeholders::error,
         boost::asio::placeholders::iterator ) );
 }
 
-void projectrtpchannel::rfc2833( unsigned short pt )
-{
-  this->rfc2833pt = pt;
-}
-
 /*!md
-## mix
-Add the other to our list of others. n way relationship. Adds to queue for when our main thread calls into us.
+## handleremoteresolve
+We have resolved the remote address and port now use it. Further work could be to inform control there is an issue.
 */
-bool projectrtpchannel::mix( projectrtpchannel::pointer other )
-{
-  projectrtpchannel::pointer tmpother;
-  if( this == other.get() )
-  {
-    return true;
-  }
-
-  projectchannelmux::pointer m = this->others.load( std::memory_order_relaxed );
-  if( nullptr == m )
-  {
-    m = projectchannelmux::create( this->workercontext );
-    m->addchannel( shared_from_this() );
-    m->addchannel( other );
-    /* We don't need our channel timer */
-    m->go();
-  }
-  else
-  {
-    m->addchannel( other );
-  }
-
-  return true;
-}
-
-/*!md
-## unmix
-As it says.
-*/
-void projectrtpchannel::unmix( void )
-{
-  this->others = nullptr;
-}
-
-/*!md
-## audio
-The CODECs on the other end which are acceptable. The first one should be the preferred. For now we keep hold of the list of codecs as we may be using them in the future. Filter out non-RTP streams (such as DTMF).
-*/
-bool projectrtpchannel::audio( codeclist codecs )
-{
-  this->codecs = codecs;
-  codeclist::iterator it;
-  for( it = codecs.begin(); it != codecs.end(); it++ )
-  {
-    switch( *it )
-    {
-      case PCMAPAYLOADTYPE:
-      case PCMUPAYLOADTYPE:
-      case G722PAYLOADTYPE:
-      case ILBCPAYLOADTYPE:
-      {
-        this->selectedcodec = *it;
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-/*!md
-## handletargetresolve
-We have resolved the target address and port now use it. Further work could be to inform control there is an issue.
-*/
-void projectrtpchannel::handletargetresolve (
+void projectrtpchannel::handleremoteresolve (
             boost::system::error_code e,
-            boost::asio::ip::udp::resolver::iterator it )
-{
+            boost::asio::ip::udp::resolver::iterator it ) {
   boost::asio::ip::udp::resolver::iterator end;
 
-  if( it == end )
-  {
+  if( e == boost::asio::error::operation_aborted ) return;
+
+  if( it == end ) {
     /* Failure - silent (the call will be as well!) */
+    this->requestclose( "failed.remote" );
     return;
   }
 
   this->confirmedrtpsenderendpoint = *it;
-  this->targetconfirmed = true;
+  this->remoteconfirmed = true;
 
   /* allow us to re-auto correct */
   this->receivedrtp = false;
 }
 
-/*!md
+/*
+## mix
+Add the other to a mixer - both channels have access to the same mixer.
+n way relationship. Adds to queue for when our main thread calls into us.
+*/
+bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
+  if( this == other.get() ) {
+    return true;
+  }
+
+  AQUIRESPINLOCK( this->mixerlock );
+
+  if( nullptr == this->mixer && nullptr != other->mixer ) {
+    this->mixer = other->mixer;
+    this->mixer->addchannel( shared_from_this() );
+
+  } else if ( nullptr != this->mixer && nullptr == other->mixer ) {
+    other->mixer = this->mixer;
+    this->mixer->addchannel( other );
+
+  } else if( nullptr == this->mixer && nullptr == other->mixer  ) {
+    this->mixer = projectchannelmux::create( workercontext );
+    other->mixer = this->mixer;
+
+    this->mixer->addchannels( shared_from_this(), other );
+  } else {
+    /* If we get here this and other are already mixing and should be cleaned up first */
+    RELEASESPINLOCK( this->mixerlock );
+    return false;
+  }
+
+  this->mixing = true;
+  other->mixing = true;
+
+  this->mixer->go();
+
+  RELEASESPINLOCK( this->mixerlock );
+
+  return true;
+}
+
+/*
+## mix
+Add the other to a mixer - both channels have access to the same mixer.
+n way relationship. Adds to queue for when our main thread calls into us.
+*/
+bool projectrtpchannel::unmix( void ) {
+  this->removemixer = true;
+  return true;
+}
+
+/*
+## dtmf
+Queue digits to send as RFC 2833.
+*/
+void projectrtpchannel::dtmf( std::string digits ) {
+  AQUIRESPINLOCK( this->queuddigitslock );
+  this->queueddigits += digits;
+  RELEASESPINLOCK( this->queuddigitslock );
+}
+
+/*
+Now send each digit.
+*/
+void projectrtpchannel::senddtmf( void ) {
+
+  if( static_cast< uint16_t >( this->snout - this->lastdtmfsn ) < 10 ) {
+    return;
+  }
+
+  uint8_t tosend = 0;
+  AQUIRESPINLOCK( this->queuddigitslock );
+  if( this->queueddigits.size() > 0 ) {
+    tosend = this->queueddigits[ 0 ];
+    this->queueddigits.erase( this->queueddigits.begin() );
+  }
+  RELEASESPINLOCK( this->queuddigitslock );
+
+  if( 0 == tosend ) {
+    return;
+  }
+
+  /*
+    RFC 2833:
+     _________________________
+     0--9                0--9
+     *                     10
+     #                     11
+     A--D              12--15
+     Flash                 16
+  */
+  if( tosend >= 48 && tosend <= 57 ) {
+    // 0 -> 9
+    tosend -= 48;
+  } else if ( '*' == tosend ) {
+    tosend = 10;
+  } else if ( '#' == tosend ) {
+    tosend = 11;
+  } else if ( tosend >= 65 && tosend <= 68 ) {
+    tosend = tosend + 12 - 65;
+  } else if ( tosend >= 97 && tosend <= 100 ) {
+    tosend = tosend + 12 - 97;
+  } else if ( 'F' == tosend || 'f' == tosend ) { /* Flash */
+    tosend = 16;
+  } else {
+    return;
+  }
+
+  rtppacket *dst = this->gettempoutbuf();
+  dst->setpayloadtype( this->rfc2833pt );
+  dst->setmarker();
+  dst->setpayloadlength( 4 );
+  uint8_t *pl =  dst->getpayload();
+  pl[ 0 ] = tosend;
+  pl[ 1 ] = 10; /* end of event & reserved & volume */
+  pl[ 2 ] = 0; /* event duration high */
+  pl[ 3 ] = 160; /* event duration */
+  this->writepacket( dst );
+
+  dst = this->gettempoutbuf();
+  dst->setpayloadtype( this->rfc2833pt );
+  dst->setpayloadlength( 4 );
+  pl =  dst->getpayload();
+  pl[ 0 ] = tosend;
+  pl[ 1 ] = 10; /* end of event & reserved & volume */
+  pl[ 2 ] = 0; /* event duration high */
+  pl[ 3 ] = 160; /* event duration */
+  this->writepacket( dst );
+
+  dst = this->gettempoutbuf();
+  dst->setpayloadtype( this->rfc2833pt );
+  dst->setpayloadlength( 4 );
+  pl =  dst->getpayload();
+  pl[ 0 ] = tosend;
+  pl[ 1 ] = 0x80 | 10; /* end of event & reserved & volume */
+  pl[ 2 ] = 0; /* event duration high */
+  pl[ 3 ] = 160; /* event duration */
+  this->writepacket( dst );
+
+  this->lastdtmfsn = this->snout;
+}
+
+/*
 ## handlesend
 What is called once we have sent something.
 */
 void projectrtpchannel::handlesend(
       const boost::system::error_code& error,
-      std::size_t bytes_transferred)
-{
+      std::size_t bytes_transferred) {
 
+  if( !error && bytes_transferred > 0 ) {
+    this->outpkcount++;
+  }
 }
 
 /*!md
 ## handlertcpdata
 We have received some RTCP data - now do something with it.
 */
-void projectrtpchannel::handlertcpdata( void )
-{
+void projectrtpchannel::handlertcpdata( void ) {
 
 }
+
+
+#ifdef NODE_MODULE
+
+// uuidgen | sed -r -e 's/-//g' -e 's/(.{16})(.*)/0x\1, 0x\2/'
+static const napi_type_tag channelcreatetag = {
+  0x7616402bbbee4a21, 0x81dbc4cc8f07ebc3
+};
+
+static napi_value createnapibool( napi_env env, bool v ) {
+  napi_value result;
+  napi_create_uint32( env, v == true? 1 : 0, &result );
+  napi_coerce_to_bool( env, result, &result );
+  return result;
+}
+
+static projectrtpchannel::pointer getrtpchannelfromthis( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+  napi_value thisarg;
+  bool isrtpchannel;
+
+  hiddensharedptr *pb;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, &thisarg, nullptr ) ) return nullptr;
+  if( napi_ok != napi_check_object_type_tag( env, thisarg, &channelcreatetag, &isrtpchannel ) ) return nullptr;
+
+  if( !isrtpchannel ) {
+    napi_throw_type_error( env, "0", "Not an RTP Channel type" );
+    return nullptr;
+  }
+
+  if( napi_ok != napi_unwrap( env, thisarg, ( void** ) &pb ) ) {
+    napi_throw_type_error( env, "1", "Channel didn't unwrap" );
+    return nullptr;
+  }
+
+  return pb->get< projectrtpchannel >();
+}
+
+static projectrtpchannel::pointer getrtpchannelfromargv( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+  napi_value thisarg;
+  bool isrtpchannel;
+
+  hiddensharedptr *pb;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, &thisarg, nullptr ) ) return nullptr;
+  if( napi_ok != napi_check_object_type_tag( env, argv[ 0 ], &channelcreatetag, &isrtpchannel ) ) return nullptr;
+
+  if( !isrtpchannel ) {
+    napi_throw_type_error( env, "0", "Not an RTP Channel type" );
+    return nullptr;
+  }
+
+  if( napi_ok != napi_unwrap( env, argv[ 0 ], ( void** ) &pb ) ) {
+    napi_throw_type_error( env, "1", "Channel didn't unwrap" );
+    return nullptr;
+  }
+
+  return pb->get< projectrtpchannel >();
+}
+
+static napi_value channelclose( napi_env env, napi_callback_info info ) {
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) createnapibool( env, false );
+  chan->requestclose( "requested" );
+
+  return createnapibool( env, true );
+}
+
+/*
+We receive an object like:
+{
+   "file": "filename",
+   // optional
+   "startabovepower": 250,
+   "finishbelowpower": 200,
+   "minduration": 2000,
+   "maxduration": 15000,
+   "poweraveragepackets": 50,
+   "numchannels": 1 // 1 or 2
+}
+*/
+static napi_value channelrecord( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) {
+    return createnapibool( env, false );
+  }
+
+  if( 1 != argc ) {
+    return createnapibool( env, false );
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    return createnapibool( env, false );
+  }
+
+  napi_value mfile;
+  if( napi_ok != napi_get_named_property( env, argv[ 0 ], "file", &mfile ) ) {
+    return createnapibool( env, false );
+  }
+
+  size_t bytescopied;
+  char buf[ 256 ];
+
+  if( napi_ok != napi_get_value_string_utf8( env, mfile, buf, sizeof( buf ), &bytescopied ) ) {
+    return createnapibool( env, false );
+  }
+
+  channelrecorder::pointer p = channelrecorder::create( buf );
+
+  /* optional */
+  napi_value mtmp;
+  int32_t vtmp;
+
+  bool hasit;
+
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "startabovepower", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "startabovepower", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    p->startabovepower = vtmp;
+  }
+
+  napi_has_named_property( env, argv[ 0 ], "finishbelowpower", &hasit );
+  if( hasit && napi_ok == napi_get_named_property( env, argv[ 0 ], "finishbelowpower", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    p->finishbelowpower = vtmp;
+  }
+
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "minduration", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "minduration", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    p->minduration = vtmp;
+  }
+
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "maxduration", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "maxduration", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    p->maxduration = vtmp;
+  }
+
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "poweraveragepackets", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "poweraveragepackets", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    p->poweraveragepackets = vtmp;
+  }
+
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "pause", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "pause", &mtmp ) ) {
+    bool vpause;
+    if( napi_ok == napi_get_value_bool( env, mtmp, &vpause ) ) {
+      p->pause = vpause;
+    }
+  }
+
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "finish", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "finish", &mtmp ) ) {
+    bool vfinish;
+    if( napi_ok == napi_get_value_bool( env, mtmp, &vfinish ) ) {
+      p->requestfinish = vfinish;
+    }
+  }
+
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "numchannels", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "numchannels", &mtmp ) ) {
+        
+    uint32_t numchannels = 2;
+    napi_get_value_uint32( env, mtmp, &numchannels );
+    if( 1 == numchannels || 2 == numchannels ) {
+      p->numchannels = numchannels;
+    }
+  }
+
+  chan->requestrecord( p );
+
+  return createnapibool( env, true );
+}
+
+static napi_value channelplay( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    return createnapibool( env, false );
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    return createnapibool( env, false );
+  }
+
+  soundsoup::pointer p = soundsoupcreate( env, argv[ 0 ], chan->codec );
+
+  if( nullptr == p ) {
+    return createnapibool( env, false );
+  }
+
+  if( 0 == p->size() ) {
+    return createnapibool( env, false );
+  }
+
+  chan->requestplay( p );
+
+  return createnapibool( env, true );
+}
+
+static napi_value channelecho( napi_env env, napi_callback_info info ) {
+
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  bool echo = true;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( argc > 0 ) {
+    if( napi_ok == napi_get_value_bool( env, argv[ 0 ], &echo ) ) {
+      return createnapibool( env, false );
+    }
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) return createnapibool( env, false );
+
+  chan->requestecho( echo );
+
+  return createnapibool( env, true );
+}
+
+static napi_value channelmix( napi_env env, napi_callback_info info ) {
+
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_error( env, "0", "We require 1 param (channel)" );
+    return NULL;
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    napi_throw_error( env, "1", "That's embarrassing - we shouldn't get here" );
+    return NULL;
+  }
+
+  projectrtpchannel::pointer chan2 = getrtpchannelfromargv( env, info );
+  if( nullptr == chan2 ) {
+    napi_throw_error( env, "1", "Also embarrassing - we shouldn't get here either" );
+    return NULL;
+  }
+
+  return createnapibool( env, chan->mix( chan2 ) );
+}
+
+static napi_value channelunmix( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    napi_throw_error( env, "1", "That's embarrassing - we shouldn't get here" );
+    return NULL;
+  }
+
+  return createnapibool( env, chan->unmix() );
+}
+
+static napi_value channeldirection( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_error( env, "0", "We require 1 param" );
+    return NULL;
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    napi_throw_error( env, "1", "That's embarrassing - we shouldn't get here" );
+    return NULL;
+  }
+
+  bool hasit;
+  napi_value nsend, nrecv;
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "send", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "send", &nsend ) ) {
+    bool vsend;
+    if( napi_ok == napi_get_value_bool( env, nsend, &vsend ) ) {
+      chan->send = vsend;
+    }
+  }
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "recv", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "recv", &nrecv ) ) {
+    bool vrecv;
+    if( napi_ok == napi_get_value_bool( env, nrecv, &vrecv ) ) {
+      chan->recv = vrecv;
+    }
+  }
+
+  return createnapibool( env, true );
+}
+
+/* Can be called on a running channel so must be thread safe */
+static napi_value channelremote( napi_env env, napi_callback_info info ) {
+
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  napi_value nport, naddress, ncodec;
+  int32_t remoteport;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ||
+      1 != argc ) {
+    return createnapibool( env, false );
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    return createnapibool( env, false );
+  }
+
+  if( napi_ok != napi_get_named_property( env, argv[ 0 ], "port", &nport ) ) {
+    return createnapibool( env, false );
+  }
+
+  napi_get_value_int32( env, nport, &remoteport );
+
+  if( napi_ok != napi_get_named_property( env, argv[ 0 ], "address", &naddress ) ) {
+    return createnapibool( env, false );
+  }
+
+  if( napi_ok != napi_get_named_property( env, argv[ 0 ], "codec", &ncodec ) ) {
+    return createnapibool( env, false );
+  }
+
+  uint32_t codecval = 0;
+  napi_get_value_uint32( env, ncodec, &codecval );
+
+  size_t bytescopied;
+  char remoteaddress[ 128 ];
+
+  napi_get_value_string_utf8( env, naddress, remoteaddress, sizeof( remoteaddress ), &bytescopied );
+  if( 0 == bytescopied || bytescopied >= sizeof( remoteaddress ) ) {
+    return createnapibool( env, false );
+  }
+
+  /* optional - DTLS */
+  napi_value dtls;
+  bool hasit;
+  dtlssession::mode dtlsmode = dtlssession::none;
+  char vfingerprint[ 128 ];
+  vfingerprint[ 0 ] = 0;
+
+  bool dtlsrequired = false, dtlsenabled = false;
+
+  if ( napi_ok == napi_has_named_property( env, argv[ 0 ], "dtls", &hasit ) &&
+       hasit &&
+       napi_ok == napi_get_named_property( env, argv[ 0 ], "dtls", &dtls ) ) {
+    dtlsrequired = true;
+    napi_value nfingerprint, nactpass;
+    if( napi_ok == napi_has_named_property( env, dtls, "fingerprint", &hasit ) &&
+        hasit &&
+        napi_ok == napi_get_named_property( env, dtls, "fingerprint", &nfingerprint ) ) {
+      size_t bytescopied;
+      char vactpass[ 128 ];
+
+      napi_value nhash;
+      if( napi_ok != napi_has_named_property( env, nfingerprint, "hash", &hasit ) ||
+          !hasit ||
+          napi_ok != napi_get_named_property( env, nfingerprint, "hash", &nhash ) ) goto nodtls;
+
+      if( napi_ok == napi_get_value_string_utf8( env, nhash, vfingerprint, sizeof( vfingerprint ), &bytescopied ) ) {
+        if( 95 == bytescopied ) {
+          dtlsenabled = true;
+        }
+      }
+
+nodtls:
+      if( dtlsrequired && !dtlsenabled ) {
+        napi_throw_error( env, "1", "DTLS requested but not possible" );
+        return NULL;
+      }
+
+      if( napi_ok == napi_get_value_string_utf8( env, nfingerprint, vfingerprint, sizeof( vfingerprint ), &bytescopied ) ) {
+        if( napi_ok == napi_has_named_property( env, dtls, "mode", &hasit ) &&
+            hasit &&
+            napi_ok == napi_get_named_property( env, dtls, "mode", &nactpass ) ) {
+          if( napi_ok == napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) {
+            if( std::string( vactpass ) == "passive" ) {
+              /* If they are pass - we are act */
+              dtlsmode = dtlssession::act;
+            } else {
+              dtlsmode = dtlssession::pass;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  chan->remote( remoteaddress, remoteport, codecval, dtlsmode, vfingerprint );
+
+  return createnapibool( env, true );
+}
+
+static napi_value channeldtmf( napi_env env, napi_callback_info info ) {
+
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_error( env, "0", "We require 1 param" );
+    return NULL;
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    napi_throw_error( env, "1", "That's embarrassing - we shouldn't get here" );
+    return NULL;
+  }
+
+  size_t bytescopied;
+  char dtmfstr[ 50 ];
+  napi_get_value_string_utf8( env, argv[ 0 ], dtmfstr, sizeof( dtmfstr ), &bytescopied );
+  if( 0 == bytescopied || bytescopied >= sizeof( dtmfstr ) ) {
+    napi_throw_error( env, "2", "DTMF String too long" );
+    return NULL;
+  }
+
+  chan->dtmf( std::string( dtmfstr ) );
+
+  return createnapibool( env, true );
+}
+
+
+void channeldestroy( napi_env env, void* /* data */, void* hint ) {
+  hiddensharedptr *pb = ( hiddensharedptr * ) hint;
+  delete pb;
+}
+
+void postdatabacktojsfromthread( projectrtpchannel::pointer p, std::string event, std::string arg1, std::string arg2 ) {
+
+  if( NULL == p->cb ) return;
+  /*
+    The return might be ignorable? We have created a threadsafe function
+    with a max_queue_size with no limit. Can this still hit a limit?
+  */
+  switch( napi_call_threadsafe_function( p->cb,
+                                         new jschannelevent( p, event, arg1, arg2 ),
+                                         napi_tsfn_nonblocking ) ) {
+
+  case napi_queue_full:
+    fprintf( stderr, "napi_call_threadsafe_function queue full - this shouldn't happen - investigate\n" );
+    break;
+  case napi_ok:
+    break;
+  default:
+    break;
+  }
+}
+/*
+  Some terms.
+  dropped is when the in buffer decided the packet received is no longer valid - i.e. it is outside of our receve window
+  skip is when we are processing RTP we have jumped (unexpectantly) in sequence number
+*/
+napi_value createcloseobject( napi_env env, projectrtpchannel::pointer p ) {
+
+  napi_value result, action, reason;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+  if( napi_ok != napi_create_string_utf8( env, "close", NAPI_AUTO_LENGTH, &action ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "action", action ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, p->closereason.c_str(), NAPI_AUTO_LENGTH, &reason ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "reason", reason ) ) return NULL;
+
+  /* calculate mos - calc borrowed from FS - thankyou. */
+  napi_value mos, in, out, tick;
+  if( napi_ok != napi_create_object( env, &in ) ) return NULL;
+  if( napi_ok != napi_create_object( env, &out ) ) return NULL;
+  if( napi_ok != napi_create_object( env, &tick ) ) return NULL;
+
+  if( p->receivedpkcount > 0 ) {
+    double r = ( ( p->receivedpkcount - p->receivedpkskip ) / p->receivedpkcount ) * 100.0;
+    if ( r < 0 || r > 100 ) r = 100;
+    double mosval = 1 + ( 0.035 * r ) + ( .000007 * r * ( r - 60 ) * ( 100 - r ) );
+
+    if( napi_ok != napi_create_double( env, mosval, &mos ) ) return NULL;
+  } else {
+    if( napi_ok != napi_create_double( env, 0.0, &mos ) ) return NULL;
+  }
+
+  napi_value receivedpkcount, receivedpkskip, receiveddropped;
+  if( napi_ok != napi_create_double( env, p->receivedpkcount, &receivedpkcount ) ) return NULL;
+  if( napi_ok != napi_create_double( env, p->receivedpkskip, &receivedpkskip ) ) return NULL;
+  if( napi_ok != napi_create_double( env, p->inbuff->getdropped(), &receiveddropped ) ) return NULL;
+
+  if( napi_ok != napi_set_named_property( env, in, "mos", mos ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, in, "count", receivedpkcount ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, in, "dropped", receiveddropped ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, in, "skip", receivedpkskip ) ) return NULL;
+
+  napi_value sentpkcount, outpkskipcount;
+  if( napi_ok != napi_create_double( env, p->outpkcount, &sentpkcount ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, out, "count", sentpkcount ) ) return NULL;
+
+  if( napi_ok != napi_create_double( env, p->outpkskipcount, &outpkskipcount ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, out, "skip", outpkskipcount ) ) return NULL;
+
+  napi_value meanticktimeus, maxticktimeus, totaltickcount;
+  if( p->totaltickcount > 0 ) {
+    if( napi_ok != napi_create_double( env, ( p->totalticktime / p->totaltickcount ), &meanticktimeus ) ) return NULL;
+  } else {
+    if( napi_ok != napi_create_double( env, 0, &meanticktimeus ) ) return NULL;
+  }
+
+  if( napi_ok != napi_create_double( env, p->maxticktime, &maxticktimeus ) ) return NULL;
+  if( napi_ok != napi_create_double( env, p->totaltickcount, &totaltickcount ) ) return NULL;
+
+  if( napi_ok != napi_set_named_property( env, tick, "meanus", meanticktimeus ) ) return NULL;
+
+  if( napi_ok != napi_set_named_property( env, tick, "maxus", maxticktimeus ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, tick, "count", totaltickcount ) ) return NULL;
+
+  napi_value stats;
+  if( napi_ok != napi_create_object( env, &stats ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, stats, "in", in ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, stats, "out", out ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, stats, "tick", tick ) ) return NULL;
+
+  if( napi_ok != napi_set_named_property( env, result, "stats", stats ) ) return NULL;
+  return result;
+}
+
+napi_value createrecordobject( napi_env env, projectrtpchannel::pointer p, jschannelevent *ev ) {
+
+  napi_value result, tmp;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, "record", NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "action", tmp ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, ev->arg1.c_str(), NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "file", tmp ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, ev->arg2.c_str(), NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "event", tmp ) ) return NULL;
+
+  return result;
+}
+
+napi_value createplayobject( napi_env env, projectrtpchannel::pointer p, jschannelevent *ev ) {
+  napi_value result, tmp;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, "play", NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "action", tmp ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, ev->arg1.c_str(), NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "event", tmp ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, ev->arg2.c_str(), NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "reason", tmp ) ) return NULL;
+
+  return result;
+}
+
+napi_value createteleventobject( napi_env env, projectrtpchannel::pointer p, jschannelevent *ev ) {
+  napi_value result, tmp;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, "telephone-event", NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "action", tmp ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, ev->arg1.c_str(), NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "event", tmp ) ) return NULL;
+
+  return result;
+}
+
+/*
+In case the user doesn't supply a call back to be notified then
+we use this one so that we can pass data back into the threadsafe
+enviroment.
+*/
+static napi_value dummyclose( napi_env env, napi_callback_info info ) {
+  return NULL;
+}
+
+/*
+This function is called when we convert data into node types. This is called
+by the napi framework after the threadsafe function has been acquired and called.
+*/
+static void eventcallback( napi_env env, napi_value jscb, void* context, void* data ) {
+
+  napi_value ourdata = NULL;
+  jschannelevent *ev = ( ( jschannelevent * ) data );
+  projectrtpchannel::pointer p = ev->p;
+
+  if( "close" == ev->event ) {
+    ourdata = createcloseobject( env, p );
+  } else if( "record" == ev->event ) {
+    ourdata = createrecordobject( env, p, ev );
+  } else if( "play" == ev->event ) {
+    ourdata = createplayobject( env, p, ev );
+  } else if( "telephone-event" == ev->event ) {
+    ourdata = createteleventobject( env, p, ev );
+  }
+
+  napi_value undefined;
+  napi_get_undefined( env, &undefined );
+  napi_call_function( env,
+                      undefined,
+                      jscb,
+                      1,
+                      &ourdata,
+                      NULL );
+
+  /* our final call - allow js to clean up */
+  if( "close" == ev->event ) {
+    napi_release_threadsafe_function( p->cb, napi_tsfn_abort );
+  }
+
+  delete ev;
+}
+
+static napi_value channelcreate( napi_env env, napi_callback_info info ) {
+
+  size_t argc = 2;
+  napi_value argv[ 2 ];
+  napi_value nremote;
+
+  napi_value result;
+  AQUIRESPINLOCK( availableportslock );
+  auto ourport = availableports.front();
+  availableports.pop();
+  RELEASESPINLOCK( availableportslock );
+
+  size_t bytescopied;
+
+  int32_t remoteport;
+  char remoteaddress[ 128 ];
+  remoteaddress[ 0 ] = 0;
+
+  bool hasit;
+  bool dtlsenabled = false, dtlsrequired = false;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( argc < 1 || argc > 2 ) {
+    napi_throw_error( env, "0", "You must provide 1 or 2 params" );
+    return NULL;
+  }
+
+  projectrtpchannel::pointer p = projectrtpchannel::create( ourport );
+
+  /* optional - remote */
+  dtlssession::mode dtlsmode = dtlssession::none;
+  char vfingerprint[ 128 ];
+  vfingerprint[ 0 ] = 0;
+  uint32_t codecval = 0;
+
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "remote", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "remote", &nremote ) ) {
+    /* 
+    optional - DTLS 
+    "dtls": {
+      "fingerprint": {
+        "type": "sha-256 - but ignored for now!",
+        "hash": "..."
+      },
+      "mode": "active|passive"
+    }
+    */
+    napi_value dtls, nactpass;
+    if ( napi_ok != napi_has_named_property( env, nremote, "dtls", &hasit ) ||
+         !hasit ||
+         napi_ok != napi_get_named_property( env, nremote, "dtls", &dtls ) ) goto nodtls;
+
+    dtlsrequired = true;
+
+    if( napi_ok != napi_has_named_property( env, dtls, "mode", &hasit ) ||
+        !hasit ||
+        napi_ok != napi_get_named_property( env, dtls, "mode", &nactpass ) ) goto nodtls;
+
+    char vactpass[ 128 ];
+    vactpass[ 0 ] = 0;
+
+    if( napi_ok != napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) goto nodtls;
+
+    if( std::string( vactpass ) == "passive" ) {
+      dtlsmode = dtlssession::pass;
+    } else {
+      dtlsmode = dtlssession::act;
+    }
+
+    napi_value nfingerprint;
+    if( napi_ok != napi_has_named_property( env, dtls, "fingerprint", &hasit ) ||
+        !hasit ||
+        napi_ok != napi_get_named_property( env, dtls, "fingerprint", &nfingerprint ) ) goto nodtls;
+
+    napi_value nhash;
+    if( napi_ok != napi_has_named_property( env, nfingerprint, "hash", &hasit ) ||
+        !hasit ||
+        napi_ok != napi_get_named_property( env, nfingerprint, "hash", &nhash ) ) goto nodtls;
+
+    if( napi_ok == napi_get_value_string_utf8( env, nhash, vfingerprint, sizeof( vfingerprint ), &bytescopied ) ) {
+      if( 95 == bytescopied ) {
+        dtlsenabled = true;
+      }
+    }
+
+nodtls:
+    if( dtlsrequired && !dtlsenabled ) {
+      napi_throw_error( env, "1", "DTLS requested but no possible" );
+      return NULL;
+    }
+
+    napi_value nport, naddress, ncodec, nicepwd;
+
+    if( napi_ok != napi_get_named_property( env, nremote, "port", &nport ) ) {
+      napi_throw_error( env, "1", "Missing port in remote object" );
+      return NULL;
+    }
+
+    napi_get_value_int32( env, nport, &remoteport );
+
+    if( napi_ok != napi_get_named_property( env, nremote, "codec", &ncodec ) ) {
+      napi_throw_error( env, "1", "Missing codec in remote object" );
+      return NULL;
+    }
+
+    napi_get_value_uint32( env, ncodec, &codecval );
+
+    if( napi_ok != napi_get_named_property( env, nremote, "address", &naddress ) ) {
+      napi_throw_error( env, "1", "Missing address in remote object" );
+      return NULL;
+    }
+
+    napi_get_value_string_utf8( env, naddress, remoteaddress, sizeof( remoteaddress ), &bytescopied );
+    if( 0 == bytescopied || bytescopied >= sizeof( remoteaddress ) ) {
+      napi_throw_error( env, "1", "Remote host address too long" );
+      return NULL;
+    }
+
+    char remoteicepwd[ 128 ];
+    remoteicepwd[ 0 ] = 0;
+    if( napi_ok == napi_get_named_property( env, nremote, "icepwd", &nicepwd ) ) {
+      napi_get_value_string_utf8( env, nicepwd, remoteicepwd, sizeof( remoteicepwd ), &bytescopied );
+      if( 0 == bytescopied || bytescopied >= sizeof( remoteaddress ) ) {
+        napi_throw_error( env, "1", "Remote ice-pwd too long" );
+        return NULL;
+      }
+      p->iceremotepwd = remoteicepwd;
+    }
+  }
+
+  /* optional - these have defaults */
+  napi_value ndirection;
+  if ( napi_ok == napi_has_named_property( env, argv[ 0 ], "direction", &hasit ) &&
+       hasit &&
+       napi_ok == napi_get_named_property( env, argv[ 0 ], "direction", &ndirection ) ) {
+
+    napi_value nsend, nrecv;
+    if( napi_ok == napi_has_named_property( env, ndirection, "send", &hasit ) &&
+        hasit &&
+        napi_ok == napi_get_named_property( env, ndirection, "send", &nsend ) ) {
+      bool vsend;
+      if( napi_ok == napi_get_value_bool( env, nsend, &vsend ) ) {
+        p->send = vsend;
+      }
+    }
+    if( napi_ok == napi_has_named_property( env, ndirection, "recv", &hasit ) &&
+        hasit &&
+        napi_ok == napi_get_named_property( env, ndirection, "recv", &nrecv ) ) {
+      bool vrecv;
+      if( napi_ok == napi_get_value_bool( env, nrecv, &vrecv ) ) {
+        p->recv = vrecv;
+      }
+    }
+  }
+
+
+  napi_value nlocal;
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "local", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "local", &nlocal ) ) {
+
+    /* optional - override locally generate one */
+    napi_value nicepwd;
+    if( napi_ok == napi_has_named_property( env, nlocal, "icepwd", &hasit ) &&
+          hasit &&
+          napi_ok == napi_get_named_property( env, nlocal, "icepwd", &nicepwd ) ) {
+
+      char localicepwd[ 128 ];
+      localicepwd[ 0 ] = 0;
+
+      napi_get_value_string_utf8( env, nicepwd, localicepwd, sizeof( localicepwd ), &bytescopied );
+      if( 0 == bytescopied || bytescopied >= sizeof( remoteaddress ) ) {
+        napi_throw_error( env, "1", "Local ice-pwd too long" );
+        return NULL;
+      }
+      p->icelocalpwd = localicepwd;
+    }
+  }
+
+
+  hiddensharedptr *pb = new hiddensharedptr( p );
+
+  napi_value callback;
+  if( 1 == argc ) {
+    if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, dummyclose, nullptr, &callback ) ) {
+      delete pb;
+      return NULL;
+    }
+  } else {
+    callback = argv[ 1 ];
+  }
+
+  napi_value workname;
+
+  /*
+    We don't need to call napi_acquire_threadsafe_function as we are setting
+    the inital value of initial_thread_count to 1.
+  */
+  if( napi_ok != napi_create_string_utf8( env, "projectrtp", NAPI_AUTO_LENGTH, &workname ) ||
+      napi_ok != napi_create_threadsafe_function( env,
+                                       callback,
+                                       NULL,
+                                       workname,
+                                       0,
+                                       1,
+                                       NULL,
+                                       NULL,
+                                       NULL,
+                                       eventcallback,
+                                       &p->cb ) ||
+      napi_ok != napi_create_object( env, &result ) ||
+      napi_ok != napi_type_tag_object( env, result, &channelcreatetag ) ||
+      napi_ok != napi_wrap( env, result, pb, channeldestroy, pb, nullptr ) ) {
+    delete pb;
+    return NULL;
+  }
+
+  p->jsthis = result;
+  p->remote( remoteaddress, remoteport, codecval, dtlsmode, vfingerprint );
+  uint32_t ssrc = p->requestopen();
+
+  /* methods */
+  napi_value mfunc;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelclose, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "close", mfunc ) ||
+
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelmix, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "mix", mfunc ) ||
+
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelunmix, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "unmix", mfunc ) ||
+
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelecho, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "echo", mfunc ) ||
+
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelplay, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "play", mfunc ) ||
+
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelrecord, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "record", mfunc ) ||
+
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channeldirection, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "direction", mfunc ) ||
+
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channeldtmf, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "dtmf", mfunc ) ||
+
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelremote, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "remote", mfunc )
+    ) {
+    delete pb;
+    return NULL;
+  }
+
+  /* values */
+  napi_value nourport, ndtls, fp, nssrc, nicepwd;
+  if( napi_ok != napi_create_object( env, &nlocal ) ||
+      napi_ok != napi_set_named_property( env, result, "local", nlocal ) ||
+
+      napi_ok != napi_create_int32( env, ourport, &nourport ) ||
+      napi_ok != napi_set_named_property( env, nlocal, "port", nourport ) ||
+
+      napi_ok != napi_create_uint32( env, ssrc, &nssrc ) ||
+      napi_ok != napi_set_named_property( env, nlocal, "ssrc", nssrc ) ||
+
+      napi_ok != napi_create_object( env, &ndtls ) ||
+      napi_ok != napi_set_named_property( env, nlocal, "dtls", ndtls ) ||
+
+      napi_ok != napi_create_string_utf8( env, getdtlssrtpsha256fingerprint(), NAPI_AUTO_LENGTH, &fp ) ||
+      napi_ok != napi_set_named_property( env, ndtls, "fingerprint", fp ) ||
+      napi_ok != napi_set_named_property( env, ndtls, "enabled", createnapibool( env, dtlsenabled ) ) ||
+      
+      napi_ok != napi_create_string_utf8( env, p->icelocalpwd.c_str(), NAPI_AUTO_LENGTH, &nicepwd ) ||
+      napi_ok != napi_set_named_property( env, nlocal, "icepwd", nicepwd ) ) {
+
+    delete pb;
+    return NULL;
+  }
+
+  return result;
+}
+
+void getchannelstats( napi_env env, napi_value &result ) {
+
+  napi_value channel;
+  if( napi_ok != napi_create_object( env, &channel ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "channel", channel ) ) return;
+
+  napi_value av, chcount;
+
+  AQUIRESPINLOCK( availableportslock );
+  auto availableportssize = availableports.size();
+  RELEASESPINLOCK( availableportslock );
+
+  if( napi_ok != napi_create_double( env, availableportssize, &av ) ) return;
+  if( napi_ok != napi_create_double( env, channelscreated, &chcount ) ) return;
+
+  if( napi_ok != napi_set_named_property( env, channel, "available", av ) ) return;
+  if( napi_ok != napi_set_named_property( env, channel, "current", chcount ) ) return;
+}
+
+void initrtpchannel( napi_env env, napi_value &result ) {
+  napi_value ccreate;
+
+  for( int i = 10000; i < 20000; i = i + 2 ) {
+    availableports.push( i );
+  }
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelcreate, nullptr, &ccreate ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "openchannel", ccreate ) ) return;
+}
+
+#endif /* NODE_MODULE */

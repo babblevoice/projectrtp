@@ -7,9 +7,8 @@
 /* CODECs */
 #include <ilbc.h>
 #include <spandsp.h>
-#include <atomic>
 
-#include "firfilter.h"
+#include "projectrtpfirfilter.h"
 #include "globals.h"
 
 
@@ -18,7 +17,6 @@ class rtppacket
 {
 public:
   rtppacket();
-  rtppacket( rtppacket & );
   size_t length;
   uint8_t pk[ RTPMAXLENGTH ];
 
@@ -30,7 +28,6 @@ public:
   uint8_t getpayloadtype( void );
   uint16_t getsequencenumber( void );
   uint32_t gettimestamp( void );
-  uint32_t getnexttimestamp( void );
   uint32_t getticksperpacket( void );
   uint32_t getssrc( void );
   uint32_t getcsrc( uint8_t index );
@@ -40,6 +37,7 @@ public:
   void setpayloadlength( size_t length );
   inline void setlength( size_t length ) { this->length = length; };
   void setpayloadtype( uint8_t payload );
+  void setmarker( bool v = true );
   void setsequencenumber( uint16_t sq );
   void settimestamp( uint32_t tmstp );
   void init( uint32_t ssrc );
@@ -47,10 +45,10 @@ public:
   void copy( rtppacket *src );
   void copy( uint8_t *src, size_t len );
   void copyheader( rtppacket *src );
+#ifdef TESTSUITE
+  void dump();
+#endif
 
 };
-
-typedef std::atomic< rtppacket * > atomicrtppacketptr;
-
 
 #endif  /* PROJECTRTPPACKTET_H */

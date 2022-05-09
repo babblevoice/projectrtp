@@ -17,208 +17,132 @@
 #include <vector>
 #include <unordered_map>
 
-#include <boost/enable_shared_from_this.hpp>
-#include <boost/lockfree/stack.hpp>
-#include <boost/smart_ptr/atomic_shared_ptr.hpp>
-
-#include "boost/date_time/posix_time/posix_time.hpp"
+#include <boost/date_time/posix_time/posix_time.hpp>
 
 /* CODECs */
 #include <ilbc.h>
 #include <spandsp.h>
 
+
 #include "globals.h"
+#include "projectrtpbuffer.h"
 #include "projectrtpcodecx.h"
 #include "projectrtppacket.h"
 #include "projectrtpsoundsoup.h"
-#include "controlclient.h"
+#include "projectrtpchannelrecorder.h"
 #include "projectrtpsrtp.h"
 
-/* The number of packets we will keep in a buffer */
-#define BUFFERPACKETCOUNT 20
-/* The level we start dropping packets to clear backlog */
-#define BUFFERPACKETCAP 15
-#define BUFFERLOWDELAYCOUNT 5
-#define BUFFERHIGHDELAYCOUNT 10 /* 200mS @ a ptime of 20mS */
+class projectrtpchannel;
+class projectchannelmux;
+#include "projectrtpchannelmux.h"
 
-/* The size of our message queue where we send info about new channels added
-to the mixr to be added */
-#define MIXQUEUESIZE 50
+/* Must be to the power 2 */
+#define OUTBUFFERPACKETCOUNT 16
 
-/* 1 in ... packet loss */
-//#define SIMULATEDPACKETLOSSRATE 10
-
-class channelrecorder
-{
-public:
-  channelrecorder( std::string &file );
-  ~channelrecorder();
-  typedef boost::shared_ptr< channelrecorder > pointer;
-  static pointer create( std::string &file );
-  uint16_t poweravg( uint16_t power );
-
-  std::string file;
-  std::string uuid;
-
-/* In seconds up to MA max size (5 seconds?) */
-  uint16_t poweraverageduration;
-
-  /* must have started for this to kick in */
-  uint16_t startabovepower;
-
-  /* must have started for this to kick in */
-  uint16_t finishbelowpower;
-  /* used in conjunction with finishbelowpower */
-  uint32_t minduration; /* mSeconds */
-
-  uint32_t maxduration; /* mSeconds */
-
-  int numchannels;
-
-  soundfile::pointer sfile;
-
-  bool active;
-
-  uint16_t lastpowercalc;
-
-  boost::posix_time::ptime created;
-
-  std::string finishreason;
-  controlclient::pointer control;
-
-private:
-
-  /* Rolling average of power reads */
-  ma_filer powerfilter;
-
-};
 
 /*
-# projectchannelmux
-
-Generate our own tick. If we get up to multiple channels we don't want all to have a timer
-firing - we want only one to mix all. A channel will maintain its own timer (when needed)
-for things like playing a sound file (on single channels) or echo.
-*/
-class projectrtpchannel;
-
-class projectchannelmux:
-  public boost::enable_shared_from_this< projectchannelmux >
-{
-public:
-  projectchannelmux( boost::asio::io_context &iocontext );
-  ~projectchannelmux();
-  typedef boost::shared_ptr< projectchannelmux > pointer;
-  static pointer create( boost::asio::io_context &iocontext );
-
-  void handletick( const boost::system::error_code& error );
-  void checkfordtmf( std::shared_ptr< projectrtpchannel > chan, rtppacket *src );
-  void postrtpdata( std::shared_ptr< projectrtpchannel > srcchan, std::shared_ptr< projectrtpchannel > dstchan, rtppacket *src, uint32_t skipcount );
-  inline size_t size() { return this->channels.size(); }
-  void addchannel( std::shared_ptr< projectrtpchannel > chan );
-  void go( void );
-
-  std::list< std::shared_ptr< projectrtpchannel > > channels;
-
-private:
-
-  void checkfornewmixes( void );
-  void mix2( void );
-  void mixall( void );
-
-  boost::asio::io_context &iocontext;
-  boost::asio::steady_timer tick;
-
-  boost::lockfree::stack< std::shared_ptr< projectrtpchannel > > newchannels;
-
-  rawsound added;
-  rawsound subtracted;
-  int failcount;
-};
-
-typedef boost::atomic_shared_ptr< projectchannelmux > atomicmuxptr;
-
-/*!md
 # projectrtpchannel
 Purpose: RTP Channel - which represents RTP and RTCP. This is here we include our jitter buffer. We create a cyclic window to write data into and then read out of.
 
 RTP on SIP channels should be able to switch between CODECS during a session so we have to make sure we have space for that.
 */
 
+typedef std::shared_ptr< projectchannelmux > projectchannelmuxptr;
+
+typedef std::list< channelrecorder::pointer > chanrecptrlist;
 
 class projectrtpchannel :
-  public std::enable_shared_from_this< projectrtpchannel >
-{
+  public std::enable_shared_from_this< projectrtpchannel > {
 
 public:
   friend projectchannelmux;
-  projectrtpchannel( boost::asio::io_context &workercontext, boost::asio::io_context &iocontext, unsigned short port );
+  projectrtpchannel( unsigned short port );
   ~projectrtpchannel( void );
 
-  typedef std::shared_ptr< projectrtpchannel > pointer;
-  static pointer create( boost::asio::io_context &workercontext, boost::asio::io_context &iocontext, unsigned short port );
+  projectrtpchannel( const projectrtpchannel& ) = delete;              // copy ctor
+  projectrtpchannel( projectrtpchannel&& ) = delete;                   // move ctor
+  projectrtpchannel& operator=( const projectrtpchannel& ) = delete;   // copy assignment
+  projectrtpchannel& operator=( projectrtpchannel&& ) = delete;        // move assignment
 
-  void open( std::string &id, std::string &uuid, controlclient::pointer );
-  void close( void );
+  typedef std::shared_ptr< projectrtpchannel > pointer;
+  static pointer create( unsigned short port );
+
+  void remote( std::string address,
+               unsigned short port,
+               uint32_t codec,
+               dtlssession::mode,
+               std::string fingerprint );
+
+  uint32_t requestopen( void );
+  std::atomic_bool _requestclose;
+  void requestclose( std::string reason );
+  std::string closereason;
+  void requestecho( bool e = true );
+
+  void doremote( void );
   void doclose( void );
-  void go( void );
+  void doopen( void );
 
   unsigned short getport( void );
 
-  void enabledtls( dtlssession::mode, std::string &fingerprint );
-
-  void target( std::string &address, unsigned short port );
-  void rfc2833( unsigned short pt );
-  void play( stringptr newdef ) { this->newplaydef = newdef; }
+  void requestplay( soundsoup::pointer newdef );
+  void requestrecord( channelrecorder::pointer rec );
   inline void echo( void ) { this->doecho = true; }
-
-  void record( channelrecorder::pointer rec ) { this->newrecorders.push( rec ); }
-
-  typedef std::vector< int > codeclist;
-  bool audio( codeclist codecs );
-
   inline void direction( bool send, bool recv ) { this->send = send; this->recv = recv; }
-
   void writepacket( rtppacket * );
   void handlesend(
         const boost::system::error_code& error,
         std::size_t bytes_transferred);
 
   void handletick( const boost::system::error_code& error );
-
-  bool canread( void ) { return this->reader; };
-  bool canwrite( void ) { return this->writer; };
-
   bool isactive( void );
 
   bool mix( projectrtpchannel::pointer other );
-  rtppacket *gettempoutbuf( uint32_t skipcount = 0 );
+  bool unmix( void );
+  void dtmf( std::string digits );
+  rtppacket *gettempoutbuf( void );
 
-  void unmix( void );
-
-  codeclist codecs;
-  int selectedcodec;
-  uint32_t ssrcout;
+  uint32_t codec;
   uint32_t ssrcin;
+  uint32_t ssrcout;
   uint32_t tsout;
-  uint16_t seqout;
+  uint16_t snout;
 
-  atomicrtppacketptr toolatertppacket;
-  rtppacket rtpdata[ BUFFERPACKETCOUNT ];
-  atomicrtppacketptr availablertpdata[ BUFFERPACKETCOUNT ];
-  atomicrtppacketptr orderedrtpdata[ BUFFERPACKETCOUNT ];
-  std::atomic_uint16_t orderedinminsn; /* sn = sequence number, min smallest we hold which is unprocessed - when it is processed we can forget about it */
-  std::atomic_uint16_t orderedinmaxsn;
-  std::atomic_uint16_t lastworkedonsn;
-  std::atomic_uint16_t rtpbuffercount; /* keeps track of availble buffer items in availablertpdata */
-  std::atomic_bool rtpbufferlock; /* spin lock to keep syncronised between reading and processing thread */
+  /* do we send, do we receive */
+  std::atomic_bool send;
+  std::atomic_bool recv;
 
+  /* for stats */
+  std::atomic_uint64_t receivedpkcount;
+  std::atomic_uint64_t receivedpkskip;
+  std::atomic_uint64_t maxticktime;
+  std::atomic_uint64_t totalticktime;
+  std::atomic_uint64_t totaltickcount;
+  std::atomic_uint16_t tickswithnortpcount;
+
+  std::atomic_uint64_t outpkcount;
+  std::atomic_uint64_t outpkskipcount;
+
+  /* buffer and spin lock for in traffic */
+  rtpbuffer::pointer inbuff;
+  std::atomic_bool rtpbufferlock;
 
   unsigned char rtcpdata[ RTCPMAXLENGTH ];
 
-  /* The out data is intended to be written by other channels (or functions), they can then be sent to other channels as well as our own end point  */
-  rtppacket outrtpdata[ BUFFERPACKETCOUNT ];
-  int rtpoutindex;
+  /* The out data is intended to be written by other channels
+     (or functions), they can then be sent to other channels
+     as well as our own end point  */
+  rtppacket outrtpdata[ OUTBUFFERPACKETCOUNT ];
+  std::atomic_uint16_t rtpoutindex;
+
+  /* ice */
+  std::string icelocalpwd;
+  std::string iceremotepwd;
+
+#ifdef NODE_MODULE
+  napi_value jsthis;
+  napi_threadsafe_function cb;
+#endif
 
 private:
   std::atomic_bool active;
@@ -226,14 +150,6 @@ private:
   unsigned short rfc2833pt;
   uint32_t lasttelephoneevent;
 
-  /* id provided to us */
-  std::string id;
-
-  /* uuid we generate for this channel */
-  std::string uuid;
-
-  boost::asio::io_context &iocontext;
-  boost::asio::io_context &workercontext;
   boost::asio::ip::udp::resolver resolver;
 
   boost::asio::ip::udp::socket rtpsocket;
@@ -245,72 +161,97 @@ private:
 
   /* confirmation of where the other end of the RTP stream is */
   std::atomic_bool receivedrtp;
-  bool targetconfirmed;
+  std::atomic_bool remoteconfirmed;
 
-  bool reader;
-  bool writer;
-  void returnbuffer( rtppacket *buf );
-  rtppacket* getbuffer( void );
   void readsomertp( void );
   void readsomertcp( void );
+  void incrtsout( void );
 
-  /* Generally used as a pair */
-  rtppacket *getrtpbottom( uint16_t highcount = BUFFERHIGHDELAYCOUNT, uint16_t lowcount = BUFFERLOWDELAYCOUNT );
-  void incrrtpbottom( rtppacket *from );
   bool checkidlerecv( void );
-  bool checkforoverrun( rtppacket *buf );
-  void checkandfixoverrun( void );
-  bool checkforunderrun( rtppacket *buf );
   void checkfornewrecorders( void );
+  void removeoldrecorders( void );
   void writerecordings( void );
 
+  bool checkfordtmf( rtppacket *src );
+  void senddtmf( void );
+
   void handlertcpdata( void );
-  void handletargetresolve (
+  void handleremoteresolve (
               boost::system::error_code e,
               boost::asio::ip::udp::resolver::iterator it );
 
-  void displaybuffer( void );
+  bool dtlsnegotiate( void );
+  void setnexttick( void );
+  void startticktimer( void );
+  void endticktimer( void );
 
-  uint64_t receivedpkcount;
-  uint64_t receivedpkskip;
+  bool handlestun( uint8_t *pk, size_t len );
 
-  atomicmuxptr others;
+  std::atomic_bool mixerlock;
+  projectchannelmuxptr mixer;
+  std::atomic_bool mixing;
+  std::atomic_bool removemixer;
 
   /* CODECs  */
   codecx outcodec;
   codecx incodec;
 
   soundsoup::pointer player;
-  atomicstringptr newplaydef;
+  soundsoup::pointer newplaydef;
+  std::atomic_bool newplaylock;
 
   std::atomic_bool doecho;
   boost::asio::steady_timer tick;
-  controlclient::pointer control;
+  std::chrono::high_resolution_clock::time_point nexttick;
 
-  std::atomic_uint16_t tickswithnortpcount;
-
-  std::atomic_bool send;
-  std::atomic_bool recv;
-
-  /* Track hysteresis in our receive window - which allows for timing wiggles between our tick and when we receive */
-  bool havedata;
-
-  boost::lockfree::stack< boost::shared_ptr< channelrecorder > > newrecorders;
-  std::list< boost::shared_ptr< channelrecorder > > recorders;
-
-  /* for stats */
-  uint64_t maxticktime;
-  uint64_t totalticktime;
-  uint64_t totaltickcount;
+  chanrecptrlist newrecorders;
+  std::atomic_bool newrecorderslock;
+  chanrecptrlist recorders;
 
   /* DTLS Session */
   dtlssession::pointer rtpdtls;
-  bool rtpdtlshandshakeing;
+  std::atomic_bool rtpdtlslock;
 
+  std::string remoteaddress;
+  unsigned short remoteport;
+
+  /* outbound DTMF */
+  std::string queueddigits;
+  std::atomic_bool queuddigitslock;
+  uint16_t lastdtmfsn;
+
+  boost::posix_time::ptime tickstarttime;
+
+
+  uint8_t stuntmpout[ 300 ];
 };
 
 typedef std::deque<projectrtpchannel::pointer> rtpchannels;
 typedef std::unordered_map<std::string, projectrtpchannel::pointer> activertpchannels;
 
+#ifdef NODE_MODULE
+#include <node_api.h>
+
+void initrtpchannel( napi_env env, napi_value &result );
+void getchannelstats( napi_env env, napi_value &result );
+
+class jschannelevent {
+public:
+  jschannelevent( projectrtpchannel::pointer p, std::string event, std::string arg1 = "", std::string arg2 = "" ):
+    event( event ), arg1( arg1 ), arg2( arg2 ), p( p ) {}
+
+  std::string event;
+  std::string arg1;
+  std::string arg2;
+
+  projectrtpchannel::pointer p;
+};
+
+/* The one function used by our channel */
+void postdatabacktojsfromthread( projectrtpchannel::pointer p, std::string event, std::string arg1 = "", std::string arg2 = "" );
+
+#else
+#define postdatabacktojsfromthread( ... )
+#endif /* NODE_MODULE */
 
 #endif

@@ -9,65 +9,27 @@
 
 #include "projectrtppacket.h"
 #include "projectrtppacket.h"
+#include "projectrtprawsound.h"
 #include "globals.h"
-#include "firfilter.h"
+#include "projectrtpfirfilter.h"
 
+/* ilbc v2/v3 differences */
+#ifdef G_CONST /* ilbc v2 */
+typedef WebRtc_Word16* ilbcencodedval;
+typedef WebRtc_Word16* ilbcdecodedval;
+
+typedef iLBC_decinst_t ilbcdecinst;
+typedef iLBC_encinst_t ilbcencinst;
+#else
+typedef uint8_t* ilbcencodedval;
+typedef int16_t* ilbcdecodedval;
+typedef IlbcDecoderInstance ilbcdecinst;
+typedef IlbcEncoderInstance ilbcencinst;
+#endif
 
 /*
 Helper class for sound to manipulate sound - before or after a rtppacket is required.
 */
-class codecx;
-class rawsound
-{
-public:
-  rawsound();
-  rawsound( uint8_t *ptr, std::size_t samples, int format, uint16_t samplerate );
-  rawsound( rtppacket& pk, bool dirty = false );
-  rawsound( rawsound & );
-  ~rawsound();
-
-  uint8_t *c_str( void ){ return this->data; };
-  size_t size( void ){ return this->samples; };
-  void size( size_t samplecount ){ this->samples = samplecount; };
-  inline int getformat( void ){ return this->format; }; /* aka payload type */
-  uint16_t getsamplerate( void ) { return this->samplerate; };
-  size_t getbytespersample( void ) { return this->bytespersample; };
-  void malloc( size_t samplecount, size_t bytespersample, int format );
-  void zero( void );
-
-  /* needed for << operato on codecx */
-  inline int getpayloadtype( void ) { return this->format; }
-  inline void setpayloadlength( size_t length ) { this->samples = length; };
-  inline void setlength( size_t length ) { this->samples = length; };
-  inline bool isdirty( void ) { return this->dirtydata; }
-  inline void dirty( bool d = true ) { this->dirtydata = d; }
-  void copy( uint8_t *src, size_t len );
-  void copy( rawsound &other );
-
-  rawsound& operator+=( codecx& rhs );
-  rawsound& operator-=( codecx& rhs );
-
-private:
-  void frompt( int payloadtype );
-
-  /* ptr to our buffer */
-  uint8_t *data;
-
-  /* sample count of buffer in bytes */
-  size_t samples;
-
-  /* The amount we requested from the system malloc */
-  size_t allocatedlength;
-
-  size_t bytespersample;
-
-  /* see globals.h */
-  int format;
-  uint16_t samplerate;
-
-  /* mark the fact that whilst we may have space, we may not have any actual data */
-  bool dirtydata;
-};
 
 class codecx
 {
@@ -75,6 +37,11 @@ class codecx
 public:
   codecx();
   ~codecx();
+
+  codecx( const codecx& ) = delete;              // copy ctor
+  codecx( codecx&& ) = delete;                   // move ctor
+  codecx& operator=( const codecx& ) = delete;   // copy assignment
+  codecx& operator=( codecx&& ) = delete;        // move assignment
 
   void reset( void );
   void restart( void );
@@ -113,8 +80,8 @@ private:
   g722_encode_state_t *g722encoder;
   g722_decode_state_t *g722decoder;
 
-  iLBC_encinst_t *ilbcencoder;
-  iLBC_decinst_t *ilbcdecoder;
+  ilbcencinst *ilbcencoder;
+  ilbcdecinst *ilbcdecoder;
 
   /* If we require downsampling */
   lowpass3_4k16k lpfilter;
@@ -128,7 +95,10 @@ private:
   rawsound g722ref;
   rawsound ilbcref;
 
+  dcfilter dcpowerfilter;
+
   bool _hasdata;
+  uint32_t inpkcount;
 };
 
 /* Functions */
@@ -147,62 +117,49 @@ copy( *, size_t )
 setpayloadlength( size_t )
 setlength( size_t )
 */
-auto& operator << ( auto& pk, codecx& c )
-{
+auto& operator << ( auto& pk, codecx& c ) {
   (&pk) << c;
   return pk;
 }
 
-auto* operator << ( auto *pk, codecx& c )
-{
+auto* operator << ( auto *pk, codecx& c ) {
   int outpayloadtype = pk->getpayloadtype();
 
-  switch( outpayloadtype )
-  {
-    case ILBCPAYLOADTYPE:
-    {
-      if( !c.ilbcref.isdirty() )
-      {
+  switch( outpayloadtype ) {
+    case ILBCPAYLOADTYPE: {
+      if( !c.ilbcref.isdirty() ) {
         pk->copy( c.ilbcref.c_str(), c.ilbcref.size() * c.ilbcref.getbytespersample() );
         return pk;
       }
       c.ilbcref = rawsound( *pk, true );
       break;
     }
-    case G722PAYLOADTYPE:
-    {
-      if( !c.g722ref.isdirty() )
-      {
+    case G722PAYLOADTYPE: {
+      if( !c.g722ref.isdirty() ) {
         pk->copy( c.g722ref.c_str(), c.g722ref.size() * c.g722ref.getbytespersample() );
         return pk;
       }
       c.g722ref = rawsound( *pk, true );
       break;
     }
-    case PCMAPAYLOADTYPE:
-    {
-      if( !c.pcmaref.isdirty() )
-      {
+    case PCMAPAYLOADTYPE: {
+      if( !c.pcmaref.isdirty() ) {
         pk->copy( c.pcmaref.c_str(), c.pcmaref.size() * c.pcmaref.getbytespersample() );
         return pk;
       }
       c.pcmaref = rawsound( *pk, true );
       break;
     }
-    case PCMUPAYLOADTYPE:
-    {
-      if( !c.pcmuref.isdirty() )
-      {
+    case PCMUPAYLOADTYPE: {
+      if( !c.pcmuref.isdirty() ) {
         pk->copy( c.pcmuref.c_str(), c.pcmuref.size() * c.pcmuref.getbytespersample() );
         return pk;
       }
       c.pcmuref = rawsound( *pk, true );
       break;
     }
-    case L168KPAYLOADTYPE:
-    {
-      if( !c.l168kref.isdirty() )
-      {
+    case L168KPAYLOADTYPE: {
+      if( !c.l168kref.isdirty() ) {
         pk->copy( c.l168kref.c_str(), c.l168kref.size() * c.l168kref.getbytespersample() );
         return pk;
       }
@@ -210,10 +167,8 @@ auto* operator << ( auto *pk, codecx& c )
       break;
     }
 
-    case L1616KPAYLOADTYPE:
-    {
-      if( !c.l1616kref.isdirty() )
-      {
+    case L1616KPAYLOADTYPE: {
+      if( !c.l1616kref.isdirty() ) {
         pk->copy( c.l1616kref.c_str(), c.l1616kref.size() * c.l1616kref.getbytespersample() );
         return pk;
       }
@@ -222,9 +177,16 @@ auto* operator << ( auto *pk, codecx& c )
     }
   }
 
-  c.getref( outpayloadtype );
+  rawsound r = c.getref( outpayloadtype );
+  pk->setpayloadlength( r.size() );
   return pk;
 }
+
+#ifdef NODE_MODULE
+#include <node_api.h>
+void initrtpcodecx( napi_env env, napi_value &result );
+#endif
+
 
 
 #endif /* PROJECTRTPCODECX_H */

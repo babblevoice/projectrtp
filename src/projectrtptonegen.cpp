@@ -11,73 +11,7 @@
 #include "projectrtpsoundfile.h"
 #include "projectrtptonegen.h"
 
-
-/*!md
-We need to be able to generate tones. This is following the standard: https://www.itu.int/dms_pub/itu-t/opb/sp/T-SP-E.180-2010-PDF-E.pdf. Looping will be handled by soundsoup. So this section only needs to handle one cycle of the tone. We allocate memory required to generate the tone at the sample rate but not completley!
-
-Our goal is to be efficient, so we do not generate tis on the fly - most tones will be generated into wav files and played when required.
-
-If we want to play a tone continuously we should find a nicely looped file (e.g 1S will mean all frequencies in the file will hit zero at the end of the file). This would simplify our generation.
-
-In the standard we have definitions such as:
-
-United Kingdom of Great Britain
-and Northern Ireland
-Busy tone - 400 0.375 on 0.375 off
-Congestion tone - 400 0.4 on 0.35 off 0.225 on 0.525 off
-Dial tone - 50//350+440 continuous
-Number unobtainable tone - 400 continuous
-Pay tone - 400 0.125 on 0.125 off
-Payphone recognition tone - 1200/800 0.2 on 0.2 off 0.2 on 2.0 off
-Ringing tone - 400+450//400x25//400x16 2/3 0.4 on 0.2 off 0.4 on 2.0 off
-
-i.e. Tone - Frequency - Cadence
-
-The frequency is
-
-Frequency in Hz:
-f1×f2 f1 is modulated by f2
-f1+f2 the juxtaposition of two frequencies f1 and f2 without modulation
-f1/f2 f1 is followed by f2
-f1//f2 in some exchanges frequency f1 is used and in others frequency f2 is used.
-Cadence in seconds: ON – OFF
-
-Try to keep our definitions as close to the standard. We also have to introduce some other items:
-
-* Amplitude
-* Change (in frequency or amplitude) - frequency can be handled by modulated
-
-Take ringing tone:
-
-400+450//400x25//400x16 2/3 0.4 on 0.2 off 0.4 on 2.0 off
-
-We can ignore the // in our definition as we can simply choose the most common one.
-So either 400+450 or 400x25
-Three does not appear ot be anything in the standard relating to the 2/3?
-
-Amplitude can be introduced by *
-so
-
-400+450 becomes 400+450*0.75 (every frequency will have its amplitude reduced).
-400x25*0.75 is then also suported.
-
-Increasing tones such as:
-950/1400/1800
-
-Cadence
-950/1400/1800/0:333/333/333/1000
-Note, we have introduced a final /0 to indicate silence. The cadences will iterated through for every / in the frequency list and is in mS (the standard lists in seconds). We don't need to support loops as soundsoup supports loops.
-For:
-950/1400/1800/0:333
-Means each section will be 333mS.
-
-Change
-400+450*0.75~0 will reduce the amplitude from 0.75 to 0 during that cadence period
-400~450 will increase the frequency during that cadence period
-
-Note 400+450x300 is not supported.
-
-*/
+typedef std::vector< std::string > vectorofstrings;
 
 static void gentone( int16_t *outbuffer, int sizeofblock, double startfrequency, double endfrequency, double startamp, double endamp, int samplerate )
 {
@@ -148,7 +82,7 @@ static void gen( std::string tone, std::string filename )
     cadencepos = ( cadencepos + 1 ) % cadences.size();
   }
 
-  std::cout << "Total time is " << cadencetotal << "mS" << std::endl;
+  //std::cout << "Total time is " << cadencetotal << "mS" << std::endl;
 
   /* 2. Allocate enough memory */
   outwavheader.subchunksize = cadencetotal * outwavheader.sample_rate / 1000 * 2 /* 2 bytes per sample */;
@@ -229,7 +163,7 @@ continueloop:
 
   /* Write */
   int file = open( filename.c_str(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR );
-  __off_t position = lseek( file, 0, SEEK_END );
+  off_t position = lseek( file, 0, SEEK_END );
   if( 0 == position )
   {
     write( file, &outwavheader, sizeof( wavheader ) );
@@ -269,11 +203,57 @@ continueloop:
   close( file );
 }
 
-/*!md
-## gentone
-For test purposes only. Generate a tone into a wav file base on the 2 params.
+#ifdef NODE_MODULE
+/*
+Our node functions.
 */
-void gentone( const char *tone, const char *file )
-{
-  gen( tone, file );
+static napi_value createnapibool( napi_env env, bool v ) {
+  napi_value result;
+  napi_create_uint32( env, v == true? 1 : 0, &result );
+  napi_coerce_to_bool( env, result, &result );
+  return result;
 }
+
+static napi_value tonegen( napi_env env, napi_callback_info info ) {
+  size_t argc = 2;
+  napi_value argv[ 2 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 2 != argc ) {
+    napi_throw_error( env, "0", "You must provide tone.generate( toneformat /*e.g. 350+440*0.5:1000*/, filename )" );
+    return NULL;
+  }
+
+  size_t bytescopied;
+  char tonedcescription[ 256 ];
+  char filename[ 256 ];
+
+  napi_get_value_string_utf8( env, argv[ 0 ], tonedcescription, sizeof( tonedcescription ), &bytescopied );
+  if( 0 == bytescopied || bytescopied >= sizeof( tonedcescription ) ) {
+    napi_throw_error( env, "1", "Tone definition bad or too long" );
+    return NULL;
+  }
+
+  napi_get_value_string_utf8( env, argv[ 1 ], filename, sizeof( filename ), &bytescopied );
+  if( 0 == bytescopied || bytescopied >= sizeof( filename ) ) {
+    napi_throw_error( env, "1", "Filename too long" );
+    return NULL;
+  }
+
+  gen( tonedcescription, filename );
+
+  return createnapibool( env, true );
+}
+
+void inittonegen( napi_env env, napi_value &result ) {
+  napi_value tonegenobj;
+  napi_value nfunction;
+
+  if( napi_ok != napi_create_object( env, &tonegenobj ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "tone", tonegenobj ) ) return;
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, tonegen, nullptr, &nfunction ) ) return;
+  if( napi_ok != napi_set_named_property( env, tonegenobj, "generate", nfunction ) ) return;
+
+}
+#endif

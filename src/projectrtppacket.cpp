@@ -1,5 +1,8 @@
 
+#ifdef TESTSUITE
 #include <iostream>
+#include  <iomanip>
+#endif
 
 #include "projectrtppacket.h"
 #include "globals.h"
@@ -9,20 +12,9 @@
 ## Constructor
 */
 rtppacket::rtppacket() :
-  length( 0 )
-{
+  length( 0 ) {
   memset( this->pk, 0, RTPMAXLENGTH );
-}
-
-/*!md
-## Copy contructor
-
-We only need to copy the required bytes.
-*/
-rtppacket::rtppacket( rtppacket &p )
-{
-  this->length = p.length;
-  memcpy( this->pk, p.pk, p.length );
+  this->pk[ 0 ] = 0x80; /* v = 2 */
 }
 
 /*!md
@@ -31,7 +23,7 @@ Sets up all of the RTP packet header to defaults.
 */
 void rtppacket::init( uint32_t ssrc )
 {
-  memset( this->pk, 0, 12 );
+  memset( this->pk, 0, RTPMAXLENGTH );
   this->pk[ 0 ] = 0x80; /* v = 2 */
 
   uint32_t *ssrcptr = ( uint32_t * )this->pk;
@@ -127,6 +119,14 @@ uint8_t rtppacket::getpacketmarker( void )
   return ( this->pk[ 1 ] & 0x80 ) >> 7;
 }
 
+void rtppacket::setmarker( bool v ) {
+  if( v ) {
+    this->pk[ 1 ] = this->pk[ 1 ] | 0x80;
+  } else {
+    this->pk[ 1 ] = this->pk[ 1 ] & 0x7f;
+  }
+}
+
 /*!md
 ## getpayloadtype
 As it says.
@@ -197,15 +197,6 @@ uint32_t rtppacket::gettimestamp( void )
 }
 
 /*!md
-## getnexttimestamp
-Takes the current timesamp and adds the number of samples (depending on the CODEC) and returns that value - so it can be assigned to the next packet.
-*/
-uint32_t rtppacket::getnexttimestamp( void )
-{
-  return this->gettimestamp() + this->getticksperpacket();
-}
-
-/*!md
 ## getticksperpacket
 Returns the number of ticks per packet. All support packets are the same. A bit strange!
 */
@@ -270,7 +261,7 @@ uint16_t rtppacket::getpayloadlength( void )
 
   if( this->length < ( 12 - ( (size_t)this->getpacketcsrccount() * 4 ) ) )
   {
-    std::cerr << "RTP Packet has a nonsense size" << std::endl;
+    fprintf( stderr, "RTP Packet has a nonsense size\n" );
     return 0;
   }
   return this->length - 12 - ( this->getpacketcsrccount() * 4 );
@@ -284,3 +275,26 @@ void rtppacket::setpayloadlength( size_t length )
 {
   this->length = 12 + ( this->getpacketcsrccount() * 4 ) + length;
 }
+
+#ifdef TESTSUITE
+/* show the contents to cout */
+void rtppacket::dump() {
+  std::cout << "=================BEGIN=================" << std::endl;
+  std::cout << "length: " << this->length << std::endl;
+  std::cout << "payload length: " << this->getpayloadlength() << std::endl;
+  std::cout << "marker: " << +this->getpacketmarker() << std::endl;
+  std::cout << "pt: " << +this->getpayloadtype() << std::endl;
+  std::cout << "sn: " << this->getsequencenumber() << std::endl;
+  std::cout << "ts: " << this->gettimestamp() << std::endl;
+  std::cout << "ssrc: " << this->getssrc() << std::endl;
+
+  auto v = this->getpayload();
+  for( auto i = 0; i < this->getpayloadlength(); i ++ ) {
+    std::cout << std::showbase << std::setfill( '0' ) << std::setw( 2 ) << std::hex << std::right << +(*(v+i)) << ' ';
+    if( 0 == i % 16 ) std::cout << std::endl;
+  }
+  std::cout << std::dec;
+
+  std::cout << std::endl << "=================END===================" << std::endl;
+}
+#endif

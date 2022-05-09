@@ -5,9 +5,15 @@
 #include <gnutls/gnutls.h>
 #include <gnutls/dtls.h>
 
+#include <srtp2/srtp.h>
+
 #include <functional>
 
 #include <boost/enable_shared_from_this.hpp>
+
+#include "projectrtppacket.h"
+
+#define MAXKEYLEN 96
 
 #define DTLSMTUSIZE 1200
 #define DTLSNUMBUFFERS 10
@@ -16,15 +22,13 @@
 
 //#define DTLSDEBUGOUTPUT 1
 
-struct ProtocolVersion
-{
+#ifdef DTLSDEBUGOUTPUT
+struct ProtocolVersion {
   uint8_t major;
   uint8_t minor;
 };
 
-
-class DTLSPlaintext
-{
+class DTLSPlaintext {
 public:
   uint8_t type;
   ProtocolVersion version;
@@ -33,18 +37,23 @@ public:
   uint16_t length;
   //opaque fragment[DTLSPlaintext.length];
 };
+#endif
 
 
 class dtlssession:
-  public std::enable_shared_from_this< dtlssession >
-{
+  public std::enable_shared_from_this< dtlssession > {
 public:
 
-  enum mode { act, pass };
+  enum mode { act, pass, none };
   dtlssession( mode m );
   ~dtlssession();
 
-  typedef boost::shared_ptr< dtlssession > pointer;
+  dtlssession( const dtlssession& ) = delete;              // copy ctor
+  dtlssession( dtlssession&& ) = delete;                   // move ctor
+  dtlssession& operator=( const dtlssession& ) = delete;   // copy assignment
+  dtlssession& operator=( dtlssession&& ) = delete;        // move assignment
+
+  typedef std::shared_ptr< dtlssession > pointer;
   static pointer create( mode m );
 
   int handshake( void );
@@ -61,6 +70,10 @@ public:
   int pull( void *data, size_t size );
   int timeout( unsigned int ms );
 
+  bool protect( rtppacket *pk );
+  bool unprotect( rtppacket *pk );
+
+  std::atomic_bool rtpdtlshandshakeing;
 private:
   gnutls_session_t session;
   mode m;
@@ -73,11 +86,28 @@ private:
   std::function< void( const void*, size_t ) > bindwritefunc;
 
   uint8_t peersha256sum[ 32 ];
+
+  /* srtp policy and sessions */
+  uint8_t clientkeysalt[ DTLSMAXKEYMATERIAL ];
+  uint8_t serverkeysalt[ DTLSMAXKEYMATERIAL ];
+  srtp_policy_t srtsendppolicy;
+  srtp_policy_t srtrecvppolicy;
+  srtp_t srtpsendsession;
+  srtp_t srtprecvsession;
 };
 
+void dtlsinit( void );
+void dtlsdestroy( void );
 
 const char* getdtlssrtpsha256fingerprint( void );
+
+#ifdef NODE_MODULE
+void initsrtp( napi_env env, napi_value &result );
+#endif
+
+#ifdef TESTSUITE
 void dtlstest( void );
+#endif
 
 
 #endif /* PROJECTRTPSRPT_H */

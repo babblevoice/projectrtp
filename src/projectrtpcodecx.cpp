@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include "projectrtpcodecx.h"
+#include "projectrtprawsound.h"
 
 const char codecx::next = 0;
 
@@ -65,23 +66,17 @@ static const uint8_t alaw_to_ulaw_table[256] =
     214, 215, 212, 213, 218, 219, 216, 217, 207, 207, 206, 206, 210, 211, 208, 209
 };
 
-void gen711convertdata( void )
-{
-  std::cout << "Pre generating G711 tables";
-  for( int32_t i = 0; i != 65535; i++ )
-  {
+void gen711convertdata( void ) {
+  for( int32_t i = 0; i != 65535; i++ ) {
     int16_t l16val = i - 32768;
     _l16topcmu[ i ] = linear_to_ulaw( l16val );
     _l16topcma[ i ] = linear_to_alaw( l16val );
   }
 
-  for( uint8_t i = 0; i != 255; i++ )
-  {
+  for( uint8_t i = 0; i != 255; i++ ) {
     _pcmatol16[ i ] = alaw_to_linear( i );
     _pcmutol16[ i ] = ulaw_to_linear( i );
   }
-
-  std::cout << " - completed." << std::endl;
 }
 
 codecx::codecx() :
@@ -89,8 +84,17 @@ codecx::codecx() :
   g722decoder( nullptr ),
   ilbcencoder( nullptr ),
   ilbcdecoder( nullptr ),
+  lpfilter(),
   resamplelastsample( 0 ),
-  _hasdata( false )
+  l168kref(),
+  l1616kref(),
+  pcmaref(),
+  pcmuref(),
+  g722ref(),
+  ilbcref(),
+  dcpowerfilter(),
+  _hasdata( false ),
+  inpkcount( 0 )
 {
 
 }
@@ -130,6 +134,7 @@ void codecx::reset()
 
   this->restart();
   this->_hasdata = false;
+  this->inpkcount = 0;
 }
 
 /*!md
@@ -139,6 +144,7 @@ Do enough to manage missing packets.
 void codecx::restart( void )
 {
   this->lpfilter.reset();
+  this->dcpowerfilter.reset();
   this->resamplelastsample = 0;
   this->_hasdata = false;
 }
@@ -299,26 +305,23 @@ bool codecx::ilbctol16( void )
   if( this->ilbcref.isdirty() ) return false;
 
   /* roughly compression size with some leg room. */
-  this->l168kref.malloc( this->ilbcref.size(), sizeof( int16_t ), L168KPAYLOADTYPE );
+  this->l168kref.malloc( L16PAYLOADSAMPLES, sizeof( int16_t ), L168KPAYLOADTYPE );
+  int16_t speechType;
 
-  WebRtc_Word16 speechType;
-
-  if( nullptr == this->ilbcdecoder )
-  {
+  if( nullptr == this->ilbcdecoder ) {
     /* Only support 20mS ATM to make the mixing simpler */
     WebRtcIlbcfix_DecoderCreate( &this->ilbcdecoder );
     WebRtcIlbcfix_DecoderInit( this->ilbcdecoder, 20 );
   }
 
-  WebRtc_Word16 l168klength = WebRtcIlbcfix_Decode( this->ilbcdecoder,
-                        ( WebRtc_Word16* ) this->ilbcref.c_str(),
+  int16_t l168klength = WebRtcIlbcfix_Decode( this->ilbcdecoder,
+                        ( ilbcencodedval ) this->ilbcref.c_str(),
                         this->ilbcref.size(),
-                        ( WebRtc_Word16 * )this->l168kref.c_str(),
+                        ( ilbcdecodedval )this->l168kref.c_str(),
                         &speechType
                       );
 
-  if( -1 == l168klength )
-  {
+  if( -1 == l168klength ) {
     this->l168kref.size( 0 );
     this->l168kref.dirty( false );
     return false;
@@ -366,25 +369,22 @@ According to RFC 3952 you determin how many frames are in the packet by the fram
 
 As we only support G722, G711 and iLBC (20/30) then we should be able simply encode and send as the matched size.
 */
-bool codecx::l16toilbc( void )
-{
+bool codecx::l16toilbc( void ) {
   if( 0 == this->l168kref.size() ) return false;
   if( this->l168kref.isdirty() ) return false;
 
-  if( nullptr == this->ilbcencoder )
-  {
+  if( nullptr == this->ilbcencoder ) {
     /* Only support 20mS ATM to make the mixing simpler */
     WebRtcIlbcfix_EncoderCreate( &this->ilbcencoder );
     WebRtcIlbcfix_EncoderInit( this->ilbcencoder, 20 );
   }
 
-  WebRtc_Word16 len = WebRtcIlbcfix_Encode( this->ilbcencoder,
-                            ( WebRtc_Word16 * ) this->l168kref.c_str(),
+  int16_t len = WebRtcIlbcfix_Encode( this->ilbcencoder,
+                            ( ilbcdecodedval ) this->l168kref.c_str(),
                             this->l168kref.size(),
-                            ( WebRtc_Word16* ) this->ilbcref.c_str()
+                            ( ilbcencodedval ) this->ilbcref.c_str()
                           );
-  if ( len > 0 )
-  {
+  if ( len > 0 ) {
     this->ilbcref.size( len );
     this->ilbcref.dirty( false );
     return true;
@@ -534,84 +534,64 @@ rawsound& codecx::requirel16( void )
 # getref
 returns a reference to the relavent rawsound and ensures it is transcoded if required.
 */
-rawsound& codecx::getref( int pt )
-{
+rawsound& codecx::getref( int pt ) {
   /* If we have already have or converted this packet... */
-  if( PCMAPAYLOADTYPE == pt &&  0 != this->pcmaref.size() && !this->pcmaref.isdirty() )
-  {
+  if( PCMAPAYLOADTYPE == pt &&  0 != this->pcmaref.size() && !this->pcmaref.isdirty() ) {
     return this->pcmaref;
   }
-  else if( PCMUPAYLOADTYPE == pt && 0 != this->pcmuref.size() && !this->pcmuref.isdirty() )
-  {
+  else if( PCMUPAYLOADTYPE == pt && 0 != this->pcmuref.size() && !this->pcmuref.isdirty() ) {
     return this->pcmuref;
   }
-  else if( ILBCPAYLOADTYPE == pt && 0 != this->ilbcref.size() && !this->ilbcref.isdirty() )
-  {
+  else if( ILBCPAYLOADTYPE == pt && 0 != this->ilbcref.size() && !this->ilbcref.isdirty() ) {
     return this->ilbcref;
   }
-  else if( G722PAYLOADTYPE == pt && 0 != this->g722ref.size() && !this->g722ref.isdirty() )
-  {
+  else if( G722PAYLOADTYPE == pt && 0 != this->g722ref.size() && !this->g722ref.isdirty() ) {
     return this->g722ref;
   }
-  else if( L168KPAYLOADTYPE == pt && 0 != this->l168kref.size() && !this->l168kref.isdirty() )
-  {
+  else if( L168KPAYLOADTYPE == pt && 0 != this->l168kref.size() && !this->l168kref.isdirty() ) {
     return this->l168kref;
   }
-  else if( L1616KPAYLOADTYPE == pt && 0 != this->l1616kref.size() && !this->l1616kref.isdirty() )
-  {
+  else if( L1616KPAYLOADTYPE == pt && 0 != this->l1616kref.size() && !this->l1616kref.isdirty() ) {
     return this->l1616kref;
   }
 
   /* If we get here we may have L16 but at the wrong sample rate so check and resample - then convert */
   /* narrowband targets */
-  switch( pt )
-  {
-    case ILBCPAYLOADTYPE:
-    {
+  switch( pt ) {
+    case ILBCPAYLOADTYPE: {
       this->requirenarrowband();
       this->l16toilbc();
       return this->ilbcref;
     }
-    case G722PAYLOADTYPE:
-    {
+    case G722PAYLOADTYPE: {
       this->requirewideband();
       this->l16tog722();
 
       return this->g722ref;
     }
-    case PCMAPAYLOADTYPE:
-    {
-      if( this->pcmuref.size() > 0 )
-      {
+    case PCMAPAYLOADTYPE: {
+      if( this->pcmuref.size() > 0 ) {
         this->alaw2ulaw();
-      }
-      else
-      {
+      } else {
         this->requirenarrowband();
         this->l16topcma();
       }
       return this->pcmaref;
     }
-    case PCMUPAYLOADTYPE:
-    {
-      if( this->pcmaref.size() > 0 )
-      {
+    case PCMUPAYLOADTYPE: {
+      if( this->pcmaref.size() > 0 ) {
         this->ulaw2alaw();
-      }
-      else
-      {
+      } else {
         this->requirenarrowband();
         this->l16topcmu();
       }
       return this->pcmuref;
     }
-    case L168KPAYLOADTYPE:
-    {
+    case L168KPAYLOADTYPE: {
       this->requirenarrowband();
       return this->l168kref;
     }
-    case L1616KPAYLOADTYPE:
-    {
+    case L1616KPAYLOADTYPE: {
       this->requirewideband();
       return this->l1616kref;
     }
@@ -629,14 +609,16 @@ processor with limited functions like this then fast inverse sqrt should be impl
 */
 uint16_t codecx::power( void )
 {
+  if( this->inpkcount < 100 ) return 0; /* ensure the rtp has established */
   rawsound &ref = this->requirel16();
   if ( 0 == ref.size() ) return 0;
 
   uint32_t stotsq = 0;
   int16_t *s = ( int16_t* ) ref.c_str();
-  for( size_t i = 0; i < ref.size(); i++ )
-  {
-    stotsq += (*s) * (*s);
+  int16_t filtered;
+  for( size_t i = 0; i < ref.size(); i++ ) {
+    filtered = this->dcpowerfilter.execute( *s );
+    stotsq += filtered * filtered;
     s++;
   }
 
@@ -657,6 +639,7 @@ Have a think about if this is where we want to mix audio data.
 */
 codecx& operator << ( codecx& c, rtppacket& pk )
 {
+  c.inpkcount++;
   rawsound r = rawsound( pk );
   c << r;
   return c;
@@ -724,343 +707,6 @@ codecx& operator << ( codecx& c, const char& a )
   return c;
 }
 
-/*!md
-# rawsound
-An object representing raw data for sound - which can be in any format (supported). We maintain a pointer to the raw data and will not clean it up.
-*/
-rawsound::rawsound() :
-  data( nullptr ),
-  samples( 0 ),
-  allocatedlength( 0 ),
-  bytespersample( 1 ),
-  format( 0 ),
-  samplerate( 0 )
-{
-}
-
-/*!md
-# rawsound
-*/
-rawsound::rawsound( uint8_t *ptr, std::size_t samples, int format, uint16_t samplerate ) :
-  data( ptr ),
-  samples( samples ),
-  allocatedlength( 0 ),
-  bytespersample( 1 ),
-  format( format ),
-  samplerate( samplerate ),
-  dirtydata( false )
-{
-  this->frompt( format );
-}
-
-/*!md
-## frompt
-From payload Type. Configure samplerate and bytes per sample etc.
-*/
-void rawsound::frompt( int payloadtype )
-{
-  switch( payloadtype )
-  {
-    case PCMUPAYLOADTYPE:
-    case PCMAPAYLOADTYPE:
-    {
-      this->samplerate = 8000;
-      this->bytespersample = 1;
-      break;
-    }
-    case G722PAYLOADTYPE:
-    {
-      this->samplerate = 16000;
-      this->bytespersample = 1;
-      break;
-    }
-    case ILBCPAYLOADTYPE:
-    {
-      this->samplerate = 8000;
-      this->bytespersample = 1;
-      break;
-    }
-    /* The next 2 can only come from a sound file */
-    case L168KPAYLOADTYPE:
-    {
-      this->samplerate = 8000;
-      if( 1 == this->bytespersample )
-      {
-        this->bytespersample = 2;
-        this->samples = this->samples / 2;
-      }
-      break;
-    }
-    case L1616KPAYLOADTYPE:
-    {
-      this->samplerate = 16000;
-      if( 1 == this->bytespersample )
-      {
-        this->bytespersample = 2;
-        this->samples = this->samples / 2;
-      }
-      break;
-    }
-  }
-}
-
-/*!md
-## rawsound
-Construct from an rtp packet
-*/
-rawsound::rawsound( rtppacket& pk, bool dirty ) :
-  data( pk.getpayload() ),
-  samples( pk.getpayloadlength() ),
-  allocatedlength( 0 ),
-  bytespersample( 1 ),
-  format( pk.getpayloadtype() ),
-  dirtydata( dirty )
-{
-  this->frompt( this->format );
-}
-
-/*!md
-## Copy c'stor
-Original maintains ownership of any allocated memory.
-*/
-rawsound::rawsound( rawsound &o ) :
-  data( o.data ),
-  samples( o.samples ),
-  allocatedlength( 0 ),
-  bytespersample( o.bytespersample ),
-  format( o.format ),
-  samplerate( o.samplerate ),
-  dirtydata( o.dirtydata )
-{
-}
-
-/*!md
-## d-tor
-Tidy up.
-*/
-rawsound::~rawsound()
-{
-  if( this->allocatedlength > 0 && nullptr != this->data )
-  {
-    delete[] this->data;
-    this->data = nullptr;
-  }
-  this->allocatedlength = 0;
-}
-
-/*
-## zero
-Reset buffer with zero
-*/
-void rawsound::zero( void )
-{
-  if( nullptr != this->data )
-  {
-    size_t zeroamount = this->samples * this->bytespersample;
-    if( L1616KPAYLOADTYPE == format )
-    {
-      zeroamount = zeroamount * 2;
-    }
-
-    if( 0 != this->allocatedlength && zeroamount > this->allocatedlength )
-    {
-      std::cerr << "Trying to zero memory but capped by allocated amount" << std::endl;
-      zeroamount = this->allocatedlength;
-    }
-
-    memset( this->data, 0, zeroamount );
-  }
-}
-
-/*
-## copy
-* Target (this) MUST have memory available.
-* format must be set appropriatly before the call
-*/
-void rawsound::copy( uint8_t *src, size_t len )
-{
-  if( nullptr != this->data )
-  {
-    memcpy( this->data,
-            src,
-            len );
-
-    switch( this->format )
-    {
-      case L168KPAYLOADTYPE:
-      case L1616KPAYLOADTYPE:
-      {
-        this->samples = len / 2;
-        break;
-      }
-      default:
-      {
-        this->samples = len;
-        break;
-      }
-    }
-  }
-}
-
-/*
-## copy (from other)
-* Target (this) MUST have data allocated.
-*/
-void rawsound::copy( rawsound &other )
-{
-  if( nullptr != this->data && this->samples >= other.samples )
-  {
-    this->bytespersample = other.bytespersample;
-    this->samplerate = other.samplerate;
-    this->format = other.format;
-    this->samples = other.samples;
-
-    memcpy( this->data,
-            other.data,
-            other.samples * other.bytespersample );
-
-  }
-}
-
-/*
-## Add and subtract
-
-Used for mixing in channels.
-
-void rawsound::add( void )
-{
-
-}
-
-void rawsound::subtract( void )
-{
-
-}
-*/
-
-/*
-## malloc
-Allocate our own memory.
-*/
-void rawsound::malloc( size_t samplecount, size_t bytespersample, int format )
-{
-  this->samples = samplecount;
-  this->bytespersample = bytespersample;
-  this->format = format;
-  size_t requiredsize = samplecount * bytespersample;
-  if( L1616KPAYLOADTYPE == format )
-  {
-    requiredsize = requiredsize * 2;
-  }
-
-  if( this->allocatedlength > 0 )
-  {
-    if( this->allocatedlength >= requiredsize )
-    {
-      return;
-    }
-
-    delete[] this->data;
-  }
-  this->data = new uint8_t[ requiredsize ];
-  this->allocatedlength = requiredsize;
-}
-
-/*
-## operator +=
-Used for mixing audio
-*/
-rawsound& rawsound::operator+=( codecx& rhs )
-{
-  size_t length;
-
-  int16_t *in;
-  int16_t *out = ( int16_t * ) this->data;
-
-  switch( this->format )
-  {
-    case L168KPAYLOADTYPE:
-    {
-      rhs.requirenarrowband();
-
-      length = rhs.l168kref.size();
-      in = ( int16_t * ) rhs.l168kref.c_str();
-      break;
-    }
-    case L1616KPAYLOADTYPE:
-    {
-      rhs.requirewideband();
-
-      length = rhs.l1616kref.size();
-      in = ( int16_t * ) rhs.l1616kref.c_str();
-      break;
-    }
-    default:
-    {
-      std::cerr << "Attemping to perform an addition on a none linear format" << std::endl;
-      return *this;
-    }
-  }
-
-  if( length > this->samples )
-  {
-    std::cerr << "We have been asked to add samples but we don't have enough space" << std::endl;
-    length = this->samples;
-  }
-
-  for( size_t i = 0; i < length; i++ )
-  {
-    *out++ += *in++;
-  }
-
-  return *this;
-}
-
-rawsound& rawsound::operator-=( codecx& rhs )
-{
-  size_t length;
-
-  int16_t *in;
-  int16_t *out = ( int16_t * ) this->data;
-
-  switch( this->format )
-  {
-    case L168KPAYLOADTYPE:
-    {
-      rhs.requirenarrowband();
-
-      length = rhs.l168kref.size();
-      in = ( int16_t * ) rhs.l168kref.c_str();
-      break;
-    }
-    case L1616KPAYLOADTYPE:
-    {
-      rhs.requirewideband();
-
-      length = rhs.l1616kref.size();
-      in = ( int16_t * ) rhs.l1616kref.c_str();
-      break;
-    }
-    default:
-    {
-      std::cerr << "Attemping to perform a subtract on a none linear format" << std::endl;
-      return *this;
-    }
-  }
-
-  if( length > this->samples )
-  {
-    std::cerr << "We have been asked to subtract samples but we don't have enough space" << std::endl;
-    length = this->samples;
-  }
-
-  for( size_t i = 0; i < length; i++ )
-  {
-    *out++ -= *in++;
-  }
-
-  return *this;
-}
 
 
 void codectests( void )
@@ -1170,6 +816,119 @@ void codectests( void )
     std::cout << static_cast<int16_t>( pl16[ i ] ) << " ";
   }
   std::cout << std::endl;
-
-
 }
+
+#ifdef NODE_MODULE
+
+/*
+Support single number just for now - but TODO detect Buffer input to convert whole bufffer.
+*/
+static napi_value linear2pcma( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+  int32_t inval;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_type_error( env, "0", "Data required" );
+    return NULL;
+  }
+
+  if( napi_ok != napi_get_value_int32( env, argv[ 0 ], &inval ) ) return NULL;
+  inval = inval + 32768 /* ( 2^16 ) / 2 */;
+
+  if ( inval > 65536 /* ( 2^16 ) */ ) return NULL;
+  if ( inval < 0 ) return NULL;
+
+  napi_value returnval = NULL;
+  if( napi_ok != napi_create_int32( env, _l16topcma[ inval ], &returnval ) ) return NULL;
+  return returnval;
+}
+
+static napi_value pcma2linear( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+  int32_t inval;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_type_error( env, "0", "Data required" );
+    return NULL;
+  }
+
+  if( napi_ok != napi_get_value_int32( env, argv[ 0 ], &inval ) ) return NULL;
+  if ( inval > 256 /* 2 ^ 8 */ ) return NULL;
+  if ( inval < 0 ) return NULL;
+
+  napi_value returnval = NULL;
+  if( napi_ok != napi_create_int32( env, _pcmatol16[ inval ], &returnval ) ) return NULL;
+  return returnval;
+}
+
+static napi_value linear2pcmu( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+  int32_t inval;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_type_error( env, "0", "Data required" );
+    return NULL;
+  }
+
+  if( napi_ok != napi_get_value_int32( env, argv[ 0 ], &inval ) ) return NULL;
+  inval = inval + 32768 /* ( 2^16 ) / 2 */;
+
+  if ( inval > 65536 /* ( 2^16 ) */ ) return NULL;
+  if ( inval < 0 ) return NULL;
+
+  napi_value returnval = NULL;
+  if( napi_ok != napi_create_int32( env, _l16topcmu[ inval ], &returnval ) ) return NULL;
+  return returnval;
+}
+
+static napi_value pcmu2linear( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+  int32_t inval;
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+
+  if( 1 != argc ) {
+    napi_throw_type_error( env, "0", "Data required" );
+    return NULL;
+  }
+
+  if( napi_ok != napi_get_value_int32( env, argv[ 0 ], &inval ) ) return NULL;
+  if ( inval > 256 /* 2 ^ 8 */ ) return NULL;
+  if ( inval < 0 ) return NULL;
+
+  napi_value returnval = NULL;
+  if( napi_ok != napi_create_int32( env, _pcmutol16[ inval ], &returnval ) ) return NULL;
+  return returnval;
+}
+
+void initrtpcodecx( napi_env env, napi_value &result ) {
+  napi_value codecx;
+  napi_value funct;
+
+  if( napi_ok != napi_create_object( env, &codecx ) ) return;
+  if( napi_ok != napi_set_named_property( env, result, "codecx", codecx ) ) return;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, linear2pcma, nullptr, &funct ) ) return;
+  if( napi_ok != napi_set_named_property( env, codecx, "linear162pcma", funct ) ) return;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, pcma2linear, nullptr, &funct ) ) return;
+  if( napi_ok != napi_set_named_property( env, codecx, "pcma2linear16", funct ) ) return;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, linear2pcmu, nullptr, &funct ) ) return;
+  if( napi_ok != napi_set_named_property( env, codecx, "linear162pcmu", funct ) ) return;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, pcmu2linear, nullptr, &funct ) ) return;
+  if( napi_ok != napi_set_named_property( env, codecx, "pcmu2linear16", funct ) ) return;
+}
+
+#endif /* NODE_MODULE */

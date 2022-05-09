@@ -5,8 +5,6 @@
 #include <string>
 #include <memory>
 
-#include <boost/smart_ptr/atomic_shared_ptr.hpp>
-
 /* The number of bytes in a packet ( these figure are less some overhead G711 = 172*/
 #define G711PAYLOADBYTES 160
 #define G722PAYLOADBYTES 160
@@ -32,15 +30,24 @@ could be a larger length with our CODECs */
 #define L16MAXLENGTH ( RTPMAXLENGTH * 2 )
 #define RTCPMAXLENGTH 200
 
-
-extern std::string mediachroot;
-extern bool enabledisprtpbuff;
-
-/* Switch to boost for now as atomic shared pointer in std doesn't compile
-std::atomic_store( stringptr
-ddn't complain about the tagerget object not being atomic also!
+/*
+Used to hide shared pointers so we can pass a void * into libraries tht need it.
 */
-typedef boost::shared_ptr< std::string > stringptr;
-typedef boost::atomic_shared_ptr< std::string > atomicstringptr;
+class hiddensharedptr {
+public:
+  hiddensharedptr( const std::shared_ptr< void >& p ): d ( nullptr ) { this->d = p; }
+
+  template<typename T>
+  auto get() {
+   return std::static_pointer_cast<T>( this->d );
+  }
+
+private:
+  std::shared_ptr< void > d; // Copied from Request
+};
+
+/* useful macros for use with std::atomic_bool */
+#define AQUIRESPINLOCK( l ) while( l.exchange( true, std::memory_order_acquire ) )
+#define RELEASESPINLOCK( l ) l.store( false, std::memory_order_release )
 
 #endif /* PROJECTRTPGLOBALS_H */
