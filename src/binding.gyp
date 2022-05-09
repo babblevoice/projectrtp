@@ -31,7 +31,8 @@
         "projectrtptonegen.cpp",
         "projectrtpchannel.cpp",
         "projectrtpchannelmux.cpp",
-        "projectrtpsrtp.cpp" ]
+        "projectrtpsrtp.cpp",
+        "projectrtpstun.cpp" ]
     }
   ]
 }
