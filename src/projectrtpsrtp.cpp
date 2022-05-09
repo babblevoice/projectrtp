@@ -90,23 +90,9 @@ dtlssession::dtlssession( dtlssession::mode mode ) :
   /* srtp */
   memset( &this->srtsendppolicy, 0x0, sizeof( srtp_policy_t ) );
   memset( &this->srtrecvppolicy, 0x0, sizeof( srtp_policy_t ) );
-#if 0
-  srtp_crypto_policy_set_rtp_default( &this->srtsendppolicy.rtp );
-  srtp_crypto_policy_set_rtcp_default( &this->srtsendppolicy.rtcp );
-  srtp_crypto_policy_set_rtp_default( &this->srtrecvppolicy.rtp );
-  srtp_crypto_policy_set_rtcp_default( &this->srtrecvppolicy.rtcp );
-#endif
 
   this->srtsendppolicy.window_size = 1024;
   this->srtrecvppolicy.window_size = 1024;
-
-  //this->srtrecvppolicy.allow_repeat_tx = 1;
-  //this->srtsendppolicy.allow_repeat_tx = 1;
-
-  //srtp_crypto_policy_set_aes_gcm_256_16_auth( &this->srtsendppolicy.rtp );
-  //srtp_crypto_policy_set_aes_gcm_256_16_auth( &this->srtsendppolicy.rtcp );
-  //srtp_crypto_policy_set_aes_gcm_256_16_auth( &this->srtrecvppolicy.rtp );
-  //srtp_crypto_policy_set_aes_gcm_256_16_auth( &this->srtrecvppolicy.rtp );
 
   memset( this->clientkeysalt, 0x0, DTLSMAXKEYMATERIAL );
   memset( this->serverkeysalt, 0x0, DTLSMAXKEYMATERIAL );
@@ -258,13 +244,14 @@ void dtlssession::getkeys( void ) {
   srtp_crypto_policy_set_aes_cm_128_hmac_sha1_80( &this->srtrecvppolicy.rtp );
 	srtp_crypto_policy_set_aes_cm_128_hmac_sha1_80( &this->srtrecvppolicy.rtcp );
 
+#if 0
   /* TODO - do we switch ? */
   if( dtlssession::act == this->m ) {
     this->srtsendppolicy.ssrc.type = ssrc_any_outbound; // or ssrc_specific?
-    this->srtsendppolicy.key = this->serverkeysalt;
+    this->srtsendppolicy.key = this->clientkeysalt;
 
     this->srtrecvppolicy.ssrc.type = ssrc_any_inbound;
-    this->srtrecvppolicy.key = this->clientkeysalt;
+    this->srtrecvppolicy.key = this->serverkeysalt;
   } else { /* dtlssession::pass */
 
     this->srtsendppolicy.ssrc.type = ssrc_any_outbound;
@@ -273,6 +260,13 @@ void dtlssession::getkeys( void ) {
     this->srtrecvppolicy.ssrc.type = ssrc_any_inbound;
     this->srtrecvppolicy.key = this->clientkeysalt;
   }
+#endif
+
+  this->srtsendppolicy.ssrc.type = ssrc_any_outbound;
+  this->srtsendppolicy.key = this->serverkeysalt;
+
+  this->srtrecvppolicy.ssrc.type = ssrc_any_inbound;
+  this->srtrecvppolicy.key = this->clientkeysalt;
 
   auto err = srtp_create( &this->srtpsendsession, &this->srtsendppolicy );
   if( err ) {
