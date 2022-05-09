@@ -135,6 +135,10 @@ public:
   rtppacket outrtpdata[ OUTBUFFERPACKETCOUNT ];
   std::atomic_uint16_t rtpoutindex;
 
+  /* ice */
+  std::string icelocalpwd;
+  std::string iceremotepwd;
+
 #ifdef NODE_MODULE
   napi_value jsthis;
   napi_threadsafe_function cb;
@@ -181,6 +185,8 @@ private:
   void startticktimer( void );
   void endticktimer( void );
 
+  bool handlestun( uint8_t *pk, size_t len );
+
   std::atomic_bool mixerlock;
   projectchannelmuxptr mixer;
   std::atomic_bool mixing;
@@ -216,6 +222,8 @@ private:
 
   boost::posix_time::ptime tickstarttime;
 
+
+  uint8_t stuntmpout[ 300 ];
 };
 
 typedef std::deque<projectrtpchannel::pointer> rtpchannels;

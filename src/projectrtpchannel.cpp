@@ -10,12 +10,19 @@
 
 #include <queue>
 
+/* gnutls_rnd */
+#include <gnutls/crypto.h>
+
 #include "projectrtpchannel.h"
+#include "projectrtpstun.h"
 
 extern boost::asio::io_context workercontext;
 std::queue < unsigned short >availableports;
 std::atomic_bool availableportslock( false );
 uint32_t channelscreated = 0;
+
+/* useful for random string generation */
+const char alphanumsecret[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
 
 /*
 # RTP Channel
@@ -51,6 +58,8 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   inbuff( rtpbuffer::create() ),
   rtpbufferlock( false ),
   rtpoutindex( 0 ),
+  icelocalpwd(),
+  iceremotepwd(),
 #ifdef NODE_MODULE
   jsthis( NULL ),
   cb( NULL ),
@@ -93,6 +102,19 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   tickstarttime() {
 
   channelscreated++;
+
+  gnutls_rnd( GNUTLS_RND_RANDOM, &this->ssrcout, 4 );
+
+  char localicepwd[ 25 ];
+  localicepwd[ 0 ] = 0;
+  if( 0 == gnutls_rnd( GNUTLS_RND_RANDOM, localicepwd, sizeof( localicepwd ) ) ) {
+    for( size_t i = 0; i < sizeof( localicepwd ) - 1; i++ ) {
+      localicepwd[ i ] = alphanumsecret[ localicepwd[ i ] % ( sizeof( alphanumsecret ) - 1 ) ];
+    }
+  }
+  localicepwd[ 24 ] = 0;
+
+  this->icelocalpwd = localicepwd;
 }
 
 
@@ -103,7 +125,6 @@ uint32_t projectrtpchannel::requestopen( void ) {
 
   /* this shouldn't happen */
   if( this->active ) return this->ssrcout;
-  this->ssrcout = rand();
 
   boost::asio::post( workercontext,
         boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
@@ -180,8 +201,6 @@ void projectrtpchannel::doopen( void ) {
   }
 
   this->active = true;
-
-  this->ssrcout = rand();
 
   /* anchor our out time to when the channel is opened */
   this->tsout = std::chrono::system_clock::to_time_t( std::chrono::system_clock::now() );
@@ -635,6 +654,33 @@ bool projectrtpchannel::dtlsnegotiate( void ) {
   return oursession->rtpdtlshandshakeing;
 }
 
+/**
+ * @brief 
+ * 
+ * @return true 
+ * @return false 
+ */
+bool projectrtpchannel::handlestun( uint8_t *pk, size_t len ) {
+
+  if( stun::is( pk, len ) ) {
+
+    size_t len = stun::handle( pk, this->stuntmpout, sizeof( this->stuntmpout ), this->rtpsenderendpoint, this->icelocalpwd, this->iceremotepwd );
+    if( len > 0 ) {
+      this->rtpsocket.async_send_to(
+                      boost::asio::buffer( this->stuntmpout, len ),
+                      this->rtpsenderendpoint, /* do we sometime tie this in with confirmedrtpsenderendpoint as the integrity check can auth it? */
+                      boost::bind( &projectrtpchannel::handlesend,
+                                    shared_from_this(),
+                                    boost::asio::placeholders::error,
+                                    boost::asio::placeholders::bytes_transferred ) );
+    }
+    
+    return true;
+  }
+
+  return false;
+}
+
 /*
 ## handlereadsomertp
 Wait for RTP data. We have to re-order when required. Look after all of the round robin memory here.
@@ -666,14 +712,12 @@ void projectrtpchannel::readsomertp( void ) {
         /* DTLS Handshake */
         uint8_t dtlsbuf[ 1500 ];
         auto bytesrecvd = this->rtpsocket.receive_from( boost::asio::buffer( dtlsbuf, sizeof( dtlsbuf ) ), this->rtpsenderendpoint );
-
-        if( bytesrecvd > 0 ) {
+        if( !this->handlestun( dtlsbuf, bytesrecvd ) ) {
           AQUIRESPINLOCK( this->rtpdtlslock );
           currentdtlssession->write( dtlsbuf, bytesrecvd );
           RELEASESPINLOCK( this->rtpdtlslock );
-          this->readsomertp();
         }
-
+        this->readsomertp();
       } else {
         /* RTP */
         /* Grab a buffer */
@@ -693,6 +737,10 @@ void projectrtpchannel::readsomertp( void ) {
           this->receivedpkskip++;
           this->readsomertp();
         } else if( bytesrecvd > 0 ) {
+
+          if( this->handlestun( buf->pk, bytesrecvd ) ) {
+            return;
+          }
 
           /* We should still count packets we are instructed to drop */
           this->receivedpkcount++;
@@ -1426,21 +1474,42 @@ static napi_value channelremote( napi_env env, napi_callback_info info ) {
   char vfingerprint[ 128 ];
   vfingerprint[ 0 ] = 0;
 
+  bool dtlsrequired = false, dtlsenabled = false;
+
   if ( napi_ok == napi_has_named_property( env, argv[ 0 ], "dtls", &hasit ) &&
        hasit &&
        napi_ok == napi_get_named_property( env, argv[ 0 ], "dtls", &dtls ) ) {
+    dtlsrequired = true;
     napi_value nfingerprint, nactpass;
     if( napi_ok == napi_has_named_property( env, dtls, "fingerprint", &hasit ) &&
         hasit &&
         napi_ok == napi_get_named_property( env, dtls, "fingerprint", &nfingerprint ) ) {
       size_t bytescopied;
       char vactpass[ 128 ];
+
+      napi_value nhash;
+      if( napi_ok != napi_has_named_property( env, nfingerprint, "hash", &hasit ) ||
+          !hasit ||
+          napi_ok != napi_get_named_property( env, nfingerprint, "hash", &nhash ) ) goto nodtls;
+
+      if( napi_ok == napi_get_value_string_utf8( env, nhash, vfingerprint, sizeof( vfingerprint ), &bytescopied ) ) {
+        if( 95 == bytescopied ) {
+          dtlsenabled = true;
+        }
+      }
+
+nodtls:
+      if( dtlsrequired && !dtlsenabled ) {
+        napi_throw_error( env, "1", "DTLS requested but no possible" );
+        return NULL;
+      }
+
       if( napi_ok == napi_get_value_string_utf8( env, nfingerprint, vfingerprint, sizeof( vfingerprint ), &bytescopied ) ) {
         if( napi_ok == napi_has_named_property( env, dtls, "mode", &hasit ) &&
             hasit &&
             napi_ok == napi_get_named_property( env, dtls, "mode", &nactpass ) ) {
           if( napi_ok == napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) {
-            if( std::string( vactpass ) == "pass" ) {
+            if( std::string( vactpass ) == "passive" ) {
               /* If they are pass - we are act */
               dtlsmode = dtlssession::act;
             } else {
@@ -1683,7 +1752,7 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
   size_t argc = 2;
   napi_value argv[ 2 ];
-  napi_value nremote, nport, naddress, ncodec;
+  napi_value nremote;
 
   napi_value result;
   AQUIRESPINLOCK( availableportslock );
@@ -1691,12 +1760,14 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   availableports.pop();
   RELEASESPINLOCK( availableportslock );
 
+  size_t bytescopied;
+
   int32_t remoteport;
   char remoteaddress[ 128 ];
   remoteaddress[ 0 ] = 0;
 
   bool hasit;
-  bool dtlsenabled = false;
+  bool dtlsenabled = false, dtlsrequired = false;
 
   if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
 
@@ -1716,38 +1787,61 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   if( napi_ok == napi_has_named_property( env, argv[ 0 ], "remote", &hasit ) &&
       hasit &&
       napi_ok == napi_get_named_property( env, argv[ 0 ], "remote", &nremote ) ) {
+    /* 
+    optional - DTLS 
+    "dtls": {
+      "fingerprint": {
+        "type": "sha-256 - but ignored for now!",
+        "hash": "..."
+      },
+      "mode": "active|passive"
+    }
+    */
+    napi_value dtls, nactpass;
+    if ( napi_ok != napi_has_named_property( env, nremote, "dtls", &hasit ) ||
+         !hasit ||
+         napi_ok != napi_get_named_property( env, nremote, "dtls", &dtls ) ) goto nodtls;
 
-    /* optional - DTLS */
-    napi_value dtls;
-    if ( napi_ok == napi_has_named_property( env, nremote, "dtls", &hasit ) &&
-         hasit &&
-         napi_ok == napi_get_named_property( env, nremote, "dtls", &dtls ) ) {
+    dtlsrequired = true;
 
-      napi_value nfingerprint, nactpass;
-      if( napi_ok == napi_has_named_property( env, dtls, "fingerprint", &hasit ) &&
-          hasit &&
-          napi_ok == napi_get_named_property( env, dtls, "fingerprint", &nfingerprint ) ) {
+    if( napi_ok != napi_has_named_property( env, dtls, "mode", &hasit ) ||
+        !hasit ||
+        napi_ok != napi_get_named_property( env, dtls, "mode", &nactpass ) ) goto nodtls;
 
-        size_t bytescopied;
-        char vactpass[ 128 ];
-        vactpass[ 0 ] = 0;
-        if( napi_ok == napi_get_value_string_utf8( env, naddress, vfingerprint, sizeof( vfingerprint ), &bytescopied ) ) {
-          if( napi_ok == napi_has_named_property( env, dtls, "mode", &hasit ) &&
-              hasit &&
-              napi_ok == napi_get_named_property( env, dtls, "mode", &nactpass ) ) {
-            if( napi_ok == napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) {
-              if( std::string( vactpass ) == "pass" ) {
-                /* If they are pass - we are act */
-                dtlsmode = dtlssession::act;
-              } else {
-                dtlsmode = dtlssession::pass;
-              }
-              dtlsenabled = true;
-            }
-          }
-        }
+    char vactpass[ 128 ];
+    vactpass[ 0 ] = 0;
+
+    if( napi_ok != napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) goto nodtls;
+
+    if( std::string( vactpass ) == "passive" ) {
+      dtlsmode = dtlssession::pass;
+    } else {
+      dtlsmode = dtlssession::act;
+    }
+
+    napi_value nfingerprint;
+    if( napi_ok != napi_has_named_property( env, dtls, "fingerprint", &hasit ) ||
+        !hasit ||
+        napi_ok != napi_get_named_property( env, dtls, "fingerprint", &nfingerprint ) ) goto nodtls;
+
+    napi_value nhash;
+    if( napi_ok != napi_has_named_property( env, nfingerprint, "hash", &hasit ) ||
+        !hasit ||
+        napi_ok != napi_get_named_property( env, nfingerprint, "hash", &nhash ) ) goto nodtls;
+
+    if( napi_ok == napi_get_value_string_utf8( env, nhash, vfingerprint, sizeof( vfingerprint ), &bytescopied ) ) {
+      if( 95 == bytescopied ) {
+        dtlsenabled = true;
       }
     }
+
+nodtls:
+    if( dtlsrequired && !dtlsenabled ) {
+      napi_throw_error( env, "1", "DTLS requested but no possible" );
+      return NULL;
+    }
+
+    napi_value nport, naddress, ncodec, nicepwd;
 
     if( napi_ok != napi_get_named_property( env, nremote, "port", &nport ) ) {
       napi_throw_error( env, "1", "Missing port in remote object" );
@@ -1756,11 +1850,6 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
     napi_get_value_int32( env, nport, &remoteport );
 
-    if( napi_ok != napi_get_named_property( env, nremote, "address", &naddress ) ) {
-      napi_throw_error( env, "1", "Missing address in remote object" );
-      return NULL;
-    }
-
     if( napi_ok != napi_get_named_property( env, nremote, "codec", &ncodec ) ) {
       napi_throw_error( env, "1", "Missing codec in remote object" );
       return NULL;
@@ -1768,11 +1857,26 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
     napi_get_value_uint32( env, ncodec, &codecval );
 
-    size_t bytescopied;
+    if( napi_ok != napi_get_named_property( env, nremote, "address", &naddress ) ) {
+      napi_throw_error( env, "1", "Missing address in remote object" );
+      return NULL;
+    }
+
     napi_get_value_string_utf8( env, naddress, remoteaddress, sizeof( remoteaddress ), &bytescopied );
     if( 0 == bytescopied || bytescopied >= sizeof( remoteaddress ) ) {
       napi_throw_error( env, "1", "Remote host address too long" );
       return NULL;
+    }
+
+    char remoteicepwd[ 128 ];
+    remoteicepwd[ 0 ] = 0;
+    if( napi_ok == napi_get_named_property( env, nremote, "icepwd", &nicepwd ) ) {
+      napi_get_value_string_utf8( env, nicepwd, remoteicepwd, sizeof( remoteicepwd ), &bytescopied );
+      if( 0 == bytescopied || bytescopied >= sizeof( remoteaddress ) ) {
+        napi_throw_error( env, "1", "Remote ice-pwd too long" );
+        return NULL;
+      }
+      p->iceremotepwd = remoteicepwd;
     }
   }
 
@@ -1800,6 +1904,31 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
       }
     }
   }
+
+
+  napi_value nlocal;
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "local", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "local", &nlocal ) ) {
+
+    /* optional - override locally generate one */
+    napi_value nicepwd;
+    if( napi_ok == napi_has_named_property( env, nlocal, "icepwd", &hasit ) &&
+          hasit &&
+          napi_ok == napi_get_named_property( env, nlocal, "icepwd", &nicepwd ) ) {
+
+      char localicepwd[ 128 ];
+      localicepwd[ 0 ] = 0;
+
+      napi_get_value_string_utf8( env, nicepwd, localicepwd, sizeof( localicepwd ), &bytescopied );
+      if( 0 == bytescopied || bytescopied >= sizeof( remoteaddress ) ) {
+        napi_throw_error( env, "1", "Local ice-pwd too long" );
+        return NULL;
+      }
+      p->icelocalpwd = localicepwd;
+    }
+  }
+
 
   hiddensharedptr *pb = new hiddensharedptr( p );
 
@@ -1876,7 +2005,7 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   }
 
   /* values */
-  napi_value nlocal, nourport, ndtls, fp, nssrc;
+  napi_value nourport, ndtls, fp, nssrc, nicepwd;
   if( napi_ok != napi_create_object( env, &nlocal ) ||
       napi_ok != napi_set_named_property( env, result, "local", nlocal ) ||
 
@@ -1891,7 +2020,10 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
       napi_ok != napi_create_string_utf8( env, getdtlssrtpsha256fingerprint(), NAPI_AUTO_LENGTH, &fp ) ||
       napi_ok != napi_set_named_property( env, ndtls, "fingerprint", fp ) ||
-      napi_ok != napi_set_named_property( env, ndtls, "enabled", createnapibool( env, dtlsenabled ) ) ) {
+      napi_ok != napi_set_named_property( env, ndtls, "enabled", createnapibool( env, dtlsenabled ) ) ||
+      
+      napi_ok != napi_create_string_utf8( env, p->icelocalpwd.c_str(), NAPI_AUTO_LENGTH, &nicepwd ) ||
+      napi_ok != napi_set_named_property( env, nlocal, "icepwd", nicepwd ) ) {
 
     delete pb;
     return NULL;
