@@ -40,7 +40,8 @@ dtlssession::dtlssession( dtlssession::mode mode ) :
   inindex( 0 ),
   incount( 0 ),
   bindwritefunc(),
-  keymaterial(),
+  clientkeysalt(),
+  serverkeysalt(),
   srtsendppolicy(),
   srtrecvppolicy(),
   srtpsendsession( nullptr ),
@@ -89,12 +90,26 @@ dtlssession::dtlssession( dtlssession::mode mode ) :
   /* srtp */
   memset( &this->srtsendppolicy, 0x0, sizeof( srtp_policy_t ) );
   memset( &this->srtrecvppolicy, 0x0, sizeof( srtp_policy_t ) );
+#if 0
   srtp_crypto_policy_set_rtp_default( &this->srtsendppolicy.rtp );
   srtp_crypto_policy_set_rtcp_default( &this->srtsendppolicy.rtcp );
   srtp_crypto_policy_set_rtp_default( &this->srtrecvppolicy.rtp );
   srtp_crypto_policy_set_rtcp_default( &this->srtrecvppolicy.rtcp );
+#endif
 
-  memset( this->keymaterial, 0x0, DTLSMAXKEYMATERIAL );
+  this->srtsendppolicy.window_size = 1024;
+  this->srtrecvppolicy.window_size = 1024;
+
+  //this->srtrecvppolicy.allow_repeat_tx = 1;
+  //this->srtsendppolicy.allow_repeat_tx = 1;
+
+  //srtp_crypto_policy_set_aes_gcm_256_16_auth( &this->srtsendppolicy.rtp );
+  //srtp_crypto_policy_set_aes_gcm_256_16_auth( &this->srtsendppolicy.rtcp );
+  //srtp_crypto_policy_set_aes_gcm_256_16_auth( &this->srtrecvppolicy.rtp );
+  //srtp_crypto_policy_set_aes_gcm_256_16_auth( &this->srtrecvppolicy.rtp );
+
+  memset( this->clientkeysalt, 0x0, DTLSMAXKEYMATERIAL );
+  memset( this->serverkeysalt, 0x0, DTLSMAXKEYMATERIAL );
 }
 
 dtlssession::~dtlssession() {
@@ -183,17 +198,30 @@ Load our keys into our policies.
 ref: https://gitlab.com/gnutls/gnutls/blob/master/tests/mini-dtls-srtp.c
 */
 void dtlssession::getkeys( void ) {
+
+  uint8_t keymaterial[ DTLSMAXKEYMATERIAL ];
+  gnutls_datum_t srtp_cli_key, srtp_cli_salt, srtp_server_key, srtp_server_salt;
+
 #ifdef DTLSDEBUGOUTPUT
   std::cout << gnutls_protocol_get_name( gnutls_protocol_get_version( this->session ) ) << std::endl;
 #endif
 
-  gnutls_datum_t srtp_cli_key, srtp_cli_salt, srtp_server_key, srtp_server_salt;
-
-  if( gnutls_srtp_get_keys( this->session, this->keymaterial, DTLSMAXKEYMATERIAL, &srtp_cli_key, &srtp_cli_salt,
-                        &srtp_server_key, &srtp_server_salt ) < 0 ) {
+  if( gnutls_srtp_get_keys( this->session,
+                            keymaterial, 
+                            DTLSMAXKEYMATERIAL, 
+                            &srtp_cli_key, 
+                            &srtp_cli_salt,
+                            &srtp_server_key, 
+                            &srtp_server_salt ) < 0 ) {
     fprintf( stderr, "Unable to get key material\n" );
     return;
   }
+
+  memcpy( this->clientkeysalt, srtp_cli_key.data, srtp_cli_key.size );
+  memcpy( this->clientkeysalt + srtp_cli_key.size, srtp_cli_salt.data, srtp_cli_salt.size );
+
+  memcpy( this->serverkeysalt, srtp_server_key.data, srtp_server_key.size );
+  memcpy( this->serverkeysalt + srtp_server_key.size, srtp_server_salt.data, srtp_server_salt.size );
 
 #ifdef DTLSDEBUGOUTPUT
   char buf[ 2 * DTLSMAXKEYMATERIAL ];
@@ -212,36 +240,38 @@ void dtlssession::getkeys( void ) {
   size = sizeof(buf);
   gnutls_hex_encode( &srtp_server_salt, buf, &size );
   std::cout << "Server salt: " << buf << std::endl;
+
+  std::cout << "Client key and salt: ";
+  for( unsigned int i=0; i < ( srtp_cli_key.size + srtp_cli_salt.size) ; i++)
+    std::cout << std::hex << (int) this->clientkeysalt[ i ];
+  std::cout << std::endl;
+
+  std::cout << "server key and salt: ";
+  for( unsigned int i=0; i < ( srtp_cli_key.size + srtp_cli_salt.size) ; i++)
+    std::cout << std::hex << (int) this->serverkeysalt[ i ];
+  std::cout << std::endl;
+
 #endif
 
-  if( 32 == srtp_cli_key.size ) {
-    srtp_crypto_policy_set_aes_gcm_256_8_only_auth( &this->srtsendppolicy.rtp );
-    srtp_crypto_policy_set_aes_gcm_256_8_only_auth( &this->srtsendppolicy.rtcp );
-  } else {
-    srtp_crypto_policy_set_aes_gcm_128_8_only_auth( &this->srtsendppolicy.rtp );
-    srtp_crypto_policy_set_aes_gcm_128_8_only_auth( &this->srtsendppolicy.rtcp );
-  }
+  srtp_crypto_policy_set_aes_cm_128_hmac_sha1_80( &this->srtsendppolicy.rtp );
+	srtp_crypto_policy_set_aes_cm_128_hmac_sha1_80( &this->srtsendppolicy.rtcp );
+  srtp_crypto_policy_set_aes_cm_128_hmac_sha1_80( &this->srtrecvppolicy.rtp );
+	srtp_crypto_policy_set_aes_cm_128_hmac_sha1_80( &this->srtrecvppolicy.rtcp );
 
-  if( 32 == srtp_server_key.size ) {
-    srtp_crypto_policy_set_aes_gcm_256_8_only_auth( &this->srtrecvppolicy.rtp );
-    srtp_crypto_policy_set_aes_gcm_256_8_only_auth( &this->srtrecvppolicy.rtcp );
-  } else {
-    srtp_crypto_policy_set_aes_gcm_128_8_only_auth( &this->srtrecvppolicy.rtp );
-    srtp_crypto_policy_set_aes_gcm_128_8_only_auth( &this->srtrecvppolicy.rtcp );
-  }
-
+  /* TODO - do we switch ? */
   if( dtlssession::act == this->m ) {
     this->srtsendppolicy.ssrc.type = ssrc_any_outbound; // or ssrc_specific?
-    this->srtsendppolicy.key = srtp_server_key.data;
+    this->srtsendppolicy.key = this->serverkeysalt;
 
     this->srtrecvppolicy.ssrc.type = ssrc_any_inbound;
-    this->srtrecvppolicy.key = srtp_cli_key.data;
+    this->srtrecvppolicy.key = this->clientkeysalt;
   } else { /* dtlssession::pass */
-    this->srtsendppolicy.ssrc.type = ssrc_any_inbound;
-    this->srtsendppolicy.key = srtp_cli_key.data;
 
-    this->srtrecvppolicy.ssrc.type = ssrc_any_outbound;
-    this->srtrecvppolicy.key = srtp_server_key.data;
+    this->srtsendppolicy.ssrc.type = ssrc_any_outbound;
+    this->srtsendppolicy.key = this->serverkeysalt;
+
+    this->srtrecvppolicy.ssrc.type = ssrc_any_inbound;
+    this->srtrecvppolicy.key = this->clientkeysalt;
   }
 
   auto err = srtp_create( &this->srtpsendsession, &this->srtsendppolicy );
@@ -290,7 +320,8 @@ bool dtlssession::protect( rtppacket *pk ) {
   if( nullptr == this->srtpsendsession ) return false;
   int length = pk->length;
 
-  auto stat = srtp_protect( this->srtpsendsession, pk->pk, &length );
+  auto stat = srtp_protect_mki( this->srtpsendsession, pk->pk, &length, 0, 0 );
+  //auto stat = srtp_protect( this->srtpsendsession, pk->pk, &length );
   if( srtp_err_status_ok != stat ) {
     fprintf( stderr, "Error: srtp protect failed with code %d\n", stat );
     return false;
@@ -305,9 +336,100 @@ bool dtlssession::unprotect( rtppacket *pk ) {
   int length = pk->length;
   auto stat = srtp_unprotect( this->srtprecvsession, pk->pk, &length );
   if( srtp_err_status_ok != stat ) {
-    fprintf( stderr, "Error: srtp unprotect failed with code %d\n", stat );
-    return false;
+
+    fprintf( stderr, "Error: srtp unprotect failed with code %d ", stat );
+
+    switch( stat ) {
+      case srtp_err_status_ok: break; /* silence compiler waring */
+      case srtp_err_status_bad_param:
+        fprintf( stderr, "(srtp_err_status_bad_param)\n" );
+        return false;
+
+      case srtp_err_status_alloc_fail:
+        fprintf( stderr, "(srtp_err_status_alloc_fail)\n" );
+        return false;
+
+      case srtp_err_status_init_fail:
+        fprintf( stderr, "(srtp_err_status_init_fail)\n" );
+        return false;
+
+      case srtp_err_status_no_ctx:
+        fprintf( stderr, "(srtp_err_status_no_ctx)\n" );
+        return false;
+
+      case srtp_err_status_fail:
+        fprintf( stderr, "(srtp_err_status_fail)\n" );
+        return false;
+      case srtp_err_status_dealloc_fail:
+        fprintf( stderr, "(srtp_err_status_dealloc_fail)\n" );
+        return false;
+      case srtp_err_status_terminus:
+        fprintf( stderr, "(srtp_err_status_terminus)\n" );
+        return false;
+      case srtp_err_status_auth_fail:
+        fprintf( stderr, "(srtp_err_status_auth_fail)\n" );
+        return false;
+      case srtp_err_status_cipher_fail:
+        fprintf( stderr, "(srtp_err_status_cipher_fail)\n" );
+        return false;
+      case srtp_err_status_replay_fail:
+        fprintf( stderr, "(srtp_err_status_replay_fail)\n" );
+        return false;
+      case srtp_err_status_replay_old:
+        fprintf( stderr, "(srtp_err_status_replay_old)\n" );
+        return false;
+      case srtp_err_status_algo_fail:
+        fprintf( stderr, "(srtp_err_status_algo_fail)\n" );
+        return false;
+      case srtp_err_status_no_such_op:
+        fprintf( stderr, "(srtp_err_status_no_such_op)\n" );
+        return false;
+      case srtp_err_status_cant_check:
+        fprintf( stderr, "(srtp_err_status_cant_check)\n" );
+        return false;
+      case srtp_err_status_key_expired:
+        fprintf( stderr, "(srtp_err_status_key_expired)\n" );
+        return false;
+      case srtp_err_status_socket_err:
+        fprintf( stderr, "(srtp_err_status_socket_err)\n" );
+        return false;
+      case srtp_err_status_signal_err:
+        fprintf( stderr, "(srtp_err_status_signal_err)\n" );
+        return false;
+      case srtp_err_status_nonce_bad:
+        fprintf( stderr, "(srtp_err_status_nonce_bad)\n" );
+        return false;
+      case srtp_err_status_read_fail:
+        fprintf( stderr, "(srtp_err_status_read_fail)\n" );
+        return false;
+      case srtp_err_status_write_fail:
+        fprintf( stderr, "(srtp_err_status_write_fail)\n" );
+        return false;
+      case srtp_err_status_parse_err:
+        fprintf( stderr, "(srtp_err_status_parse_err)\n" );
+        return false;
+      case srtp_err_status_encode_err:
+        fprintf( stderr, "(srtp_err_status_encode_err)\n" );
+        return false;
+      case srtp_err_status_semaphore_err:
+        fprintf( stderr, "(srtp_err_status_semaphore_err)\n" );
+        return false;
+      case srtp_err_status_pfkey_err:
+        fprintf( stderr, "(srtp_err_status_pfkey_err)\n" );
+        return false;
+      case srtp_err_status_bad_mki:
+        fprintf( stderr, "(srtp_err_status_bad_mki)\n" );
+        return false;
+      case srtp_err_status_pkt_idx_old:
+        fprintf( stderr, "(srtp_err_status_pkt_idx_old)\n" );
+        return false;
+      case srtp_err_status_pkt_idx_adv:
+        fprintf( stderr, "(srtp_err_status_pkt_idx_adv)\n" );
+        return false;
+    }
+    
   }
+printf("unprotect ok\n");
   pk->length = length;
   return true;
 }
@@ -475,6 +597,33 @@ const char* getdtlssrtpsha256fingerprint( void ) {
 }
 
 #ifdef NODE_MODULE
+
+#ifdef DTLSDEBUGOUTPUT
+/* From libsrt2 example rtp_decode */
+void rtp_decoder_srtp_log_handler( srtp_log_level_t level,
+                                   const char *msg,
+                                   void *data )
+{
+    (void)data;
+    char level_char = '?';
+    switch (level) {
+    case srtp_log_level_error:
+        level_char = 'e';
+        break;
+    case srtp_log_level_warning:
+        level_char = 'w';
+        break;
+    case srtp_log_level_info:
+        level_char = 'i';
+        break;
+    case srtp_log_level_debug:
+        level_char = 'd';
+        break;
+    }
+    fprintf( stderr, "SRTP-LOG [%c]: %s\n", level_char, msg );
+}
+#endif
+
 void initsrtp( napi_env env, napi_value &result ) {
   napi_value ndtls, fp;
   if( napi_ok != napi_create_object( env, &ndtls ) ) return;
@@ -482,6 +631,47 @@ void initsrtp( napi_env env, napi_value &result ) {
 
   if( napi_ok != napi_create_string_utf8( env, getdtlssrtpsha256fingerprint(), NAPI_AUTO_LENGTH, &fp ) ) return;
   if( napi_ok != napi_set_named_property( env, ndtls, "fingerprint", fp ) ) return;
+
+  fprintf( stderr, "Using %s [0x%x]\n", srtp_get_version_string(), srtp_get_version() );
+
+#ifdef DTLSDEBUGOUTPUT
+  if( srtp_install_log_handler( rtp_decoder_srtp_log_handler, NULL ) ) {
+    fprintf( stderr, "libsrtp failed to install libsrtp logger\n" );
+  }
+
+  //srtp_list_debug_modules();
+
+  if( srtp_set_debug_module( "srtp", 1 ) ) {
+    fprintf( stderr, "libsrtp failed enable debug\n" );
+  }
+
+  if( srtp_set_debug_module( "hmac sha-1", 1 ) ) {
+    fprintf( stderr, "libsrtp failed enable debug\n" );
+  }
+
+  if( srtp_set_debug_module( "aes gcm nss", 1 ) ) {
+    fprintf( stderr, "libsrtp failed enable debug\n" );
+  }
+
+  if( srtp_set_debug_module( "aes icm nss", 1 ) ) {
+    fprintf( stderr, "libsrtp failed enable debug\n" );
+  }
+
+  if( srtp_set_debug_module( "stat test", 1 ) ) {
+    fprintf( stderr, "libsrtp failed enable debug\n" );
+  }
+  if( srtp_set_debug_module( "cipher", 1 ) ) {
+    fprintf( stderr, "libsrtp failed enable debug\n" );
+  }
+  if( srtp_set_debug_module( "auth func", 1 ) ) {
+    fprintf( stderr, "libsrtp failed enable debug\n" );
+  }
+
+  if( srtp_set_debug_module( "crypto kernel", 1 ) ) {
+    fprintf( stderr, "libsrtp failed enable debug\n" );
+  }
+#endif
+
 }
 
 #endif

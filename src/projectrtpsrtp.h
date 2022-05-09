@@ -13,6 +13,8 @@
 
 #include "projectrtppacket.h"
 
+#define MAXKEYLEN 96
+
 #define DTLSMTUSIZE 1200
 #define DTLSNUMBUFFERS 10
 
@@ -86,7 +88,8 @@ private:
   uint8_t peersha256sum[ 32 ];
 
   /* srtp policy and sessions */
-  uint8_t keymaterial[ DTLSMAXKEYMATERIAL ];
+  uint8_t clientkeysalt[ DTLSMAXKEYMATERIAL ];
+  uint8_t serverkeysalt[ DTLSMAXKEYMATERIAL ];
   srtp_policy_t srtsendppolicy;
   srtp_policy_t srtrecvppolicy;
   srtp_t srtpsendsession;
