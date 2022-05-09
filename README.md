@@ -104,7 +104,7 @@ podman run --restart=always --net=host -d -it --env PA=127.0.0.1 --name=prtp pro
 
 The examples folder contains 2 scripts. The simplenode can be used where no special funtionality is required. The standard projectrtp docker image points to this - so starting a docker instance will run up as a node and attempt to connect to a central control server.
 
-The advancednode.js is an example which contains pre and post processing - which can be used, for example, downloading recordings, performing text to speach or uploading recordings when it has completed.
+The advancednode.js is an example which contains pre and post processing - which can be used, for example, downloading recordings, performing text to speech or uploading recordings when it has completed.
 
 ## Codecs
 
