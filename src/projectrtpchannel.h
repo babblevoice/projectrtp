@@ -187,6 +187,8 @@ private:
 
   bool handlestun( uint8_t *pk, size_t len );
 
+  static bool recordercompleted( const channelrecorder::pointer& value );
+
   std::atomic_bool mixerlock;
   projectchannelmuxptr mixer;
   std::atomic_bool mixing;
