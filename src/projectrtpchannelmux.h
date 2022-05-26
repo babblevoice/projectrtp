@@ -37,8 +37,6 @@ public:
   void addchannels( projectrtpchannelptr chana, projectrtpchannelptr chanb );
   void go( void );
 
-  projectchanptrlist channels;
-
 private:
 
   void checkfornewmixes( void );
@@ -46,6 +44,10 @@ private:
   void mixall( void );
 
   void setnexttick( void );
+
+  static bool channelremoverequested( const projectrtpchannelptr& value );
+
+  projectchanptrlist channels;
 
   boost::asio::io_context &iocontext;
   boost::asio::steady_timer tick;
