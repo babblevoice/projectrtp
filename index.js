@@ -7,6 +7,7 @@ const fs = require( "fs" )
 const { spawnSync } = require( "child_process" )
 
 let localaddress = "127.0.0.1"
+const bin = "./src/build/Release/projectrtp"
 
 /*
 We are using our test files to doc the interface as well as test it as
@@ -96,14 +97,57 @@ if( !fs.existsSync( keypath + "dtls-srtp.pem" ) ) {
   /* we will be left with combined */
 }
 
-module.exports.projectrtp = require( "./src/build/Release/projectrtp" )
-
-/*
-Wrap our openchannel function to simplify some of the calling
-and make param and cb optional.
-This is also where we will hook into to pass requests over to
-remote projectrtp nodes if we have remote nodes rather than local addon.
+/**
+@summary Proxy for other RTP nodes
+@memberof projectrtp
+@hideconstructor
 */
+class proxy {
+  /**
+  @summary Listen for connections from RTP nodes which can offer their services
+  to us. When we listen for other nodes, we can configure them so that it is invisible
+  to the main node as to where the channel is being handled.
+  @param {Object} remote - see channel.create
+  @return {rtpserver}
+  */
+  listen( port = 9002, address = "127.0.0.1" ) {
+    return server.listen( port, address )
+  }
+
+  /**
+  @summary Listen for connections from RTP nodes which can offer their services
+  to us. When we listen for other nodes, we can configure them so that it is invisible
+  to the main node as to where the channel is being handled.
+  @param {Object} remote - see channel.create
+  @return {rtpserver}
+  */
+  stats() {
+    return {
+      "server": server.stats(),
+      "node": {}
+    }
+  }
+
+  /**
+  @summary Returns details of all of the nodes connected to us.
+  @return { Object }
+  */
+  nodes() {
+    return server.nodes()
+  }
+
+  /**
+  @summary Listen for connections from RTP nodes which can offer their services
+  to us. When we listen for other nodes, we can configure them so that it is invisible
+  to the main node as to where the channel is being handled.
+  @param {number} port
+  @param {string} host
+  @return {rtpnode}
+  */
+  connect( port = 9002, host = "127.0.0.1" ) {
+    return node.connect( module.exports.projectrtp, port, host )
+  }
+}
 
 /**
 Callback for events we pass back to interested parties.
@@ -172,13 +216,38 @@ RFC 2833 telephone-event
 @returns {Promise<channel>} - the newly created channel
 */
 
-let oc = module.exports.projectrtp.openchannel
-Object.defineProperty( module.exports.projectrtp, "openchannel", {
-  value: async function( x, y ) {
+let actualprojectrtp = false
+/**
+ * Mimick the underlying napi interface and decide if we need to load the 
+ * underlying napi code.
+ */
+ class projectrtp {
 
-    let params = x
-    let cb = y
-    if( "function" == typeof x ) {
+  constructor() {
+    this.proxy = new proxy()
+  }
+
+  run() {
+    if( !actualprojectrtp ) actualprojectrtp = require( bin )
+    actualprojectrtp.run()
+
+    this.dtls = actualprojectrtp.dtls
+    this.tone = actualprojectrtp.tone
+    this.rtpfilter = actualprojectrtp.rtpfilter
+    this.codecx = actualprojectrtp.codecx
+    this.soundfile = actualprojectrtp.soundfile
+    this.rtpbuffer = actualprojectrtp.rtpbuffer
+    this.stats = actualprojectrtp.stats
+    this.shutdown = actualprojectrtp.shutdown
+  }
+
+  /**
+   * 
+   * @param { object } params 
+   * @param { channelcallback } cb 
+   */
+  async openchannel( params, cb ) {
+    if( "function" == typeof params ) {
       cb = params
       params = {}
     }
@@ -191,7 +260,7 @@ Object.defineProperty( module.exports.projectrtp, "openchannel", {
       return server.get().openchannel( params, cb )
     } else {
       /* use local */
-      let chan = oc( params, cb )
+      let chan = actualprojectrtp.openchannel( params, cb )
       /* I can't find a way of defining a getter in napi - so here we override */
       /* TODO finish address */
       chan.local.address = localaddress
@@ -206,69 +275,10 @@ Object.defineProperty( module.exports.projectrtp, "openchannel", {
       return chan
     }
   }
-} )
 
-let ss = module.exports.projectrtp.stats
-Object.defineProperty( module.exports.projectrtp, "stats", {
-  value: function() {
-    return ss()
-  }
-} )
-
-/**
-@summary Proxy for other RTP nodes
-@memberof projectrtp
-@hideconstructor
-*/
-class proxy {
-  /**
-  @summary Listen for connections from RTP nodes which can offer their services
-  to us. When we listen for other nodes, we can configure them so that it is invisible
-  to the main node as to where the channel is being handled.
-  @param {Object} remote - see channel.create
-  @return {rtpserver}
-  */
-  listen( port = 9002, address = "127.0.0.1" ) {
-    return server.listen( port, address )
-  }
-
-  /**
-  @summary Listen for connections from RTP nodes which can offer their services
-  to us. When we listen for other nodes, we can configure them so that it is invisible
-  to the main node as to where the channel is being handled.
-  @param {Object} remote - see channel.create
-  @return {rtpserver}
-  */
-  stats() {
-    return {
-      "server": server.stats(),
-      "node": {}
-    }
-  }
-
-  /**
-  @summary Returns details of all of the nodes connected to us.
-  @return { Object }
-  */
-  nodes() {
-    return server.nodes()
-  }
-
-  /**
-  @summary Listen for connections from RTP nodes which can offer their services
-  to us. When we listen for other nodes, we can configure them so that it is invisible
-  to the main node as to where the channel is being handled.
-  @param {number} port
-  @param {string} host
-  @return {rtpnode}
-  */
-  connect( port = 9002, host = "127.0.0.1" ) {
-    return node.connect( module.exports.projectrtp, port, host )
+  setaddress( address ) {
+    localaddress = address
   }
 }
 
-module.exports.projectrtp.proxy = new proxy()
-
-module.exports.projectrtp.setaddress = ( address ) => {
-  localaddress = address
-}
+module.exports.projectrtp = new projectrtp()
