@@ -527,14 +527,11 @@ void projectrtpchannel::removeoldrecorders( void ) {
     }
   }
 
-  for ( chanrecptrlist::iterator rec = this->recorders.begin();
-        rec != this->recorders.end(); ) {
-    if( ( *rec )->completed ) {
-      rec = this->recorders.erase( rec );
-    } else {
-      ++rec;
-    }
-  }
+  this->recorders.remove_if( recordercompleted );
+}
+
+bool projectrtpchannel::recordercompleted( const channelrecorder::pointer& rec ) {
+  return rec->completed;
 }
 
 /*
