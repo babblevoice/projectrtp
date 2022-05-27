@@ -135,6 +135,8 @@ void projectrtpchannel::requestclose( std::string reason ) {
   if( !this->_requestclose.exchange( true, std::memory_order_acquire ) ) {
     this->closereason = reason;
   }
+
+  this->removemixer = true;
 }
 
 void projectrtpchannel::remote( std::string address,
@@ -256,8 +258,6 @@ void projectrtpchannel::doclose( void ) {
   this->player = nullptr;
   this->newplaydef = nullptr;
 
-  this->removemixer = true;
-
   /* close our session if we have one */
   this->rtpdtls = nullptr;
 
@@ -308,15 +308,15 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   if( error == boost::asio::error::operation_aborted ) return;
   if( !this->active ) return;
 
-  if( this->_requestclose ) {
-    this->doclose();
-    return;
-  }
-
   if( this->mixing ) {
     this->setnexttick();
     return;
   };
+
+  if( this->_requestclose ) {
+    this->doclose();
+    return;
+  }
 
   this->startticktimer();
 
