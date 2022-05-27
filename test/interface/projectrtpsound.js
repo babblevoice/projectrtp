@@ -86,7 +86,12 @@ describe( "rtpsound", function() {
     this.timeout( 800 )
     this.slow( 600 )
 
-    let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": 20000, "codec": 0 } } )
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
+    let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": 20000, "codec": 0 } }, ( d ) => {
+      if( "close" === d.action ) done()
+    } )
 
     expect( channel.close ).to.be.an( "function" )
     expect( channel.play ).to.be.an( "function" )
@@ -97,6 +102,8 @@ describe( "rtpsound", function() {
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 200 ) } )
     channel.close()
+
+    await finished
 
   } )
 
@@ -115,12 +122,16 @@ describe( "rtpsound", function() {
     this.timeout( 3000 )
     this.slow( 2000 )
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     server.bind()
     server.on( "listening", async function() {
 
       let ourport = server.address().port
 
       channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+        if( "close" === d.action ) done()
       } )
 
       expect( channel.play( {
@@ -134,6 +145,8 @@ describe( "rtpsound", function() {
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1100 ) } )
     channel.close()
     server.close()
+
+    await finished
 
     expect( receviedpkcount ).to.be.within( 48, 50 )
   } )
@@ -243,6 +256,9 @@ describe( "rtpsound", function() {
     var receviedpkcount = 0
     var channel
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     server.on( "message", function( msg, rinfo ) {
 
       receviedpkcount++
@@ -258,6 +274,7 @@ describe( "rtpsound", function() {
       let ourport = server.address().port
 
       channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+        if( "close" === d.action ) done()
       } )
 
       expect( channel.play( { "loop": 2, "files": [ { "wav": "/tmp/flat.wav" } ] } ) ).to.be.true
@@ -268,6 +285,7 @@ describe( "rtpsound", function() {
     channel.close()
     server.close()
 
+    await finished
     /*
       8000 samples looped twice. 100 packets (50 packets/S).
     */
@@ -284,6 +302,9 @@ describe( "rtpsound", function() {
     const server = dgram.createSocket( "udp4" )
     var receviedpkcount = 0
     var channel
+
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
 
     server.on( "message", function( msg, rinfo ) {
 
@@ -334,6 +355,7 @@ describe( "rtpsound", function() {
       let ourport = server.address().port
 
       channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+        if( "close" === d.action ) done()
       } )
 
       expect( channel.play( { "loop": 2, "files": [
@@ -347,6 +369,8 @@ describe( "rtpsound", function() {
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 9000 ) } )
     channel.close()
     server.close()
+
+    await finished
 
     /*
       8000 samples looped twice with 3 sections to play. 400 packets (50 packets/S).

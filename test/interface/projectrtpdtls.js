@@ -15,7 +15,11 @@ describe( "dtls", function() {
 
   it( `Test we have a fingerprint in channel`, async function() {
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     let channel = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) done()
     } )
 
     expect( channel.local.dtls.fingerprint ).to.be.a( "string" )
@@ -25,6 +29,7 @@ describe( "dtls", function() {
     expect( channel.local.dtls.enabled ).to.equal( false )
 
     channel.close()
+    await finished
   } )
 
   it( `Create 2 channels and negotiate`, async function() {
@@ -58,10 +63,15 @@ describe( "dtls", function() {
       }
     }
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     let channela = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) done()
     } )
 
     targeta.dtls.fingerprint.hash = channelb.local.dtls.fingerprint
@@ -78,12 +88,12 @@ describe( "dtls", function() {
 
     expect( channelb.echo() ).to.be.true
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 2000 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 2000 ) } )
 
     channela.close()
-    channelb.close()
 
     await new Promise( ( resolve ) => { fs.unlink( "/tmp/ukringing.wav", ( err ) => { resolve() } ) } )
+    await finished
 
   } )
 } )

@@ -71,16 +71,15 @@ describe( "channel mix", function() {
     endpointb.bind()
     await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
 
-      }
+    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-
-      }
+      if( "close" === d.action ) done()
     } )
 
     /* mix */
@@ -94,12 +93,13 @@ describe( "channel mix", function() {
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
-    channelb.close()
     endpointa.close()
     endpointb.close()
 
     expect( endpointapkcount ).to.be.within( 30, 51 )
     expect( endpointbpkcount ).to.be.within( 30, 51 )
+
+    await finished
 
   } )
 
@@ -279,16 +279,15 @@ describe( "channel mix", function() {
     endpointb.bind()
     await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
 
-      }
+    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
-      if( "close" === d.action ) {
-
-      }
+      if( "close" === d.action ) done()
     } )
 
     /* mix */
@@ -302,12 +301,13 @@ describe( "channel mix", function() {
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
-    channelb.close()
     endpointa.close()
     endpointb.close()
 
     expect( endpointapkcount ).to.be.within( 30, 51 )
     expect( endpointbpkcount ).to.be.within( 30, 51 )
+
+    await finished
 
   } )
 
@@ -347,16 +347,15 @@ describe( "channel mix", function() {
     endpointb.bind()
     await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
 
-      }
+    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 97 } }, function( d ) {
-      if( "close" === d.action ) {
-
-      }
+      if( "close" === d.action ) done()
     } )
 
     /* mix */
@@ -370,13 +369,13 @@ describe( "channel mix", function() {
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
-    channelb.close()
     endpointa.close()
     endpointb.close()
 
     expect( endpointapkcount ).to.be.above( 30 )
     expect( endpointbpkcount ).to.be.above( 30 )
 
+    await finished
   } )
 
   it( `mix 2 channels - pcmu <-> g722`, async function() {
@@ -408,16 +407,15 @@ describe( "channel mix", function() {
     endpointb.bind()
     await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
 
-      }
+    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 9 } }, function( d ) {
-      if( "close" === d.action ) {
-
-      }
+      if( "close" === d.action ) done()
     } )
 
     /* mix */
@@ -431,12 +429,13 @@ describe( "channel mix", function() {
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
-    channelb.close()
     endpointa.close()
     endpointb.close()
 
     expect( endpointapkcount ).to.be.above( 30 )
     expect( endpointbpkcount ).to.be.above( 30 )
+
+    await finished
 
   } )
 
@@ -467,29 +466,27 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
 
     endpointb.bind()
-    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
     endpointc.bind()
-    await new Promise( ( resolve, reject ) => { endpointc.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } )
+
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
 
     let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-
-      }
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-
-      }
+      if( "close" === d.action ) channelc.close()
     } )
 
     let channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-      }
+      if( "close" === d.action ) done()
     } )
 
     /* mix */
@@ -504,8 +501,6 @@ describe( "channel mix", function() {
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
-    channelb.close()
-    channelc.close()
     endpointa.close()
     endpointb.close()
     endpointc.close()
@@ -513,6 +508,8 @@ describe( "channel mix", function() {
     /* This value is based on timeing so may vary very slightly */
     expect( endpointapkcount ).to.be.within( 59, 61 )
     expect( endpointbpkcount ).to.be.within( 59, 61 )
+
+    await finished
 
   } )
 
@@ -553,21 +550,19 @@ describe( "channel mix", function() {
     endpointc.bind()
     await new Promise( ( resolve, reject ) => { endpointc.on( "listening", function() { resolve() } ) } )
 
-    let channela = await projectrtp.openchannel( { "direction": { "send": false }, "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
 
-      }
+    let channela = await projectrtp.openchannel( { "direction": { "send": false }, "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( { "direction": { "send": false }, "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-
-      }
+      if( "close" === d.action ) channelc.close()
     } )
 
     let channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-      }
+      if( "close" === d.action ) done()
     } )
 
     /* mix */
@@ -582,8 +577,6 @@ describe( "channel mix", function() {
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
-    channelb.close()
-    channelc.close()
     endpointa.close()
     endpointb.close()
     endpointc.close()
@@ -591,6 +584,8 @@ describe( "channel mix", function() {
     expect( endpointapkcount ).to.be.equal( 0 )
     expect( endpointbpkcount ).to.be.equal( 0 )
     expect( endpointcpkcount ).to.be.within( 59, 61 )
+
+    await finished
 
   } )
 
@@ -623,29 +618,27 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
 
     endpointb.bind()
-    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
     endpointc.bind()
-    await new Promise( ( resolve, reject ) => { endpointc.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } )
+
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
 
     let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-
-      }
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-
-      }
+      if( "close" === d.action ) channelc.close()
     } )
 
     let channelc = await projectrtp.openchannel( { "direction": { "recv": false }, "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-      }
+      if( "close" === d.action ) done()
     } )
 
     /* mix */
@@ -660,8 +653,6 @@ describe( "channel mix", function() {
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
-    channelb.close()
-    channelc.close()
     endpointa.close()
     endpointb.close()
     endpointc.close()
@@ -669,6 +660,8 @@ describe( "channel mix", function() {
     expect( endpointapkcount ).to.be.within( 59, 61 )
     expect( endpointbpkcount ).to.be.within( 59, 61 )
     expect( endpointcpkcount ).to.be.within( 59, 61 )
+
+    await finished
 
   } )
 
@@ -723,21 +716,19 @@ describe( "channel mix", function() {
     endpointc.bind()
     await new Promise( ( resolve, reject ) => { endpointc.on( "listening", function() { resolve() } ) } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
 
-      }
+    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-
-      }
+      if( "close" === d.action ) channelc.close()
     } )
 
     let channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-      }
+      if( "close" === d.action ) done()
     } )
 
     setTimeout( () => expect( channelc.direction( { "recv": false } ) ).to.be.true , 400 )
@@ -754,8 +745,6 @@ describe( "channel mix", function() {
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
-    channelb.close()
-    channelc.close()
     endpointa.close()
     endpointb.close()
     endpointc.close()
@@ -766,6 +755,8 @@ describe( "channel mix", function() {
     expect( endpointapkcountnotzero ).to.be.within( 8, 12 )
     expect( endpointbpkcountnotzero ).to.be.within( 8, 12 )
     expect( endpointcpkcountnotzero ).to.be.below( 2 )
+
+    await finished
 
   } )
 
@@ -798,29 +789,27 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
 
     endpointb.bind()
-    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
     endpointc.bind()
-    await new Promise( ( resolve, reject ) => { endpointc.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } )
+
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
 
     let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-
-      }
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-
-      }
+      if( "close" === d.action ) channelc.close()
     } )
 
     let channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
-      if( "close" === d.action ) {
-      }
+      if( "close" === d.action ) done()
     } )
 
     setTimeout( () => expect( channela.direction( { "send": false } ) ).to.be.true , 200 )
@@ -838,8 +827,6 @@ describe( "channel mix", function() {
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
-    channelb.close()
-    channelc.close()
     endpointa.close()
     endpointb.close()
     endpointc.close()
@@ -847,6 +834,8 @@ describe( "channel mix", function() {
     expect( endpointapkcount ).to.be.at.most( 15 )
     expect( endpointbpkcount ).to.be.at.most( 15 )
     expect( endpointcpkcount ).to.be.within( 59, 61 )
+
+    await finished
 
   } )
 } )

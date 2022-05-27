@@ -41,6 +41,9 @@ describe( "STUN", function() {
     /* from project */
     let projecticepwd = "vjwMJC1QaQKkmddLFOWbtmIF"
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     let channel = await projectrtp.openchannel( { 
       "id": "4", 
       "remote": { 
@@ -52,6 +55,8 @@ describe( "STUN", function() {
       "local": {
         "icepwd": projecticepwd /* override our generated one */
       }
+    }, ( d ) => {
+      if( "close" === d.action ) done()
     } )
 
     server.on( "message", function( msg, rinfo ) {
@@ -64,6 +69,8 @@ describe( "STUN", function() {
     server.on( "listening", async function() {
       server.send( stunpacket, channel.local.port, "localhost" )
     } )
+
+    await finished
     
   } )
 
@@ -79,6 +86,9 @@ describe( "STUN", function() {
     /* from project */
     let projecticepwd = "nxIUvOuFnrokdbuiloUXtK51"
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     let channel = await projectrtp.openchannel( { 
       "id": "4", 
       "remote": { 
@@ -90,6 +100,8 @@ describe( "STUN", function() {
       "local": {
         "icepwd": projecticepwd /* override our generated one */
       }
+    }, ( d ) => {
+      if( "close" === d.action ) done()
     } )
 
     const server = dgram.createSocket( "udp4" )
@@ -105,6 +117,8 @@ describe( "STUN", function() {
       server.send( stunpacket, channel.local.port, "localhost" )
     } )
 
+    await finished
+
   } )
 
   it( `Bind Response 1`, async function() {
@@ -118,6 +132,9 @@ describe( "STUN", function() {
     let ourresponse = "0101002c2112a44268725570544b537536656951002000080001f3cde1baa4cf00080014b775fbfe51ab48a871b6e4ca2adeaf63ceb823c480280004b0e3a47a"
     let stunpacket = tobuffer( ourresponse )
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     let channel = await projectrtp.openchannel( { 
       "id": "4", 
       "remote": { 
@@ -129,6 +146,8 @@ describe( "STUN", function() {
       "local": {
         "icepwd": projecticepwd /* override our generated one */
       }
+    }, (d ) => {
+      if( "close" === d.action ) done()
     } )
 
     const server = dgram.createSocket( "udp4" )
@@ -142,6 +161,8 @@ describe( "STUN", function() {
       server.close()
       channel.close()
     }, 200 )
+
+    await finished
 
   } )
 
@@ -157,6 +178,9 @@ describe( "STUN", function() {
     let response = "0101002c2112a4426d553159356c616f374d4758002000080001bf6d73016a24000800143dd0c7760e54aef711d5a767b74211e4855f8c7780280004ad03a421"
     let stunpacket = tobuffer( response )
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     let channel = await projectrtp.openchannel( { 
       "id": "4", 
       "remote": { 
@@ -168,6 +192,8 @@ describe( "STUN", function() {
       "local": {
         "icepwd": projecticepwd /* override our generated one */
       }
+    }, ( d ) => {
+      if( "close" === d.action ) done()
     } )
 
     const server = dgram.createSocket( "udp4" )
@@ -181,6 +207,8 @@ describe( "STUN", function() {
       server.close()
       channel.close()
     }, 200 )
+
+    await finished
 
   } )
 

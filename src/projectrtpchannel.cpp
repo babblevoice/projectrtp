@@ -61,7 +61,6 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   icelocalpwd(),
   iceremotepwd(),
 #ifdef NODE_MODULE
-  jsthis( NULL ),
   cb( NULL ),
 #endif
   /* private */
@@ -225,16 +224,6 @@ void projectrtpchannel::doopen( void ) {
 Clean up
 */
 projectrtpchannel::~projectrtpchannel( void ) {
-
-  /* Close when we are confident all references have been released */
-  this->rtpsocket.close();
-  this->rtcpsocket.close();
-
-  AQUIRESPINLOCK( availableportslock );
-  availableports.push( this->getport() );
-  RELEASESPINLOCK( availableportslock );
-
-  channelscreated--;
 }
 
 /*
@@ -267,8 +256,6 @@ void projectrtpchannel::doclose( void ) {
   this->player = nullptr;
   this->newplaydef = nullptr;
 
-  this->mixer = nullptr;
-  this->mixing = false;
   this->removemixer = true;
 
   /* close our session if we have one */
@@ -283,6 +270,15 @@ void projectrtpchannel::doclose( void ) {
   this->rtpsocket.cancel();
   this->rtcpsocket.cancel();
   this->resolver.cancel();
+
+  this->rtpsocket.close();
+  this->rtcpsocket.close();
+
+  AQUIRESPINLOCK( availableportslock );
+  availableports.push( this->getport() );
+  RELEASESPINLOCK( availableportslock );
+
+  channelscreated--;
 
   postdatabacktojsfromthread( shared_from_this(), "close", this->closereason );
 }
@@ -1969,7 +1965,6 @@ nodtls:
     return NULL;
   }
 
-  p->jsthis = result;
   p->remote( remoteaddress, remoteport, codecval, dtlsmode, vfingerprint );
   uint32_t ssrc = p->requestopen();
 

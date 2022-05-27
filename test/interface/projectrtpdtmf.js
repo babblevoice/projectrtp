@@ -184,7 +184,7 @@ describe( "dtmf", function() {
 
     var receviedpkcount = 0
     var dtmfpkcount = 0
-    clienta.on( "message", function( msg, rinfo ) {
+    clienta.on( "message", function( msg ) {
       receviedpkcount++
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         dtmfpkcount++
@@ -195,7 +195,7 @@ describe( "dtmf", function() {
       }
     } )
 
-    clientb.on( "message", function( msg, rinfo ) {
+    clientb.on( "message", function( msg ) {
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         expect( true ).to.equal( false ) //here = bad
         dtmfpkcount++
@@ -207,17 +207,22 @@ describe( "dtmf", function() {
     this.slow( 2500 )
 
     clienta.bind()
-    await new Promise( ( resolve, reject ) => { clienta.on( "listening", () => resolve()  ) } )
+    await new Promise( ( resolve ) => { clienta.on( "listening", () => resolve()  ) } )
     clientb.bind()
-    await new Promise( ( resolve, reject ) => { clientb.on( "listening", () => resolve()  ) } )
+    await new Promise( ( resolve ) => { clientb.on( "listening", () => resolve()  ) } )
 
     let ouraport = clienta.address().port
     let ourbport = clientb.address().port
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) done()
     } )
 
     expect( channela.mix( channelb ) ).to.be.true
@@ -227,16 +232,17 @@ describe( "dtmf", function() {
       sendpk( i, i*20, channela.local.port, clienta )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 400 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 400 ) } )
     channela.dtmf( "*9F" )
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 600 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 600 ) } )
     channela.close()
-    channelb.close()
 
     clienta.close()
     clientb.close()
 
     expect( dtmfpkcount ).to.equal( 3*3 )
+
+    await finished
   } )
 
   it( `3 channels mixing and request rtp server to send 2833 to one`, async function() {
@@ -289,13 +295,19 @@ describe( "dtmf", function() {
     let ourbport = clientb.address().port
     let ourcport = clientc.address().port
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) channelc.close()
     } )
 
     let channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourcport, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) done()
     } )
 
     expect( channela.mix( channelb ) ).to.be.true
@@ -310,14 +322,14 @@ describe( "dtmf", function() {
     channela.dtmf( "*9ABD" )
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 900 ) } )
     channela.close()
-    channelb.close()
-    channelc.close()
 
     clienta.close()
     clientb.close()
     clientc.close()
 
     expect( dtmfpkcount ).to.equal( 5*3 )
+
+    await finished
   } )
 
 
@@ -430,17 +442,21 @@ describe( "dtmf", function() {
       { action: 'close' }
     ]
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
       expectedmessagecount++
 
       if( "close" === d.action ) {
         expect( expectedmessagecount ).to.equal( 3 )
+        channelb.close()
       }
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
-
+      if( "close" === d.action ) done()
     } )
 
     /* mix */
@@ -470,7 +486,6 @@ describe( "dtmf", function() {
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
-    channelb.close()
     endpointa.close()
     endpointb.close()
 
@@ -478,6 +493,8 @@ describe( "dtmf", function() {
     expect( endpointbpkcount ).to.be.within( 30, 51 )
     expect( dtmfpkcount ).to.equal( 6 )
     expect( expectedmessagecount ).to.equal( 2 )
+
+    await finished
 
   } )
 
@@ -548,21 +565,27 @@ describe( "dtmf", function() {
       { action: 'close' }
     ]
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
       expectedmessagecount++
 
       if( "close" === d.action ) {
         expect( expectedmessagecount ).to.equal( 3 )
+        channelb.close()
       }
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
       expect( d.action).to.not.equal( "telephone-event" )
+      if( "close" === d.action ) channelc.close()
     } )
 
     let channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 97 } }, function( d ) {
       expect( d.action).to.not.equal( "telephone-event" )
+      if( "close" === d.action ) done()
     } )
 
     /* mix */
@@ -593,8 +616,6 @@ describe( "dtmf", function() {
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
-    channelb.close()
-    channelc.close()
     endpointa.close()
     endpointb.close()
     endpointc.close()
@@ -608,6 +629,8 @@ describe( "dtmf", function() {
     expect( dtmfapkcount ).to.equal( 0 )
     expect( dtmfbpkcount ).to.equal( 6 )
     expect( dtmfcpkcount ).to.equal( 6 )
+
+    await finished
 
   } )
 } )

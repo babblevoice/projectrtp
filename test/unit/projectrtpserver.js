@@ -3,15 +3,6 @@
 const expect = require( "chai" ).expect
 const projectrtp = require( "../../index.js" ).projectrtp
 
-before( () => {
-  projectrtp.run()
-} )
-
-after( async () => {
-  await projectrtp.shutdown()
-} )
-
-
 describe( "server", function() {
 
   it( `check stats object`, function( done ) {

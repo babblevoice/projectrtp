@@ -193,6 +193,11 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
   /* Check for channels which have request removal */
   this->channels.remove_if( channelremoverequested );
 
+  if( 0 == this->channels.size() ) {
+    /* We're done */
+    return;
+  }
+
   for( auto& chan: this->channels ) {
     chan->startticktimer();
   }

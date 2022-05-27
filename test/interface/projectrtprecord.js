@@ -159,6 +159,9 @@ describe( "record", function() {
 
     server.bind()
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     let expectedmessagecount = 0
     const expectedmessages = [
       { action: 'record', file: '/tmp/ourstoppedrecording.wav', event: 'recording' },
@@ -172,6 +175,7 @@ describe( "record", function() {
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
         if( "close" === d.action ) {
+          done()
           server.close()
         }
       } )
@@ -193,8 +197,9 @@ describe( "record", function() {
         "finish": true
       } ) , 600 )
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1100 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1100 ) } )
     channel.close()
+    await finished
 
     /* Now test the file */
     let wavinfo = projectrtp.soundfile.info( "/tmp/ourstoppedrecording.wav" )
@@ -223,12 +228,16 @@ describe( "record", function() {
     this.timeout( 1500 )
     this.slow( 1200 )
 
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
     server.bind()
     server.on( "listening", async function() {
 
       channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) {
           server.close()
+          done()
         }
       } )
 
@@ -254,6 +263,8 @@ describe( "record", function() {
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1100 ) } )
     channel.close()
+
+    await finished
 
     /* Now test the file */
     let wavinfo = projectrtp.soundfile.info( "/tmp/ourpausedrecording.wav" )
@@ -537,12 +548,12 @@ describe( "record", function() {
   } )
 
   after( async () => {
-    await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourrecording.wav", ( err ) => { resolve() } ) } )
-    await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourstoppedrecording.wav", ( err ) => { resolve() } ) } )
-    await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourpausedrecording.wav", ( err ) => { resolve() } ) } )
-    await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourpowerrecording.wav", ( err ) => { resolve() } ) } )
-    await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/ourtimeoutpowerrecording.wav", ( err ) => { resolve() } ) } )
-    await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/dualrecordingpower.wav", ( err ) => { resolve() } ) } )
-    await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/dualrecording.wav", ( err ) => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourrecording.wav", ( err ) => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourstoppedrecording.wav", ( err ) => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourpausedrecording.wav", ( err ) => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourpowerrecording.wav", ( err ) => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourtimeoutpowerrecording.wav", ( err ) => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/dualrecordingpower.wav", ( err ) => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/dualrecording.wav", ( err ) => { resolve() } ) } )
   } )
 } )

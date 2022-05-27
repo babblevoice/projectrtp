@@ -49,7 +49,12 @@ describe( "rtpchannel", function() {
     this.timeout( 2000 )
     this.slow( 1500 )
 
-    let channel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": 20000, "codec": 0 } } )
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
+    let channel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": 20000, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) done()
+    } )
 
     expect( channel ).to.be.an( "object" )
     expect( channel.close ).to.be.an( "function" )
@@ -70,6 +75,7 @@ describe( "rtpchannel", function() {
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
     channel.close()
+    await finished
   } )
 
   it( `call create channel echo`, function( done ) {

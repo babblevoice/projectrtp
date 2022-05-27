@@ -140,7 +140,6 @@ public:
   std::string iceremotepwd;
 
 #ifdef NODE_MODULE
-  napi_value jsthis;
   napi_threadsafe_function cb;
 #endif
 
