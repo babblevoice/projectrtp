@@ -71,6 +71,9 @@ public:
   void addfile( soundsoupfile::pointer p, int index );
   size_t size( void ) { return this->files.size(); }
 
+  bool doesinterupt( void ) { return this->interupt; }
+  void setinterupt( bool i ) { this->interupt = i; }
+
 private:
   bool plusone( soundsoupfile::pointer playing );
 
@@ -78,6 +81,7 @@ private:
   int loopcount;
   size_t currentfile;
   bool finished;
+  bool interupt;
   soundsoupfiles files;
 };
 

@@ -572,6 +572,11 @@ bool projectrtpchannel::checkfordtmf( rtppacket *src ) {
         }
 
         if( 1 == pm ) {
+          if( this->player && this->player->doesinterupt() ) {
+            postdatabacktojsfromthread( shared_from_this(), "play", "end", "telephone-event" );
+            this->player = nullptr;
+          }
+
           postdatabacktojsfromthread( shared_from_this(), "telephone-event", std::string( 1, dtmfchars[ event ] ) );
         }
 

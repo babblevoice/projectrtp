@@ -28,6 +28,7 @@ soundsoup::soundsoup( size_t size ) :
   loopcount( 0 ),
   currentfile( 0 ),
   finished( false ),
+  interupt( false ),
   files() {
 
   this->files.resize( size );
@@ -282,6 +283,19 @@ soundsoup::pointer soundsoupcreate( napi_env env, napi_value obj, int channelcod
           int32_t vloop;
           napi_get_value_int32( env, nloop, &vloop );
           if( vloop > 0 ) p->setloop( vloop - 1 );
+        }
+      }
+    }
+
+    if( napi_ok == napi_has_named_property( env, obj, "interupt", &hasit ) && hasit ) {
+      napi_value ninterupt;
+      if( napi_ok == napi_get_named_property( env, obj, "interupt", &ninterupt ) ) {
+        napi_valuetype typeresult;
+        napi_typeof( env, ninterupt, &typeresult );
+        if( napi_boolean == typeresult ) {
+          bool interupt = false;
+          napi_get_value_bool( env, ninterupt, &interupt );
+          p->setinterupt( interupt );
         }
       }
     }
