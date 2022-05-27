@@ -16,13 +16,13 @@ const frequescyhz = 50
 const samplingrate = 8000
 const soundblocks = Math.floor( ( totalseconds * samplingrate ) / 160 )
 
-const sendbuffer = Buffer.concat( [
-  Buffer.alloc( samplingrate*startsilenceseconds, projectrtp.codecx.linear162pcmu( 0 ) ),
-  utils.genpcmutone( tonedurationseconds, frequescyhz, samplingrate, amplitude ),
-  utils.genpcmutone( endsilnceseconds, frequescyhz, samplingrate, lowamplitude )
-] )
-
 module.exports = ( packets = utils.between( 50, 50*60*5 ) ) => {
+
+  const sendbuffer = Buffer.concat( [
+    Buffer.alloc( samplingrate*startsilenceseconds, projectrtp.codecx.linear162pcmu( 0 ) ),
+    utils.genpcmutone( tonedurationseconds, frequescyhz, samplingrate, amplitude ),
+    utils.genpcmutone( endsilnceseconds, frequescyhz, samplingrate, lowamplitude )
+  ] )
 
   utils.log( `Starting echo with dual record for ${packets} packets (power)` )
   const client = dgram.createSocket( "udp4" )
