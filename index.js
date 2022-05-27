@@ -61,40 +61,36 @@ Addon module for an RTP server for audio mixing/recording and playback etc.
 @type {proxy}
 */
 
-
-if( process.platform == "win32" && process.arch == "x64" ) {
-  throw "Platform not currently supported"
-} else if( process.platform == "win32" && process.arch == "ia32" ) {
-  throw "Platform not currently supported"
-}
-
 /* Generate a self signed if none present */
-const keypath = require( "os" ).homedir() + "/.projectrtp/certs/"
-if( !fs.existsSync( keypath + "dtls-srtp.pem" ) ) {
+function gencerts() {
 
-  if ( !fs.existsSync( keypath ) ) fs.mkdirSync( keypath, { recursive: true } )
-  
-  const serverkey = keypath + "server-key.pem"
-  const servercsr = keypath + "server-csr.pem"
-  const servercert = keypath + "server-cert.pem"
-  const combined = keypath + "dtls-srtp.pem"
+  const keypath = require( "os" ).homedir() + "/.projectrtp/certs/"
+  if( !fs.existsSync( keypath + "dtls-srtp.pem" ) ) {
 
-  const openssl = spawnSync( "openssl", [ "genrsa", "-out", serverkey, "4096" ] )
-  if( 0 !== openssl.status ) throw "Failed to genrsa: " + openssl.status
+    if ( !fs.existsSync( keypath ) ) fs.mkdirSync( keypath, { recursive: true } )
+    
+    const serverkey = keypath + "server-key.pem"
+    const servercsr = keypath + "server-csr.pem"
+    const servercert = keypath + "server-cert.pem"
+    const combined = keypath + "dtls-srtp.pem"
 
-  const request = spawnSync( "openssl", [ "req", "-new", "-key", serverkey , "-out", servercsr, "-subj", "/C=GB/CN=projectrtp" ] )
-  if( 0 !== request.status ) throw "Failed to generate csr: " + request.status
+    const openssl = spawnSync( "openssl", [ "genrsa", "-out", serverkey, "4096" ] )
+    if( 0 !== openssl.status ) throw "Failed to genrsa: " + openssl.status
 
-  const sign = spawnSync( "openssl", [ "x509", "-req", "-in", servercsr, "-signkey", serverkey, "-out", servercert ] )
-  if( 0 !== sign.status ) throw "Failed to sign key: " + sign.status
+    const request = spawnSync( "openssl", [ "req", "-new", "-key", serverkey , "-out", servercsr, "-subj", "/C=GB/CN=projectrtp" ] )
+    if( 0 !== request.status ) throw "Failed to generate csr: " + request.status
 
-  let serverkeydata = fs.readFileSync( serverkey )
-  let servercertdata = fs.readFileSync( servercert )
-  fs.writeFileSync( combined, serverkeydata + servercertdata )
-  fs.unlinkSync( serverkey )
-  fs.unlinkSync( servercsr )
-  fs.unlinkSync( servercert )
-  /* we will be left with combined */
+    const sign = spawnSync( "openssl", [ "x509", "-req", "-in", servercsr, "-signkey", serverkey, "-out", servercert ] )
+    if( 0 !== sign.status ) throw "Failed to sign key: " + sign.status
+
+    let serverkeydata = fs.readFileSync( serverkey )
+    let servercertdata = fs.readFileSync( servercert )
+    fs.writeFileSync( combined, serverkeydata + servercertdata )
+    fs.unlinkSync( serverkey )
+    fs.unlinkSync( servercsr )
+    fs.unlinkSync( servercert )
+    /* we will be left with combined */
+  }
 }
 
 /**
@@ -228,7 +224,17 @@ let actualprojectrtp = false
   }
 
   run() {
-    if( !actualprojectrtp ) actualprojectrtp = require( bin )
+
+    if( process.platform == "win32" && process.arch == "x64" ) {
+      throw "Platform not currently supported"
+    } else if( process.platform == "win32" && process.arch == "ia32" ) {
+      throw "Platform not currently supported"
+    }
+
+    if( actualprojectrtp ) return
+
+    gencerts()
+    actualprojectrtp = require( bin )
     actualprojectrtp.run()
 
     this.dtls = actualprojectrtp.dtls
