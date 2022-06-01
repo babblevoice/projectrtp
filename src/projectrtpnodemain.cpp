@@ -165,6 +165,11 @@ void initserver( napi_env env, napi_value &result ) {
 NAPI_MODULE_INIT() {
   napi_value result;
 
+  std::atomic_bool test;
+  if( !test.is_lock_free() ) {
+    fprintf( stderr, "Warning - performance will be poor as atomic variables are not available\n" );
+  }
+
   srand( time( NULL ) );
 
   dtlsinit();
