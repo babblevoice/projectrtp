@@ -1,0 +1,3 @@
+[submodule "libilbc"]
+	path = libilbc
+	url = https://github.com/TimothyGu/libilbc
