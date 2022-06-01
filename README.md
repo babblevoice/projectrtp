@@ -54,12 +54,18 @@ To build the test executable run `make` from the src directory.
 
 ## Dependencies
 
-* ilbc-devel
 * spandsp-devel
 * boost
 * gnutls
 * libsrtp
 * openssl (for now the node scripts use openssl to generate a self signed cert for DTLS)
+
+libilbc is included as a git submodule and requires building. This needs pulling which also
+has a submodule so (although this is handled inteh Dockerfile if you are building an image): 
+
+```
+git submodule update --init --recursive
+```
 
 ### Fedora
 
@@ -92,7 +98,31 @@ node-gyp build --debug
 
 ## Docker/Podman
 
-In the root is the script buildimage and Dockerfile. We pull from node latest and alpine Linux. The default image which can be used as a base or on its own.
+Podman has some shortfalls. Remove and install docker.
+
+```
+docker build .
+```
+
+### Multi arch targets
+
+Qemu emulators are needed
+
+```
+docker run -it --rm --privileged tonistiigi/binfmt --install all
+```
+
+Or in one shot and build it. This create a docker image and container buildkit. 
+```
+docker buildx create --name rtpbuilder --use --bootstrap --platform linux/amd64,linux/arm64
+```
+
+Then to build, and push to Docker hub:
+```
+docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.0.0 . --push
+```
+
+### Runing
 
 The enviroment variable HOST should contain the host address of the control server - its default is 127.0.0.1. The variable PORT contains the port number to communicate over - with a default of 9002.
 
