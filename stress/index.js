@@ -1,5 +1,4 @@
 
-const expect = require( "chai" ).expect
 const fs = require( "fs" )
 
 const projectrtp = require( "../index.js" ).projectrtp
@@ -21,11 +20,12 @@ folder is for.
 We have a problem with "we should never get here - we have no more buffer available on port"
 */
 
-let maxnumberofsessions = 200
-let secondsruntime = 3600*12
+const maxnumberofsessions = 300
+const secondsruntime = 3600*12
+const minpkcalllength = 50
+const maxpkcalllength = ( 50 * 60 ) * 5 /* 50 pks per second, 60 Sec per Min, n minutes */
 
-
-let rununtil = Math.floor( Date.now() / 1000 ) + secondsruntime
+const rununtil = Math.floor( Date.now() / 1000 ) + secondsruntime
 
 projectrtp.run()
 
@@ -37,7 +37,7 @@ const run = async () => {
 
   while ( rununtil > Math.floor( Date.now() / 1000 ) ) {
     if( utils.currentchannelcount() < maxnumberofsessions ) {
-      scenarios[ utils.between( 0, scenarios.length ) ]()
+      scenarios[ utils.between( 0, scenarios.length ) ]( utils.between( minpkcalllength, maxpkcalllength ) )
     }
 
     await utils.waitbetween( 0, 1000 )
