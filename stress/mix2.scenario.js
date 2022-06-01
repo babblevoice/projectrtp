@@ -10,7 +10,7 @@ const possiblecodecs = [ 0, 8, 9, 97 ]
   clienta ---> channela ---> mix ---> channelb ---> clientb (and we echo back here)
 */
 
-module.exports = async ( packets = utils.between( 50, 50*60*5 ) ) => {
+module.exports = async ( packets ) => {
 
   utils.log( `Create 2 channels and mix ${packets} packets` )
 

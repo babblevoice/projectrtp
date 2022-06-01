@@ -4,7 +4,7 @@ const fs = require( "fs" )
 const dgram = require( "dgram" )
 const utils = require( "./utils.js" )
 
-module.exports = ( packets = utils.between( 50, 50*60*5 ) ) => {
+module.exports = ( packets ) => {
 
   utils.log( `Starting echo with dual record for ${packets} packets (pause stop)` )
   const client = dgram.createSocket( "udp4" )

@@ -16,7 +16,7 @@ const frequescyhz = 50
 const samplingrate = 8000
 const soundblocks = Math.floor( ( totalseconds * samplingrate ) / 160 )
 
-module.exports = ( packets = utils.between( 50, 50*60*5 ) ) => {
+module.exports = ( packets ) => {
 
   const sendbuffer = Buffer.concat( [
     Buffer.alloc( samplingrate*startsilenceseconds, projectrtp.codecx.linear162pcmu( 0 ) ),
