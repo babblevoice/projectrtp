@@ -8,7 +8,15 @@
   },
   "scripts": {
     "test": "./node_modules/mocha/bin/mocha --recursive --check-leaks",
-    "docs": "jsdoc -c jsdoc.conf.json"
+    "docs": "jsdoc -c jsdoc.conf.json",
+    "stress": "node stress/index.js",
+    "build:dev": "cd src; node-gyp build --debug",
+    "build": "cd src; node-gyp build",
+    "configure:dev": "cd src; node-gyp configure --debug",
+    "configure": "cd src; node-gyp configure",
+    "rebuild:dev": "cd src; node-gyp configure --debug; node-gyp rebuild --debug",
+    "rebuild": "cd src; node-gyp configure; node-gyp rebuild",
+    "clean": "cd src; node-gyp clean"
   },
   "repository": {
     "type": "git",
