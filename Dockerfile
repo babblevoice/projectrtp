@@ -1,21 +1,23 @@
 
-# docker build . -t <your username>/node-web-app
+# docker build . -t <your username>/projectrtp
 
-#FROM node:16-bullseye-slim
 FROM node:16-alpine as builder
+
+RUN npm -g install node-gyp
 
 WORKDIR /usr/local/lib/node_modules/projectrtp
 COPY . .
 
 RUN apk add --no-cache \
-    --virtual .gyp python3 make g++ boost-dev \
-    spandsp-dev tiff-dev gnutls-dev libsrtp-dev libc6-compat git cmake abseil-cpp
+    python3 git make g++ boost-dev \
+    spandsp-dev tiff-dev gnutls-dev libsrtp-dev libc6-compat cmake
 
-WORKDIR /usr/src/
-RUN wget https://github.com/TimothyGu/libilbc/releases/download/v3.0.4/libilbc-3.0.4.tar.gz; \
-    tar xvzf libilbc-3.0.4.tar.gz; \
-    cd libilbc-3.0.4; \
-    cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; cmake --build .; cmake --install .
+RUN git submodule update --init --recursive
+
+WORKDIR /usr/local/lib/node_modules/projectrtp/libilbc
+RUN cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; \
+    cmake --build .; \
+    cmake --install .
 
 # build projectrtp addon
 WORKDIR /usr/local/lib/node_modules/projectrtp/src
@@ -25,15 +27,15 @@ FROM node:16-alpine as app
 
 RUN apk add --no-cache \
     spandsp tiff gnutls libsrtp libc6-compat openssl ca-certificates
-# ilbc
 
-WORKDIR /usr/src/app
-COPY --from=builder /usr/local/lib/node_modules/projectrtp/examples/* ./
+RUN npm -g install node-gyp
+
 COPY --from=builder /usr/local/lib/node_modules/projectrtp /usr/local/lib/node_modules/projectrtp
 COPY --from=builder /lib/libilbc* /lib/
 
-RUN npm install /usr/local/lib/node_modules/projectrtp/
+WORKDIR /usr/local/lib/node_modules/projectrtp
+RUN npm install
 
 EXPOSE 10000-20000
-CMD [ "node", "simplenode.js" ]
+CMD [ "node", "/usr/local/lib/node_modules/projectrtp/examples/simplenode.js" ]
 
