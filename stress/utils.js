@@ -101,7 +101,15 @@ module.exports.sendpk = ( sn, sendtime, dstport, dgramsocket, ssrc = 25, pklengt
          ] ),
         payload ] )
 
-      dgramsocket.send( rtppacket, dstport, "localhost" )
+      try{
+        dgramsocket.send( rtppacket, dstport, "localhost" )
+      } catch( e ) { 
+        /* TODO - we are catching this becuase of a ERR_SOCKET_DGRAM_NOT_RUNNING exception
+        this needs investigating */
+        console.error( e ) 
+        module.exports.cancelremainingscheduled( dgramsocket )
+      }
+      
     }, sendtime )
   )
 }
