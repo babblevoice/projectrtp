@@ -267,8 +267,6 @@ void projectrtpchannel::doclose( void ) {
   }
 
   this->recorders.clear();
-  this->rtpsocket.cancel();
-  this->rtcpsocket.cancel();
   this->resolver.cancel();
 
   this->rtpsocket.close();
@@ -693,96 +691,95 @@ which should mean (not very well documented) that the read will not block.
 */
 void projectrtpchannel::readsomertp( void ) {
 
-  this->rtpsocket.cancel();
-  this->rtpsocket.async_wait(
-    boost::asio::ip::tcp::socket::wait_read,
-    [ this ]( const boost::system::error_code& error ) {
+  if( !this->active || this->_requestclose ) return;
 
-      if( boost::asio::error::operation_aborted == error ) return;
-      if( !this->active ) return;
+  /* Grab a buffer */
+  AQUIRESPINLOCK( this->rtpbufferlock );
+  rtppacket* buf = this->inbuff->reserve();
+  RELEASESPINLOCK( this->rtpbufferlock );
 
-      AQUIRESPINLOCK( this->rtpdtlslock );
-      dtlssession::pointer currentdtlssession = this->rtpdtls;
-      RELEASESPINLOCK( this->rtpdtlslock );
+  if( nullptr == buf ) {
+    this->requestclose( "error.nobuffer" );
+    return;
+  }
 
-      if( nullptr != currentdtlssession &&
-          currentdtlssession->rtpdtlshandshakeing ) {
-        /* DTLS Handshake */
-        uint8_t dtlsbuf[ 1500 ];
-        auto bytesrecvd = this->rtpsocket.receive_from( boost::asio::buffer( dtlsbuf, sizeof( dtlsbuf ) ), this->rtpsenderendpoint );
-        if( !this->handlestun( dtlsbuf, bytesrecvd ) ) {
-          AQUIRESPINLOCK( this->rtpdtlslock );
-          currentdtlssession->write( dtlsbuf, bytesrecvd );
-          RELEASESPINLOCK( this->rtpdtlslock );
-        }
-        this->readsomertp();
-      } else {
-        /* RTP */
-        /* Grab a buffer */
-        AQUIRESPINLOCK( this->rtpbufferlock );
-        rtppacket* buf = this->inbuff->reserve();
-        RELEASESPINLOCK( this->rtpbufferlock );
-        if( nullptr == buf ) {
-          this->requestclose( "error.nobuffer" );
+  this->rtpsocket.async_receive_from(
+  boost::asio::buffer( buf->pk, RTPMAXLENGTH  ), this->rtpsenderendpoint,
+    [ this, buf ]( boost::system::error_code ec, std::size_t bytesrecvd ) {
+
+      if( ec ) return;
+      if( !this->active || this->_requestclose ) return;
+
+      if ( bytesrecvd > 0 && bytesrecvd <= RTPMAXLENGTH ) {
+
+        if( this->handlestun( buf->pk, bytesrecvd ) ) {
+          this->readsomertp();
           return;
         }
 
-        auto bytesrecvd = this->rtpsocket.receive_from( boost::asio::buffer( buf->pk, RTPMAXLENGTH ), this->rtpsenderendpoint );
+        AQUIRESPINLOCK( this->rtpdtlslock );
+        dtlssession::pointer currentdtlssession = this->rtpdtls;
+        RELEASESPINLOCK( this->rtpdtlslock );
 
-        if( RTPMAXLENGTH == bytesrecvd ) {
-          // Too large
-          this->receivedpkcount++;
-          this->receivedpkskip++;
+        if( nullptr != currentdtlssession &&
+            currentdtlssession->rtpdtlshandshakeing ) {
+
+          AQUIRESPINLOCK( this->rtpdtlslock );
+          currentdtlssession->write( buf->pk, bytesrecvd );
+          RELEASESPINLOCK( this->rtpdtlslock );
+          
           this->readsomertp();
-        } else if( bytesrecvd > 0 ) {
-
-          if( this->handlestun( buf->pk, bytesrecvd ) ) {
-            return;
-          }
-
-          /* We should still count packets we are instructed to drop */
-          this->receivedpkcount++;
-
-          if( !this->recv ) {
-            if( bytesrecvd > 0 && this->active ) {
-              this->readsomertp();
-            }
-            return;
-          }
-
-          this->tickswithnortpcount = 0;
-
-          if( !this->receivedrtp ) {
-            this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
-            this->receivedrtp = true;
-            this->ssrcin = buf->getssrc();
-          } else {
-            /* After the first packet - we only accept data from the verified source */
-            if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint ) {
-              this->readsomertp();
-              return;
-            }
-
-            if( buf->getssrc() != this->ssrcin ) {
-              this->receivedpkskip++;
-              this->readsomertp();
-              return;
-            }
-          }
-
-          buf->length = bytesrecvd;
-
-          AQUIRESPINLOCK( this->rtpbufferlock );
-          this->inbuff->push();
-          RELEASESPINLOCK( this->rtpbufferlock );
-
-
-          this->readsomertp();
-        } else {
-          this->receivedpkcount++;
-          this->receivedpkskip++;
+          return;
         }
+
+        /* RTP - TODO check for MUXED RTCP */
+        /* We should still count packets we are instructed to drop */
+        this->receivedpkcount++;
+
+        if( !this->recv ) {
+          if( bytesrecvd > 0 ) {
+            this->readsomertp();
+          }
+          return;
+        }
+
+        /* Sanity checking TODO - check size for the CODEC type*/
+        if( bytesrecvd > 200 ) {
+          this->receivedpkskip++;
+          this->readsomertp();
+          return;
+        }
+
+        this->tickswithnortpcount = 0;
+
+        if( !this->receivedrtp ) {
+          this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
+          this->receivedrtp = true;
+          this->ssrcin = buf->getssrc();
+        } else {
+          /* After the first packet - we only accept data from the verified source */
+          if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint ) {
+            this->readsomertp();
+            return;
+          }
+
+          if( buf->getssrc() != this->ssrcin ) {
+            this->receivedpkskip++;
+            this->readsomertp();
+            return;
+          }
+        }
+
+        buf->length = bytesrecvd;
+
+        AQUIRESPINLOCK( this->rtpbufferlock );
+        this->inbuff->push();
+        RELEASESPINLOCK( this->rtpbufferlock );
+
       }
+
+      this->readsomertp();
+
     } );
 }
 
@@ -1740,7 +1737,9 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
 
   /* our final call - allow js to clean up */
   if( "close" == ev->event ) {
-    napi_release_threadsafe_function( p->cb, napi_tsfn_abort );
+    if( napi_ok != napi_release_threadsafe_function( p->cb, napi_tsfn_abort ) ) {
+      fprintf( stderr, "Error releasing threadsafe function\n" );
+    }
   }
 
   delete ev;

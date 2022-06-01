@@ -249,6 +249,32 @@ void projectchannelmux::go( void ) {
                                         boost::asio::placeholders::error ) );
 }
 
+/**
+ * @brief Compare left and right for underlying pointer equality.
+ * Used for list.unique()
+ * 
+ * @param l 
+ * @param r 
+ * @return true 
+ * @return false 
+ */
+static bool underlyingpointerequal( projectrtpchannelptr l, projectrtpchannelptr r ){
+  return l.get() == r.get();
+}
+
+/**
+ * @brief Used for sort - compare the underlying pointer so we can then use unique to remove
+ * duplicates.
+ * 
+ * @param l 
+ * @param r 
+ * @return true 
+ * @return false 
+ */
+static bool underlyingpointercmp( projectrtpchannelptr l, projectrtpchannelptr r ){
+  return l.get() > r.get();
+}
+
 /*
 Check for new channels to add to the mix in our own thread.
 */
@@ -257,16 +283,12 @@ void projectchannelmux::checkfornewmixes( void ) {
   AQUIRESPINLOCK( this->newchannelslock );
 
   for ( auto const& newchan : this->newchannels ) {
-
-    /* Don't add duplicates */
-    for( auto& checkchan: this->channels ) {
-      if( checkchan.get() == newchan.get() ) goto contin;
-    }
-
     this->channels.push_back( newchan );
-    contin:;
   }
   this->newchannels.clear();
+
+  this->channels.sort( underlyingpointercmp );
+  this->channels.unique( underlyingpointerequal );
 
   RELEASESPINLOCK( this->newchannelslock );
 }

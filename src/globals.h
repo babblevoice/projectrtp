@@ -25,9 +25,8 @@
 /* Need to double check max RTP length with variable length header - there
 could be a larger length with our CODECs */
 
-/* this maybe breached if a stupid number of csrc count is high */
-#define RTPMAXLENGTH 200
-#define L16MAXLENGTH ( RTPMAXLENGTH * 2 )
+/* MAX RTP Length - MTU of UDP */
+#define RTPMAXLENGTH 1500
 #define RTCPMAXLENGTH 200
 
 /*
