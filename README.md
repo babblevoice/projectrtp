@@ -32,6 +32,10 @@ As part of this, we maintain jsdoc documentation to document our public interfac
 
 Only when we release version 1.0.0 will the public API be settled.
 
+## Docker
+
+Public docker images for amd64 and arm64 available on [Docker Hub](https://hub.docker.com/repository/docker/tinpotnick/projectrtp).
+
 ## Tests
 
 We now have 3 different sets of tests.
@@ -119,6 +123,7 @@ docker buildx create --name rtpbuilder --use --bootstrap --platform linux/amd64,
 
 Then to build, and push to Docker hub:
 ```
+docker buildx prune
 docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.0.0 . --push
 ```
 
