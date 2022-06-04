@@ -8,7 +8,6 @@ const dgram = require( "dgram" )
 /**
  * Use wireshark to copy->as hex stream for the input to this function to create a JS Buffer.
  * @param { string } str 
- * @returns 
  */
 function tobuffer( str ) {
 
