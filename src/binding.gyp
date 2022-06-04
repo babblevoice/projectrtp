@@ -5,6 +5,7 @@
       "defines": [ "NODE_MODULE", "BOOST_NO_EXCEPTIONS" ],
       "cflags_cc": [
         "-O3",
+        "-g",
         "-Wall",
         "-fstack-protector-all",
         "-std=c++17",
