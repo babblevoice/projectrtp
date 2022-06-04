@@ -255,11 +255,15 @@ void projectrtpchannel::doclose( void ) {
     postdatabacktojsfromthread( shared_from_this(), "play", "end", "channelclosed" );
   }
 
+  AQUIRESPINLOCK( this->newplaylock );
   this->player = nullptr;
   this->newplaydef = nullptr;
+  RELEASESPINLOCK( this->newplaylock );
 
   /* close our session if we have one */
+  AQUIRESPINLOCK( this->rtpdtlslock );
   this->rtpdtls = nullptr;
+  RELEASESPINLOCK( this->rtpdtlslock );
 
   /* close up any remaining recorders */
   for( auto& rec: this->recorders ) {
