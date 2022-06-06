@@ -20,10 +20,10 @@ folder is for.
 We have a problem with "we should never get here - we have no more buffer available on port"
 */
 
-const maxnumberofsessions = 300
+const maxnumberofsessions = 200
 const secondsruntime = 3600*12
-const minpkcalllength = 50
-const maxpkcalllength = ( 50 * 60 ) * 5 /* 50 pks per second, 60 Sec per Min, n minutes */
+const minmscalllength = 50
+const maxmscalllength = 1000 * 60 * 10 /* 1000 mS per second 60 seconds per minute , n minutes */
 
 const rununtil = Math.floor( Date.now() / 1000 ) + secondsruntime
 
@@ -32,12 +32,14 @@ projectrtp.run()
 const run = async () => {
 
   /* generate some useful files */
-  await new Promise( ( resolve, reject ) => { fs.unlink( "/tmp/uksounds.wav", ( err ) => { resolve() } ) } )
+  await fs.promises.unlink( "/tmp/ukringing.wav" ).catch( ()=>{} )
+  await fs.promises.unlink( "/tmp/powerdetectprofile.wav" ).catch( ()=>{} )
   projectrtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000", "/tmp/ukringing.wav" )
+  projectrtp.tone.generate( "0/800*0.5:700/2000", "/tmp/powerdetectprofile.wav" )
 
   while ( rununtil > Math.floor( Date.now() / 1000 ) ) {
     if( utils.currentchannelcount() < maxnumberofsessions ) {
-      scenarios[ utils.between( 0, scenarios.length ) ]( utils.between( minpkcalllength, maxpkcalllength ) )
+      scenarios[ utils.between( 0, scenarios.length ) ]( utils.between( minmscalllength, maxmscalllength ) )
     }
 
     await utils.waitbetween( 0, 1000 )

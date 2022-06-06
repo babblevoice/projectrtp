@@ -1,70 +1,63 @@
 
 const projectrtp = require( "../index.js" ).projectrtp
-const fs = require( "fs" )
-const dgram = require( "dgram" )
 const utils = require( "./utils.js" )
 const expect = require( "chai" ).expect
 
-const possiblecodecs = [ 0, 8, 9, 97 ]
 /*
   clienta ---> channela ---> mix ---> channelb ---> clientb (and we echo back here)
 */
 
-module.exports = async ( packets ) => {
+module.exports = async ( mstimeout ) => {
 
-  utils.log( `Create 2 channels and mix ${packets} packets then unmix` )
+  utils.log( `Create 2 channels and mix then unmix for ${mstimeout} mS` )
 
-  let bcodec = possiblecodecs[ utils.between( 0, possiblecodecs.length ) ]
+  let acodec = utils.randcodec()
+  let bcodec = utils.randcodec()
 
-  const clienta = dgram.createSocket( "udp4" )
-  clienta.bind()
-  await new Promise( ( resolve, reject ) => { clienta.on( "listening", function() { resolve() } ) } )
-  const clientaport = clienta.address().port
-
-  const clientb = dgram.createSocket( "udp4" )
-  clientb.bind()
-  await new Promise( ( resolve, reject ) => { clientb.on( "listening", function() { resolve() } ) } )
-  const clientbport = clientb.address().port
-
-  let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clientaport, "codec": 0 } }, function( d ) {
+  const clienta = await projectrtp.openchannel( {}, ( d ) => {
     if( "close" === d.action ) {
-      utils.cancelremainingscheduled( clienta )
-      clienta.close()
-      utils.logclosechannel( `Mix 2 for ${packets} packets completed with reason '${d.reason}'` )
+      channela.close()
+      utils.logclosechannel( `Mix 2 (clienta) for ${mstimeout} mS completed with reason '${d.reason}'` )
     }
   } )
   utils.lognewchannel()
 
-  let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clientbport, "codec": bcodec } }, function( d ) {
+  let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clienta.local.port, "codec": acodec } }, ( d ) => {
     if( "close" === d.action ) {
-      utils.cancelremainingscheduled( clientb )
-      clientb.close()
-      utils.logclosechannel( `Mix 2 for ${packets} packets completed with reason '${d.reason}'` )
+      utils.logclosechannel( `Mix 2 for ${mstimeout} mS completed with reason '${d.reason}'` )
+    }
+  } )
+  clienta.remote( { "address": "localhost", "port": channela.local.port, "codec": acodec } )
+  utils.lognewchannel()
+
+  const clientb = await projectrtp.openchannel( {}, ( d ) => {
+    if( "close" === d.action ) {
+      channelb.close()
+      utils.logclosechannel( `Mix 2 (clientb) for ${mstimeout} mS completed with reason '${d.reason}'` )
     }
   } )
   utils.lognewchannel()
 
-  /* echo back */
-  clientb.on( "message", function( msg, rinfo ) {
-    clientb.send( msg, channelb.local.port, "localhost" )
+  let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clientb.local.port, "codec": bcodec } }, ( d ) => {
+    if( "close" === d.action ) {
+      utils.logclosechannel( `Mix 2 for ${mstimeout} mS completed with reason '${d.reason}'` )
+    }
   } )
+  clientb.remote( { "address": "localhost", "port": channelb.local.port, "codec": bcodec } )
+  utils.lognewchannel()
 
+  expect( clientb.echo() ).to.be.true
   expect( channela.mix( channelb ) ).to.be.true
+  expect( clienta.play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
 
-  let payload = Buffer.alloc( 172 - 12 ).fill( projectrtp.codecx.linear162pcmu( 0 ) )
-  let ssrc = utils.between( 10, 100 )
-  /* send a packet every 20mS x 50 */
-  for( let i = 0;  i < packets; i ++ ) {
-    utils.sendpk( i, i * 20, channela.local.port, clienta, ssrc, payload )
-  }
+  await new Promise( ( r ) => { setTimeout( () => r(), mstimeout / 2 ) } )
 
-  await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), packets / 2 * 20 ) } )
-
-  channelb.close()
+  clientb.close()
+  channela.unmix()
   channela.echo()
 
-  await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), packets / 2 * 20 ) } )
+  await new Promise( ( r ) => { setTimeout( () => r(), mstimeout / 2 ) } )
 
-  channela.close()
+  clienta.close()
 
 }

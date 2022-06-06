@@ -3,54 +3,53 @@
 
 const projectrtp = require( "../index.js" ).projectrtp
 const fs = require( "fs" )
-const dgram = require( "dgram" )
 const utils = require( "./utils.js" )
 
-module.exports = ( packets ) => {
-  utils.log( `Starting playback with record for ${packets} packets` )
-  const client = dgram.createSocket( "udp4" )
+/*
+  clienta (echo) ---> channela (play/record)
+*/
 
-  let recording = "/tmp/" + utils.mktemp() + ".wav"
+module.exports = async ( mstimeout ) => {
 
-  client.bind()
-  client.on( "listening", async function() {
+  const acodec = utils.randcodec()
 
-    let ourport = client.address().port
+  utils.log( `Starting playback with record for ${mstimeout} mS` )
+  let recording = utils.mktempwav()
 
-    let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, async function( d ) {
-      if( "close" === d.action ) {
-        utils.cancelremainingscheduled( client )
-        client.close()
-        utils.logclosechannel( `Playback with record for ${packets} packets completed with reason '${d.reason}'` )
-        await new Promise( ( resolve, reject ) => { fs.unlink( recording, ( err ) => { resolve() } ) } )
-      }
-    } )
-    utils.lognewchannel()
-
-    let receviedpkcount = 0
-    client.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
-      if( receviedpkcount >= packets ) {
-        channel.close()
-      }
-    } )
-
-    await utils.waitbetween( 0, 500 )
-    channel.play( {
-      "loop": true,
-      "files": [
-        { "wav": "/tmp/ukringing.wav" }
-      ]
-    } )
-
-    await utils.waitbetween( 0, 500 )
-    channel.record( {
-      "file": recording
-    } )
-
-    /* send a packet every 20mS x 50 */
-    for( let i = 0;  i < packets; i ++ ) {
-      utils.sendpk( i, i * 20, channel.local.port, client )
+  const clienta = await projectrtp.openchannel( {}, ( d ) => {
+    if( "close" === d.action ) {
+      channela.close()
+      utils.logclosechannel( `Mix 2 (clienta) for ${mstimeout} mS completed with reason '${d.reason}'` )
     }
   } )
+  utils.lognewchannel()
+
+  const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clienta.local.port, "codec": acodec } }, async ( d ) => {
+    if( "close" === d.action ) {
+      utils.logclosechannel( `Playback with record for ${mstimeout} mS completed with reason '${d.reason}'` )
+      await fs.promises.unlink( recording ).catch( () => {} )
+    }
+  } )
+  clienta.remote( { "address": "localhost", "port": channela.local.port, "codec": acodec } )
+  clienta.echo()
+  utils.lognewchannel()
+
+  setTimeout( () => {
+    clienta.close()
+  }, mstimeout )
+
+  await utils.waitbetween( 0, 500 )
+  channela.play( {
+    "loop": true,
+    "files": [
+      { "wav": "/tmp/ukringing.wav" }
+    ]
+  } )
+
+  await utils.waitbetween( 0, 500 )
+  channela.record( {
+    "file": recording
+  } )
+
+
 }
