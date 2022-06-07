@@ -111,7 +111,7 @@ describe( "record", function() {
       }
     } )
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1100 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1100 ) } )
     channel.close()
 
     /* Now test the file */
@@ -548,7 +548,7 @@ describe( "record", function() {
   } )
 
   after( async () => {
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourrecording.wav", ( err ) => { resolve() } ) } )
+    //await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourrecording.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourstoppedrecording.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourpausedrecording.wav", ( err ) => { resolve() } ) } )
     await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourpowerrecording.wav", ( err ) => { resolve() } ) } )
