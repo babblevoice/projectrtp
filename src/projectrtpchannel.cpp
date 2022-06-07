@@ -479,7 +479,6 @@ void projectrtpchannel::checkfornewrecorders( void ) {
 
     newrec->sfile = soundfilewriter::create(
         newrec->file,
-        soundfile::wavformatfrompt( this->codec ),
         newrec->numchannels,
         soundfile::getsampleratefrompt( this->codec ) );
 

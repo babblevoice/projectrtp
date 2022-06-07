@@ -22,7 +22,7 @@
 #include "projectrtpcodecx.h"
 
 /* number of soundfile async buffers */
-#define SOUNDFILENUMBUFFERS 2
+#define SOUNDFILENUMBUFFERS 8
 #define MAXNUMBEROFCHANNELS 2
 
 typedef struct {
@@ -60,7 +60,7 @@ typedef struct {
 
 class soundfile {
 public:
-  soundfile();
+  soundfile( int fromfile = -1 );
   ~soundfile();
 
   soundfile( const soundfile& ) = delete;              // copy ctor
@@ -72,8 +72,6 @@ public:
   /* Gets the current wav file format and converts to equiv RTP payload type */
   uint8_t getwavformattopt( void );
 
-  /* converts from values like PCMUPAYLOADTYPE to WAVE_FORMAT_MULAW */
-  static uint16_t wavformatfrompt( uint8_t pt );
   static int getsampleratefrompt( uint8_t pt );
   uint32_t getwriteduration( void ); /* Return umber of mS since start of recording (recorded data) */
 
@@ -128,11 +126,11 @@ private:
 
 class soundfilewriter : public soundfile {
 public:
-  soundfilewriter( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
+  soundfilewriter( std::string &url, int16_t numchannels, int32_t samplerate );
   ~soundfilewriter();
 
   typedef std::shared_ptr< soundfilewriter > pointer;
-  static pointer create( std::string &url, uint16_t audio_format, int16_t numchannels, int32_t samplerate );
+  static pointer create( std::string &url, int16_t numchannels, int32_t samplerate );
 
   soundfilewriter( const soundfilewriter& ) = delete;              // copy ctor
   soundfilewriter( soundfilewriter&& ) = delete;                   // move ctor
