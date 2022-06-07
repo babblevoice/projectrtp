@@ -5,6 +5,7 @@ const projectrtp = require( "../index.js" ).projectrtp
 const utils = require( "./utils.js" )
 
 let scenarios = []
+scenarios.push( require( "./dtls.scenario.js" ) )
 scenarios.push( require( "./echorecord.scenario.js" ) )
 scenarios.push( require( "./playbackrecord.scenario.js" ) )
 scenarios.push( require( "./echodualrecordpower.scenario.js" ) )
