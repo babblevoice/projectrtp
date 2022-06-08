@@ -244,7 +244,7 @@ void dtlssession::getkeys( void ) {
   srtp_crypto_policy_set_aes_cm_128_hmac_sha1_80( &this->srtrecvppolicy.rtp );
 	srtp_crypto_policy_set_aes_cm_128_hmac_sha1_80( &this->srtrecvppolicy.rtcp );
 
-#if 0
+#if 1
   /* TODO - do we switch ? */
   if( dtlssession::act == this->m ) {
     this->srtsendppolicy.ssrc.type = ssrc_any_outbound; // or ssrc_specific?
@@ -262,11 +262,13 @@ void dtlssession::getkeys( void ) {
   }
 #endif
 
+#if 0
   this->srtsendppolicy.ssrc.type = ssrc_any_outbound;
   this->srtsendppolicy.key = this->serverkeysalt;
 
   this->srtrecvppolicy.ssrc.type = ssrc_any_inbound;
   this->srtrecvppolicy.key = this->clientkeysalt;
+#endif
 
   auto err = srtp_create( &this->srtpsendsession, &this->srtsendppolicy );
   if( err ) {
@@ -423,7 +425,7 @@ bool dtlssession::unprotect( rtppacket *pk ) {
     }
     
   }
-printf("unprotect ok\n");
+
   pk->length = length;
   return true;
 }

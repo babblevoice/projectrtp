@@ -1491,30 +1491,29 @@ static napi_value channelremote( napi_env env, napi_callback_info info ) {
           napi_ok != napi_get_named_property( env, nfingerprint, "hash", &nhash ) ) goto nodtls;
 
       if( napi_ok == napi_get_value_string_utf8( env, nhash, vfingerprint, sizeof( vfingerprint ), &bytescopied ) ) {
-        if( 95 == bytescopied ) {
+        if( 95 != bytescopied ) {
+          goto nodtls;
+        }
+      }
+
+      if( napi_ok == napi_has_named_property( env, dtls, "mode", &hasit ) &&
+          hasit &&
+          napi_ok == napi_get_named_property( env, dtls, "mode", &nactpass ) ) {
+        if( napi_ok == napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) {
+          if( std::string( vactpass ) == "passive" ) {
+            /* If they are pass - we are act */
+            dtlsmode = dtlssession::act;
+          } else {
+            dtlsmode = dtlssession::pass;
+          }
           dtlsenabled = true;
         }
       }
 
-nodtls:
+      nodtls:
       if( dtlsrequired && !dtlsenabled ) {
         napi_throw_error( env, "1", "DTLS requested but not possible" );
         return NULL;
-      }
-
-      if( napi_ok == napi_get_value_string_utf8( env, nfingerprint, vfingerprint, sizeof( vfingerprint ), &bytescopied ) ) {
-        if( napi_ok == napi_has_named_property( env, dtls, "mode", &hasit ) &&
-            hasit &&
-            napi_ok == napi_get_named_property( env, dtls, "mode", &nactpass ) ) {
-          if( napi_ok == napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) {
-            if( std::string( vactpass ) == "passive" ) {
-              /* If they are pass - we are act */
-              dtlsmode = dtlssession::act;
-            } else {
-              dtlsmode = dtlssession::pass;
-            }
-          }
-        }
       }
     }
   }
