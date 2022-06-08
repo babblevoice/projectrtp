@@ -8,6 +8,9 @@
 #include <atomic>
 #include <thread>
 
+#include <sys/time.h>
+#include <sys/resource.h>
+
 #include <boost/asio.hpp>
 #include <boost/exception/diagnostic_information.hpp>
 
@@ -42,6 +45,11 @@ static void ontimer( const boost::system::error_code& e ) {
 }
 
 static void workerbee( void ) {
+
+  if( 0 != setpriority( PRIO_PROCESS, 0, -20 ) ) {
+    std::cerr << "Failed to set high priority for process" << std::endl;
+  }
+  
   while( running ) {
     workercontext.run();
   }
