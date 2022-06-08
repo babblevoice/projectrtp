@@ -67,11 +67,24 @@ describe( "dtls", function() {
     let finished = new Promise( ( r ) => { done = r } )
 
     let channela = await projectrtp.openchannel( {}, function( d ) {
-      if( "close" === d.action ) channelb.close()
+      console.log(d)
+      if( "close" === d.action ) {
+        expect( d.reason ).to.equal( "requested" )
+        expect( d.stats.in.count ).to.be.above( 80 )
+        expect( d.stats.in.skip ).to.equal( 0 )
+
+        channelb.close()
+      }
     } )
 
     let channelb = await projectrtp.openchannel( {}, function( d ) {
-      if( "close" === d.action ) done()
+      if( "close" === d.action ) {
+        expect( d.reason ).to.equal( "requested" )
+        expect( d.stats.in.count ).to.be.above( 80 )
+        expect( d.stats.in.skip ).to.equal( 0 )
+        
+        done()
+      }
     } )
 
     targeta.dtls.fingerprint.hash = channelb.local.dtls.fingerprint
@@ -92,7 +105,7 @@ describe( "dtls", function() {
 
     channela.close()
 
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ukringing.wav", ( err ) => { resolve() } ) } )
+    await fs.promises.unlink( "/tmp/ukringing.wav" ).catch( () => {} )
     await finished
 
   } )
