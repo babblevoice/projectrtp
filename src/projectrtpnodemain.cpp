@@ -24,6 +24,7 @@
 boost::asio::io_context workercontext;
 static napi_async_work workhandle;
 static bool started = false;
+static std::atomic_bool warningissued( false );
 
 void boost::throw_exception( std::exception const & e ) {
   std::string err = boost::diagnostic_information( e );
@@ -47,7 +48,9 @@ static void ontimer( const boost::system::error_code& e ) {
 static void workerbee( void ) {
 
   if( 0 != setpriority( PRIO_PROCESS, 0, -20 ) ) {
-    std::cerr << "Failed to set high priority for process" << std::endl;
+    if( !warningissued.exchange( true, std::memory_order_acquire ) ) {
+      std::cerr << "Warning: failed to set high priority for worker bees" << std::endl;
+    }
   }
   
   while( running ) {
@@ -59,6 +62,7 @@ static void runwork( napi_env env, void *data ) {
 
   if( running ) return;
   running = true;
+  warningissued = false;
 
   auto numcpus = std::thread::hardware_concurrency();
   std::vector< std::thread > threads( numcpus );
