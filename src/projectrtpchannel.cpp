@@ -949,16 +949,18 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
   if( nullptr == this->mixer && nullptr != other->mixer ) {
     this->mixer = other->mixer;
     this->mixer->addchannel( shared_from_this() );
-
+    postdatabacktojsfromthread( shared_from_this(), "mix", "start" );
   } else if ( nullptr != this->mixer && nullptr == other->mixer ) {
     other->mixer = this->mixer;
     this->mixer->addchannel( other );
-
+    postdatabacktojsfromthread( shared_from_this(), "mix", "start" );
   } else if( nullptr == this->mixer && nullptr == other->mixer  ) {
     this->mixer = projectchannelmux::create( workercontext );
     other->mixer = this->mixer;
 
     this->mixer->addchannels( shared_from_this(), other );
+    postdatabacktojsfromthread( shared_from_this(), "mix", "start" );
+    postdatabacktojsfromthread( other, "mix", "start" );
   } else {
     /* If we get here this and other are already mixing and should be cleaned up first */
     RELEASESPINLOCK( this->mixerlock );
@@ -983,6 +985,20 @@ n way relationship. Adds to queue for when our main thread calls into us.
 bool projectrtpchannel::unmix( void ) {
   this->removemixer = true;
   return true;
+}
+
+/**
+ * @brief Actual do set the variables ot show unmixed.
+ * 
+ */
+void projectrtpchannel::dounmix( void ) {
+  this->mixing = false;
+  this->removemixer = false;
+  AQUIRESPINLOCK( this->mixerlock );
+  this->mixer = nullptr;
+  RELEASESPINLOCK( this->mixerlock );
+
+  postdatabacktojsfromthread( shared_from_this(), "mix", "finished" );
 }
 
 /*
@@ -1670,6 +1686,20 @@ napi_value createrecordobject( napi_env env, projectrtpchannel::pointer p, jscha
   return result;
 }
 
+napi_value createmixobject( napi_env env, projectrtpchannel::pointer p, jschannelevent *ev ) {
+
+  napi_value result, tmp;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, "mix", NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "action", tmp ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, ev->arg1.c_str(), NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "event", tmp ) ) return NULL;
+
+  return result;
+}
+
 napi_value createplayobject( napi_env env, projectrtpchannel::pointer p, jschannelevent *ev ) {
   napi_value result, tmp;
   if( napi_ok != napi_create_object( env, &result ) ) return NULL;
@@ -1726,6 +1756,8 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
     ourdata = createplayobject( env, p, ev );
   } else if( "telephone-event" == ev->event ) {
     ourdata = createteleventobject( env, p, ev );
+  } else if( "mix" == ev->event ) {
+    ourdata = createmixobject( env, p, ev );
   }
 
   napi_value undefined;
