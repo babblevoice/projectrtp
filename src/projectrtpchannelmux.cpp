@@ -173,11 +173,7 @@ void projectchannelmux::mix2( void ) {
 
 bool projectchannelmux::channelremoverequested( const projectrtpchannelptr& chan ) {
   if( chan->removemixer ) {
-    chan->mixing = false;
-    chan->removemixer = false;
-    AQUIRESPINLOCK( chan->mixerlock );
-    chan->mixer = nullptr;
-    RELEASESPINLOCK( chan->mixerlock );
+    chan->dounmix();
     return true;
   }
 
