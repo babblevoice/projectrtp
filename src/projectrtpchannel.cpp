@@ -730,7 +730,7 @@ void projectrtpchannel::readsomertp( void ) {
           AQUIRESPINLOCK( this->rtpdtlslock );
           currentdtlssession->write( buf->pk, bytesrecvd );
           RELEASESPINLOCK( this->rtpdtlslock );
-          
+
           this->readsomertp();
           return;
         }
@@ -1517,10 +1517,9 @@ static napi_value channelremote( napi_env env, napi_callback_info info ) {
           napi_ok == napi_get_named_property( env, dtls, "mode", &nactpass ) ) {
         if( napi_ok == napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) {
           if( std::string( vactpass ) == "passive" ) {
-            /* If they are pass - we are act */
-            dtlsmode = dtlssession::act;
-          } else {
             dtlsmode = dtlssession::pass;
+          } else {
+            dtlsmode = dtlssession::act;
           }
           dtlsenabled = true;
         }
@@ -1845,10 +1844,9 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
     if( napi_ok != napi_get_value_string_utf8( env, nactpass, vactpass, sizeof( vactpass ), &bytescopied ) ) goto nodtls;
 
     if( std::string( vactpass ) == "passive" ) {
-      /* If they are pass - we are act */
-      dtlsmode = dtlssession::act;
-    } else {
       dtlsmode = dtlssession::pass;
+    } else {
+      dtlsmode = dtlssession::act;
     }
 
     napi_value nfingerprint;
