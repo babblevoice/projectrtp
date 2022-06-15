@@ -100,14 +100,16 @@ function gencerts() {
 */
 class proxy {
   /**
-  @summary Listen for connections from RTP nodes which can offer their services
-  to us. When we listen for other nodes, we can configure them so that it is invisible
-  to the main node as to where the channel is being handled.
-  @param {Object} remote - see channel.create
-  @return {rtpserver}
-  */
-  listen( port = 9002, address = "127.0.0.1" ) {
-    return server.listen( port, address )
+   * @summary Listen for connections from RTP nodes which can offer their services
+   * to us. When we listen for other nodes, we can configure them so that it is invisible
+   * to the main node as to where the channel is being handled.
+   * @param { Object } port - port to listen on
+   * @param { string } address - what address to listen to on
+   * @param { object } em - event emitter
+   * @return { rtpserver }
+   */
+  listen( em, address = "127.0.0.1", port = 9002 ) {
+    return server.listen( port, address, em )
   }
 
   /**
@@ -130,6 +132,14 @@ class proxy {
   */
   nodes() {
     return server.nodes()
+  }
+
+  /**
+   * We are a node and get the connection object.
+   * @returns { object }
+   */
+  node() {
+    return node.get()
   }
 
   /**
