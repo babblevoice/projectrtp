@@ -8,16 +8,13 @@ RUN npm -g install node-gyp
 WORKDIR /usr/src/projectrtp
 COPY . .
 
+#libc6-compat
 RUN apk add --no-cache \
-    python3 git make g++ boost-dev \
-    spandsp-dev tiff-dev gnutls-dev libsrtp-dev libc6-compat cmake
-
-RUN git submodule update --init --recursive
+    alpine-sdk cmake python3 spandsp-dev tiff-dev gnutls-dev libsrtp-dev cmake boost-dev; \
+    git submodule update --init --recursive
 
 WORKDIR /usr/src/projectrtp/libilbc
-RUN cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; \
-    cmake --build .; \
-    cmake --install .
+RUN cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; cmake --build .; cmake --install .
 
 # build projectrtp addon
 WORKDIR /usr/src/projectrtp
@@ -45,7 +42,7 @@ RUN mkdir -p /usr/local/lib/node_modules/projectrtp/src/build/Release/ && \
     cp -r src/build/Release/projectrtp.node /usr/local/lib/node_modules/projectrtp/src/build/Release/
 
 WORKDIR /usr/local/lib/node_modules/projectrtp/
-RUN npm install
+RUN npm ci
 
 FROM node:18-alpine as app
 
@@ -54,6 +51,8 @@ RUN apk add --no-cache \
 
 COPY --from=builder [ "/usr/local/lib/node_modules/projectrtp/", "/usr/local/lib/node_modules/projectrtp/" ]
 COPY --from=builder /lib/libilbc* /lib/
+
+ENV NODE_PATH=/usr/local/lib/node_modules
 
 EXPOSE 10000-20000
 
