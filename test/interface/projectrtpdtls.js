@@ -67,7 +67,6 @@ describe( "dtls", function() {
     let finished = new Promise( ( r ) => { done = r } )
 
     let channela = await projectrtp.openchannel( {}, function( d ) {
-      console.log(d)
       if( "close" === d.action ) {
         expect( d.reason ).to.equal( "requested" )
         expect( d.stats.in.count ).to.be.above( 80 )
