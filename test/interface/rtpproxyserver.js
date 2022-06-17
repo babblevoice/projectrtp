@@ -20,7 +20,7 @@ describe( "rtpproxy server", function() {
 
   it( `start and stop and start listener`, async function() {
 
-    let p = await prtp.proxy.listen( listenport, "127.0.0.1" )
+    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     let n = new mocknode()
 
     n.connect( listenport )
@@ -28,7 +28,7 @@ describe( "rtpproxy server", function() {
     n.destroy()
     await p.destroy()
 
-    p = await prtp.proxy.listen( listenport, "127.0.0.1" )
+    p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     n = new mocknode()
 
     n.connect( listenport )
@@ -59,7 +59,7 @@ describe( "rtpproxy server", function() {
       p.destroy()
     } )
 
-    let p = await prtp.proxy.listen( listenport, "127.0.0.1" )
+    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     n.connect( listenport )
     await p.waitfornewconnection()
     let channel = await prtp.openchannel()
@@ -116,7 +116,7 @@ describe( "rtpproxy server", function() {
       closereceived = true
     } )
 
-    let p = await prtp.proxy.listen( listenport, "127.0.0.1" )
+    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     n.connect( listenport )
     await p.waitfornewconnection()
     let channel = await prtp.openchannel()
@@ -162,7 +162,7 @@ describe( "rtpproxy server", function() {
       closereceived = true
     } )
 
-    let p = await prtp.proxy.listen( listenport, "127.0.0.1" )
+    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     n.connect( listenport )
     await p.waitfornewconnection()
     let channel = await prtp.openchannel()
@@ -195,7 +195,9 @@ describe( "rtpproxy server", function() {
     let unmixreceived = false
     n.setmessagehandler( "mix", ( msg ) => {
       expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "mix" )
-      expect( msg ).to.have.property( "other" ).that.is.a( "string" ).to.equal( "otheruuid" )
+      expect( msg ).to.have.property( "other" ).that.is.a( "object" )
+      expect( msg.other ).to.have.property( "id" ).that.is.a( "string" )
+      expect( msg.other ).to.have.property( "uuid" ).that.is.a( "string" )
       expect( msg ).to.have.property( "id" ).that.is.a( "string" )
       expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
       mixreceived = true
@@ -215,11 +217,11 @@ describe( "rtpproxy server", function() {
       closereceived = true
     } )
 
-    let p = await prtp.proxy.listen( listenport, "127.0.0.1" )
+    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     n.connect( listenport )
     await p.waitfornewconnection()
     let channel = await prtp.openchannel()
-    channel.mix( "otheruuid" )
+    channel.mix( { "id": "otheruuid", "uuid": "787-87686" } )
     channel.unmix()
 
     channel.close()
@@ -266,7 +268,7 @@ describe( "rtpproxy server", function() {
       closereceived = true
     } )
 
-    let p = await prtp.proxy.listen( listenport, "127.0.0.1" )
+    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     n.connect( listenport )
     await p.waitfornewconnection()
     let channel = await prtp.openchannel()
@@ -324,7 +326,7 @@ describe( "rtpproxy server", function() {
       closereceived = true
     } )
 
-    let p = await prtp.proxy.listen( listenport, "127.0.0.1" )
+    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     n.connect( listenport )
     await p.waitfornewconnection()
     let channel = await prtp.openchannel()
