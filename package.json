@@ -1,9 +1,11 @@
 {
-  "name": "projectrtp",
+  "name": "@babblevoice/projectrtp",
   "version": "1.0.0",
   "description": "A RTP server along with Node addon",
   "main": "index.js",
   "directories": {
+    "example": "examples",
+    "lib": "lib",
     "test": "test"
   },
   "scripts": {
@@ -34,5 +36,11 @@
     "net": "^1.0.2",
     "nodeplotlib": "^0.7.5",
     "uuid": "^8.3.2"
-  }
+  },
+  "devDependencies": {},
+  "keywords": [
+    "RTP",
+    "SIP",
+    "Node"
+  ]
 }
