@@ -59,6 +59,7 @@ To build the test executable run `make` from the src directory.
 ## Dependencies
 
 * spandsp-devel
+* libilbc
 * boost
 * gnutls
 * libsrtp

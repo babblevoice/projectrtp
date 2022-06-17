@@ -1,6 +1,6 @@
 {
   "name": "@babblevoice/projectrtp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A RTP server along with Node addon",
   "main": "index.js",
   "directories": {
@@ -18,7 +18,8 @@
     "configure": "cd src; node-gyp configure",
     "rebuild:dev": "cd src; node-gyp configure --debug; node-gyp rebuild --debug",
     "rebuild": "cd src; node-gyp configure; node-gyp rebuild",
-    "clean": "cd src; node-gyp clean"
+    "clean": "cd src; node-gyp clean",
+    "install": "npm run rebuild"
   },
   "repository": {
     "type": "git",
