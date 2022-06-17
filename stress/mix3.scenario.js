@@ -9,6 +9,7 @@ const expect = require( "chai" ).expect
 
 module.exports = async ( mstimeout ) => {
 
+  // Random number of channels between 3 and 6
   max_channels = utils.between( 3, 6 )
 
   utils.log( `Create ${max_channels} channels and mix for ${mstimeout} mS` )
@@ -17,6 +18,8 @@ module.exports = async ( mstimeout ) => {
   const clients = []
   const channels = []
 
+  // First create clients/channels and set remote
+  // Channels are internal and used for mixing, while as clients are remote nodes
   for ( var i = 0; i < max_channels; i++ )
   {
     clients.push( await projectrtp.openchannel( {}, ( d ) => {
@@ -37,16 +40,20 @@ module.exports = async ( mstimeout ) => {
 
   }
 
+  // Mix channel[0] with every other channel
   for ( var i = 1; i < max_channels; i++ )
   {
     expect( channels[0].mix( channels[i] ) ).to.be.true
   }
 
+  // Play from client[0] to all the mixed channels
   expect( clients[0].play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
+  // One of the clients echos back
   expect( clients[1].echo() ).to.be.true
 
   await new Promise( ( r ) => { setTimeout( () => r(), Math.max( mstimeout, 110 ) ) } )
   
+  // Clean up
   for ( var i = 1; i < max_channels; i++ )
   {
     channels[i].close()
