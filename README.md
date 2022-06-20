@@ -32,6 +32,18 @@ As part of this, we maintain jsdoc documentation to document our public interfac
 
 Only when we release version 1.0.0 will the public API be settled.
 
+## Release process
+
+1. Update package.json to the new version number (see Version numbers above)
+2. npm test && stress testing
+2. npm publish
+3. docker buildx prune
+4. docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:<version> . --push
+5. Git release
+6. Github tag <version> 
+
+<version> should simply the semantic version number. For late stage test builds this could be <version>betax.
+
 ## Docker
 
 Public docker images for amd64 and arm64 available on [Docker Hub](https://hub.docker.com/repository/docker/tinpotnick/projectrtp).
@@ -125,7 +137,7 @@ docker buildx create --name rtpbuilder --use --bootstrap --platform linux/amd64,
 Then to build, and push to Docker hub:
 ```
 docker buildx prune
-docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.0.0 . --push
+docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.1.0beta1 . --push
 ```
 
 ### Runing
