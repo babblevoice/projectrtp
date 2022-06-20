@@ -11,38 +11,29 @@ module.exports = async ( mstimeout ) => {
 
   // Random number of channels between 3 and 6
   max_channels = utils.between( 3, 6 )
-
   utils.log( `Create ${max_channels} channels and mix for ${mstimeout} mS` )
 
   const acodec = utils.randcodec()
   const clients = []
   const channels = []
-/*{
-  action: 'close',
-  reason: 'idle',
-  stats: {
-    in: { mos: 0, count: 0, dropped: 0, skip: 0 },
-    out: { count: 1001, skip: 0 },
-    tick: { meanus: 307, maxus: 829, count: 1000 }
-  }
-}*/
+
   // First create clients/channels and set remote
   // Channels are internal and used for mixing, while as clients are remote nodes
   for ( var i = 0; i < max_channels; i++ )
   {
     clients.push( await projectrtp.openchannel( {}, ( d ) => {
       if( "close" === d.action ) {
-        utils.logclosechannel( `Mix ${max_channels} (client ${i}) for ${mstimeout} mS completed with reason '${d.reason}'.` +
-        `Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
-        `Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
+        utils.logclosechannel( `Mix ${max_channels} (client) for ${mstimeout} mS completed with reason '${d.reason}'.` +
+        ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
+        ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
       }
     } ) )
 
     channels.push( await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clients[i].local.port, "codec": acodec } }, ( d ) => {
       if( "close" === d.action ) {
-        utils.logclosechannel( `Mix ${max_channels} (channel ${i}) for ${mstimeout} mS completed with reason '${d.reason}'.` +
-        `Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
-        `Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
+        utils.logclosechannel( `Mix ${max_channels} (channel) for ${mstimeout} mS completed with reason '${d.reason}'.` +
+        ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
+        ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
       }
     } ) )
     utils.lognewchannel()
