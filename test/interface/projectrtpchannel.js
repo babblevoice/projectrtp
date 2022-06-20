@@ -515,4 +515,27 @@ describe( "rtpchannel", function() {
       }
     } )
   } )
+
+  it( `create channel and check event emitter`, async () => {
+
+    this.timeout( 2000 )
+    this.slow( 2000 )
+
+    let done
+    let waituntildone = new Promise( ( r ) => done = r )
+
+    let chan = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": 20765, "codec": 0 } } )
+    chan.em.on( "all", ( d ) => {
+      if( "close" === d.action ) {
+
+        expect( d.stats.in.count ).to.equal( 0 )
+        expect( d.stats.in.skip ).to.equal( 0 )
+        expect( d.stats.out.count ).to.equal( 0 )
+        done()
+      }
+    } )
+
+    chan.close()
+    await waituntildone
+  } )
 } )

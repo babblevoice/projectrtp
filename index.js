@@ -1,5 +1,7 @@
 
 const { v4: uuidv4 } = require( "uuid" )
+const EventEmitter = require( "node:events" )
+
 const server = require( "./lib/server.js" )
 const node = require( "./lib/node.js" )
 
@@ -268,17 +270,24 @@ let actualprojectrtp = false
     }
 
     if( "undefined" == typeof params ) params = {}
-    if( "undefined" == typeof cb ) cb = ()=>{}
 
     if( undefined === params.forcelocal &&
         server.get() ) {
       return server.get().openchannel( params, cb )
     } else {
       /* use local */
-      let chan = actualprojectrtp.openchannel( params, cb )
+      let chan = actualprojectrtp.openchannel( params, ( d ) => {
+        if( chan.em ) {
+          chan.em.emit( "all", d )
+          if( d.action ) chan.em.emit( d.action, d )
+        }
+      } )
       /* I can't find a way of defining a getter in napi - so here we override */
-      /* TODO finish address */
+
       chan.local.address = localaddress
+
+      chan.em = new EventEmitter()
+      if( cb ) chan.em.on( "all", cb )
 
       if( undefined === params.id ) {
         chan.id = uuidv4()
