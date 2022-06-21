@@ -15,9 +15,7 @@ module.exports = async ( mstimeout ) => {
   const clienta = await projectrtp.openchannel( {}, ( d ) => {
     if( "close" === d.action ) {
       channela.close()
-      utils.logclosechannel( `DTLS (clienta) for ${mstimeout} mS completed with reason '${d.reason}'.` +
-      ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
-      ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
+      utils.logclosechannel( `DTLS (clienta) for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
     }
   } )
   utils.lognewchannel()
@@ -36,9 +34,7 @@ module.exports = async ( mstimeout ) => {
 
   const channela = await projectrtp.openchannel( { "remote": targeta }, ( d ) => {
     if( "close" === d.action ) {
-      utils.logclosechannel( `DTLS (channela) for ${mstimeout} mS completed with reason '${d.reason}'.` +
-      ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
-      ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
+      utils.logclosechannel( `DTLS (channela) for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
     }
   } )
 

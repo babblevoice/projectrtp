@@ -17,18 +17,14 @@ module.exports = async ( mstimeout ) => {
   const clienta = await projectrtp.openchannel( {}, ( d ) => {
     if( "close" === d.action ) {
       channela.close()
-      utils.logclosechannel( `Mix 2 (clienta) for ${mstimeout} mS completed with reason '${d.reason}'.` +
-        ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
-        ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
+      utils.logclosechannel( `Mix 2 (clienta) for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
     }
   } )
   utils.lognewchannel()
 
   let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clienta.local.port, "codec": acodec } }, ( d ) => {
     if( "close" === d.action ) {
-      utils.logclosechannel( `Mix 2 for ${mstimeout} mS completed with reason '${d.reason}'.` +
-        ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
-        ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
+      utils.logclosechannel( `Mix 2 for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
     }
   } )
   clienta.remote( { "address": "localhost", "port": channela.local.port, "codec": acodec } )
@@ -37,18 +33,14 @@ module.exports = async ( mstimeout ) => {
   const clientb = await projectrtp.openchannel( {}, ( d ) => {
     if( "close" === d.action ) {
       channelb.close()
-      utils.logclosechannel( `Mix 2 (clientb) for ${mstimeout} mS completed with reason '${d.reason}'.` +
-        ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
-        ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
+      utils.logclosechannel( `Mix 2 (clientb) for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
     }
   } )
   utils.lognewchannel()
 
   let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clientb.local.port, "codec": bcodec } }, ( d ) => {
     if( "close" === d.action ) {
-      utils.logclosechannel( `Mix 2 for ${mstimeout} mS completed with reason '${d.reason}'.` +
-        ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
-        ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
+      utils.logclosechannel( `Mix 2 for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
     }
   } )
   clientb.remote( { "address": "localhost", "port": channelb.local.port, "codec": bcodec } )

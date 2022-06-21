@@ -23,17 +23,13 @@ module.exports = async ( mstimeout ) => {
   {
     clients.push( await projectrtp.openchannel( {}, ( d ) => {
       if( "close" === d.action ) {
-        utils.logclosechannel( `Mix ${max_channels} (client) for ${mstimeout} mS completed with reason '${d.reason}'.` +
-        ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
-        ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
+        utils.logclosechannel( `Mix ${max_channels} (client) for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
       }
     } ) )
 
     channels.push( await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clients[i].local.port, "codec": acodec } }, ( d ) => {
       if( "close" === d.action ) {
-        utils.logclosechannel( `Mix ${max_channels} (channel) for ${mstimeout} mS completed with reason '${d.reason}'.` +
-        ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
-        ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
+        utils.logclosechannel( `Mix ${max_channels} (channel) for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
       }
     } ) )
     utils.lognewchannel()
