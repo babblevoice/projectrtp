@@ -6,13 +6,13 @@ const utils = require( "./utils.js" )
 
 let scenarios = []
 scenarios.push( require( "./mix3.scenario.js" ) )
-//scenarios.push( require( "./dtls.scenario.js" ) )
-//scenarios.push( require( "./echorecord.scenario.js" ) )
-//scenarios.push( require( "./playbackrecord.scenario.js" ) )
-//scenarios.push( require( "./echodualrecordpower.scenario.js" ) )
-//scenarios.push( require( "./echodualrecordpausestop.scenario.js" ) )
-//scenarios.push( require( "./mix2.scenario.js" ) )
-//scenarios.push( require( "./mixunmix.scenario.js" ) )
+scenarios.push( require( "./dtls.scenario.js" ) )
+scenarios.push( require( "./echorecord.scenario.js" ) )
+scenarios.push( require( "./playbackrecord.scenario.js" ) )
+scenarios.push( require( "./echodualrecordpower.scenario.js" ) )
+scenarios.push( require( "./echodualrecordpausestop.scenario.js" ) )
+scenarios.push( require( "./mix2.scenario.js" ) )
+scenarios.push( require( "./mixunmix.scenario.js" ) )
 
 /*
 The purpose of this script is to load up projectrtp to expose any issues with timing.

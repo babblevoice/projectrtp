@@ -19,14 +19,18 @@ module.exports = async ( mstimeout ) => {
   const clienta = await projectrtp.openchannel( {}, ( d ) => {
     if( "close" === d.action ) {
       channela.close()
-      utils.logclosechannel( `Mix 2 (clienta) for ${mstimeout} mS completed with reason '${d.reason}'` )
+      utils.logclosechannel( `Mix 2 (clienta) for ${mstimeout} mS completed with reason '${d.reason}'.` +
+      ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
+      ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
     }
   } )
   utils.lognewchannel()
 
   const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clienta.local.port, "codec": acodec } }, async ( d ) => {
     if( "close" === d.action ) {
-      utils.logclosechannel( `Playback with record for ${mstimeout} mS completed with reason '${d.reason}'` )
+      utils.logclosechannel( `Playback with record for ${mstimeout} mS completed with reason '${d.reason}'.` +
+        ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
+        ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
       await fs.promises.unlink( recording ).catch( () => {} )
     }
   } )
