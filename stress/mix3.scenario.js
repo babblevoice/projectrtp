@@ -49,10 +49,14 @@ module.exports = async ( mstimeout ) => {
     expect( channels[0].mix( channels[i] ) ).to.be.true
   }
 
+  for ( var i = 0; i < max_channels; i++ )
+  {
+    expect( clients[i].play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
+  }
   // Play from client[0] to all the mixed channels
-  expect( clients[0].play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
+  //xpect( clients[0].play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
   // One of the clients echos back
-  expect( clients[1].echo() ).to.be.true
+  //expect( clients[1].echo() ).to.be.true
 
   await new Promise( ( r ) => { setTimeout( () => r(), Math.max( mstimeout, 110 ) ) } )
   
