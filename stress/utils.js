@@ -16,10 +16,12 @@ module.exports.lognewchannel = () => {
   module.exports.log( `New channel opened - current count now ${channelcount}` )
 }
 
-module.exports.logclosechannel = ( message ) => {
+module.exports.logclosechannel = ( message, d, mstimeout ) => {
   channelcount--
   totalcount++
   module.exports.log( message )
+  module.exports.log( ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
+  ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
   module.exports.log( `Channel closed - current count now ${channelcount} total channels this session ${totalcount}` )
 }
 
