@@ -1,6 +1,6 @@
 
 
-const prtp = require( "projectrtp" )
+const prtp = require( "@babblevoice/projectrtp" )
 const https = require( "https" )
 
 function wgets( url ) {

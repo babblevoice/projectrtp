@@ -1,7 +1,7 @@
 
 
 
-const prtp = require( "projectrtp" )
+const prtp = require( "@babblevoice/projectrtp" )
 const https = require( "https" )
 const fs = require( "fs" )
 

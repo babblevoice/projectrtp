@@ -1,7 +1,7 @@
 {
   "name": "@babblevoice/projectrtp",
   "version": "2.1.0",
-  "description": "A RTP server along with Node addon",
+  "description": "A scalable Node addon RTP server",
   "main": "index.js",
   "directories": {
     "example": "examples",
