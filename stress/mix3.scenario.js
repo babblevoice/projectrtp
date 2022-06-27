@@ -4,13 +4,13 @@ const utils = require( "./utils.js" )
 const expect = require( "chai" ).expect
 
 /*
-  client[0] (play something) ---> channel[0] ---> mix ---> channel[i] ---> client[i] (and we echo back here from client[1])
+  client[i] (play something) ---> channel[i] ---> mix ---> channel[j] ---> client[j]
 */
 
 module.exports = async ( mstimeout ) => {
 
   // Random number of channels between 3 and 6
-  max_channels = utils.between( 3, 6 )
+  const max_channels = utils.between( 3, 6 )
   utils.log( `Create ${max_channels} channels and mix for ${mstimeout} mS` )
 
   const acodec = utils.randcodec()
@@ -49,15 +49,11 @@ module.exports = async ( mstimeout ) => {
   {
     expect( clients[i].play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
   }
-  // Play from client[0] to all the mixed channels
-  //xpect( clients[0].play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
-  // One of the clients echos back
-  //expect( clients[1].echo() ).to.be.true
 
   await new Promise( ( r ) => { setTimeout( () => r(), Math.max( mstimeout, 110 ) ) } )
   
   // Clean up
-  for ( var i = 1; i < max_channels; i++ )
+  for ( var i = 0; i < max_channels; i++ )
   {
     channels[i].close()
     clients[i].close()
