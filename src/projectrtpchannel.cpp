@@ -322,7 +322,12 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
 
   this->startticktimer();
 
-  if( this->dtlsnegotiate() ) {
+  AQUIRESPINLOCK( this->rtpdtlslock );
+  dtlssession::pointer currentdtlssession = this->rtpdtls;
+  RELEASESPINLOCK( this->rtpdtlslock );
+
+  if( nullptr != currentdtlssession && currentdtlssession->rtpdtlshandshakeing ) {
+    this->dtlsnegotiate();
     this->endticktimer();
     this->setnexttick();
     return;
@@ -335,9 +340,6 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   this->incodec << codecx::next;
   this->outcodec << codecx::next;
 
-  AQUIRESPINLOCK( this->rtpdtlslock );
-  dtlssession::pointer currentdtlssession = this->rtpdtls;
-  RELEASESPINLOCK( this->rtpdtlslock );
 
   rtppacket *src;
   do {
@@ -726,11 +728,11 @@ void projectrtpchannel::readsomertp( void ) {
 
         if( nullptr != currentdtlssession &&
             currentdtlssession->rtpdtlshandshakeing ) {
-
           AQUIRESPINLOCK( this->rtpdtlslock );
           currentdtlssession->write( buf->pk, bytesrecvd );
           RELEASESPINLOCK( this->rtpdtlslock );
 
+          this->dtlsnegotiate();
           this->readsomertp();
           return;
         }

@@ -66,22 +66,18 @@ describe( "dtls", function() {
     let done
     let finished = new Promise( ( r ) => { done = r } )
 
+    let channelaclose
     let channela = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
-        expect( d.reason ).to.equal( "requested" )
-        expect( d.stats.in.count ).to.be.above( 80 )
-        expect( d.stats.in.skip ).to.equal( 0 )
-
+        channelaclose = d
         channelb.close()
       }
     } )
 
+    let channelbclose
     let channelb = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
-        expect( d.reason ).to.equal( "requested" )
-        expect( d.stats.in.count ).to.be.above( 80 )
-        expect( d.stats.in.skip ).to.equal( 0 )
-        
+        channelbclose = d
         done()
       }
     } )
@@ -106,6 +102,14 @@ describe( "dtls", function() {
 
     await fs.promises.unlink( "/tmp/ukringing.wav" ).catch( () => {} )
     await finished
+
+    expect( channelaclose.reason ).to.equal( "requested" )
+    expect( channelaclose.stats.in.count ).to.be.above( 80 )
+    expect( channelaclose.stats.in.skip ).to.equal( 0 )
+
+    expect( channelbclose.reason ).to.equal( "requested" )
+    expect( channelbclose.stats.in.count ).to.be.above( 80 )
+    expect( channelbclose.stats.in.skip ).to.equal( 0 )
 
   } )
 } )

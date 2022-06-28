@@ -163,6 +163,11 @@ int dtlssession::handshake( void ) {
   auto retval = gnutls_handshake( this->session );
   if( GNUTLS_E_AGAIN == retval ) return GNUTLS_E_AGAIN;
   if( 0 == retval ) this->getkeys();
+
+  if( GNUTLS_E_SUCCESS == retval ) {
+    this->rtpdtlshandshakeing = false;
+  }
+
   return retval;
 }
 
