@@ -1772,7 +1772,9 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
 
   /* our final call - allow js to clean up */
   if( "close" == ev->event ) {
-    if( napi_ok != napi_release_threadsafe_function( p->cb, napi_tsfn_abort ) ) {
+    napi_threadsafe_function cb = p->cb;
+    p->cb = NULL;
+    if( napi_ok != napi_release_threadsafe_function( cb, napi_tsfn_abort ) ) {
       fprintf( stderr, "Error releasing threadsafe function\n" );
     }
   }
