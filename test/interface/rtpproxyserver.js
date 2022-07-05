@@ -275,7 +275,7 @@ describe( "rtpproxy server", function() {
     channel.remote( "wouldbearemoteobject" )
 
     channel.close()
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } )
 
     expect( remotereceived ).to.be.true
     expect( closereceived ).to.be.true
@@ -284,6 +284,9 @@ describe( "rtpproxy server", function() {
 
 
   it( `check play/record`, async function() {
+
+    let done
+    const completed = new Promise( ( r ) => { done = r } )
 
     /* set up our mock node object */
     let n = new mocknode()
@@ -299,31 +302,27 @@ describe( "rtpproxy server", function() {
           } )
     } )
 
-    let playreceived = false
-    let recordreceived = false
+    let playmsg
     n.setmessagehandler( "play", ( msg ) => {
-      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "play" )
-      expect( msg ).to.have.property( "id" ).that.is.a( "string" )
-      expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
-      expect( msg ).to.have.property( "soup" ).that.is.a( "string" ).to.equal( "wouldbeaplayobject" )
+      playmsg = msg
 
-      playreceived = true
+      n.sendmessage( {
+        "action": "play",
+        "id": msg.id,
+        "uuid": msg.uuid
+        } )
+
+      setTimeout( () => channel.record( "wouldbearecordobject" ), 10 )
     } )
 
+    let recmsg
     n.setmessagehandler( "record", ( msg ) => {
-      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "record" )
-      expect( msg ).to.have.property( "id" ).that.is.a( "string" )
-      expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
-      expect( msg ).to.have.property( "options" ).that.is.a( "string" ).to.equal( "wouldbearecordobject" )
-
-      recordreceived = true
+      recmsg = msg
+      channel.close()
     } )
 
-    let closereceived = false
-    n.setmessagehandler( "close", ( msg ) => {
-      n.destroy()
-      p.destroy()
-      closereceived = true
+    n.setmessagehandler( "close", () => {
+      done()
     } )
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
@@ -331,13 +330,25 @@ describe( "rtpproxy server", function() {
     await p.waitfornewconnection()
     let channel = await prtp.openchannel()
     channel.play( "wouldbeaplayobject" )
-    channel.record( "wouldbearecordobject" )
 
-    channel.close()
+    await completed
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+    n.destroy()
+    p.destroy()
 
-    expect( playreceived ).to.be.true
-    expect( recordreceived ).to.be.true
+    expect( recmsg ).to.be.an( "object" )
+    expect( recmsg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "record" )
+    expect( recmsg ).to.have.property( "id" ).that.is.a( "string" )
+    expect( recmsg ).to.have.property( "uuid" ).that.is.a( "string" )
+    expect( recmsg ).to.have.property( "options" ).that.is.a( "string" ).to.equal( "wouldbearecordobject" )
+
+    expect( playmsg ).to.be.an( "object" )
+    expect( playmsg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "play" )
+    expect( playmsg ).to.have.property( "id" ).that.is.a( "string" )
+    expect( playmsg ).to.have.property( "uuid" ).that.is.a( "string" )
+    expect( playmsg ).to.have.property( "soup" ).that.is.a( "string" ).to.equal( "wouldbeaplayobject" )
+
+    expect( channel.history ).to.be.an( "array" ).to.have.length( 6 )
+
   } )
 } )
