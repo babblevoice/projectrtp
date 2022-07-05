@@ -92,27 +92,6 @@ After installing standard build tools - including g++.
 dnf install ilbc-devel spandsp-devel boost gnutls libsrtp libsrtp-devel
 ```
 
-## Node Module
-
-node-gyp is required to build the module:
-
-```
-sudo npm install -g node-gyp
-sudo npm install -g node-addon-api
-```
-
-From the src folder
-```
-node-gyp configure
-node-gyp build
-```
-
-Or
-
-```
-node-gyp build --debug
-```
-
 ## Docker/Podman
 
 Podman has some shortfalls. Remove and install docker.
@@ -146,7 +125,7 @@ The enviroment variable HOST should contain the host address of the control serv
 
 The enviroment variable PA is takes the below form- where the address is passed back to the control server so it can be published in SDP - i.e. this allows for multiple RTP nodes all on different IP addresses. If you do not pass this in, then the default script will determin your public IP address by calling https://checkip.amazonaws.com to obtain your IP.
 
-podman run --restart=always --net=host -d -it --env PA=127.0.0.1 --name=prtp projectrtp:latest
+docker run --restart=always --net=host -d -it --env PA=127.0.0.1 --name=prtp projectrtp:latest
 
 ## Example scripts
 
@@ -185,7 +164,7 @@ Example:
 
 ```js
 
-const prtp = require( "projectrtp" ).projectrtp
+const prtp = require( "@babblevoice/projectrtp" ).projectrtp
 
 /* This switches this server to a central 
 server and requires nodes to connect to us
@@ -337,7 +316,7 @@ What we need to provide is a utility to generate wav files which will generate t
 
 ```js
 
-const prtp = require( "projectrtp" ).projectrtp
+const prtp = require( "@babblevoice/projectrtp" ).projectrtp
 
 let filename = "/some/file.wav"
 prtp.tone.generate( "350+440*0.5:1000", filename )
