@@ -4,6 +4,7 @@
 const prtp = require( "@babblevoice/projectrtp" )
 const https = require( "https" )
 const fs = require( "fs" )
+prtp.projectrtp.run()
 
 function wgets( url ) {
   return new Promise( r => {
@@ -65,7 +66,6 @@ async function connect() {
   if( undefined !== process.env.HOST ) host = process.env.HOST
 
   prtp.projectrtp.proxy.connect( port, host )
-  prtp.projectrtp.run()
   console.log( "RTP Server running" )
 }
 
