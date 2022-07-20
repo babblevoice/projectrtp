@@ -116,7 +116,7 @@ docker buildx create --name rtpbuilder --use --bootstrap --platform linux/amd64,
 Then to build, and push to Docker hub:
 ```
 docker buildx prune
-docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.1.0beta1 . --push
+docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.2.1 . --push
 ```
 
 ### Runing
