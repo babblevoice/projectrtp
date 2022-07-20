@@ -351,4 +351,54 @@ describe( "rtpproxy server", function() {
     expect( channel.history ).to.be.an( "array" ).to.have.length( 6 )
 
   } )
+
+  it( `check direction( { send, recv } )`, async function() {
+
+    let done
+    const completed = new Promise( ( r ) => { done = r } )
+
+    /* set up our mock node object */
+    let n = new mocknode()
+    n.setmessagehandler( "open", ( msg ) => {
+      n.sendmessage( {
+          "action": "open",
+          "id": msg.id,
+          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+          "channel": {
+            "port": 10002,
+            "address": "192.168.0.141"
+            }
+          } )
+    } )
+
+    let directionmsg
+    n.setmessagehandler( "direction", ( msg ) => {
+      directionmsg = msg.options
+
+      n.sendmessage( {
+        "action": "direction",
+        "id": msg.id,
+        "uuid": msg.uuid
+        } )
+
+        setTimeout( () => channel.close(), 10 )
+    } )
+    n.setmessagehandler( "close", () => {
+      done()
+    } )
+
+    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
+    n.connect( listenport )
+    await p.waitfornewconnection()
+    let channel = await prtp.openchannel()
+    channel.direction( { send: false, recv: false } )
+
+    await completed
+
+    n.destroy()
+    p.destroy()
+
+    expect( directionmsg.send ).to.be.false
+    expect( directionmsg.recv ).to.be.false
+  } )
 } )
