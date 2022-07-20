@@ -25,7 +25,7 @@ COPY --from=builder /lib/libilbc* /lib/
 
 ENV NODE_PATH=/usr/local/lib/node_modules
 
-EXPOSE 10000-20000
+EXPOSE 10000-50000/udp
 
 WORKDIR /usr/local/lib/node_modules/@babblevoice/projectrtp/
 CMD [ "node", "examples/simplenode.js" ]
