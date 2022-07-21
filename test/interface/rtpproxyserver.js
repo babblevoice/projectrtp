@@ -228,7 +228,106 @@ describe( "rtpproxy server", function() {
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
 
-    expect( mixreceived ).to.be.true
+    expect( unmixreceived ).to.be.true
+
+    expect( closereceived ).to.be.true
+
+  } )
+
+  it( `check mix/unmix on different nodes`, async function() {
+
+    let n = new mocknode()
+    let n2 = new mocknode()
+    let mixreceived = false
+    let unmixreceived = false
+    let closereceived = false
+    n.setmessagehandler( "open", ( msg ) => {
+      n.sendmessage( {
+          "action": "open",
+          "id": msg.id,
+          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+          "channel": {
+            "port": 10002,
+            "address": "192.168.0.141"
+            },
+          "status": n.ourstats
+
+          } )
+    } )
+    n.setmessagehandler( "mix", ( msg ) => {
+      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "mix" )
+      expect( msg ).to.have.property( "other" ).that.is.a( "object" )
+      expect( msg.other ).to.have.property( "id" ).that.is.a( "string" )
+      expect( msg.other ).to.have.property( "uuid" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "id" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
+      mixreceived = true
+    } )
+
+    n.setmessagehandler( "unmix", ( msg ) => {
+      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "unmix" )
+      expect( msg ).to.have.property( "id" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
+      unmixreceived = true
+    } )
+
+    n.setmessagehandler( "close", ( msg ) => {  
+      n.destroy()
+      p.destroy()
+      closereceived = true
+    } )
+
+    n2.setmessagehandler( "open", ( msg ) => {
+      n2.sendmessage( {
+          "action": "open",
+          "id": msg.id,
+          "uuid": "9dfc35d9-eafe-4d8b-8880-c48f528ec152",
+          "channel": {
+            "port": 10002,
+            "address": "192.168.0.141"
+            },
+          "status": n2.ourstats
+          } )
+    } )
+    n2.setmessagehandler( "mix", ( msg ) => {
+      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "mix" )
+      expect( msg ).to.have.property( "other" ).that.is.a( "object" )
+      expect( msg.other ).to.have.property( "id" ).that.is.a( "string" )
+      expect( msg.other ).to.have.property( "uuid" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "id" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
+      mixreceived = true
+    } )
+
+    n2.setmessagehandler( "unmix", ( msg ) => {
+      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "unmix" )
+      expect( msg ).to.have.property( "id" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
+      unmixreceived = true
+    } )
+
+    n2.setmessagehandler( "close", ( msg ) => {  
+      n.destroy()
+      p.destroy()
+      closereceived = true
+    } )
+
+    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
+    n.connect( listenport )
+    n2.connect( listenport )
+    await p.waitfornewconnection()
+
+    let channel1 = await prtp.openchannel()
+    let channel2 = await prtp.openchannel()
+
+    channel1.mix( channel2 )
+    channel1.unmix()
+
+    channel1.close()
+    channel2.close()
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+
     expect( unmixreceived ).to.be.true
 
     expect( closereceived ).to.be.true

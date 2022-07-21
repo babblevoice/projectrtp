@@ -247,7 +247,8 @@ let actualprojectrtp = false
 
     gencerts()
     actualprojectrtp = require( bin )
-    actualprojectrtp.run()
+    actualprojectrtp.run("5")
+    console.log('After run')
     this.dtls = actualprojectrtp.dtls
     this.tone = actualprojectrtp.tone
     this.rtpfilter = actualprojectrtp.rtpfilter
