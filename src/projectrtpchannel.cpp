@@ -1871,7 +1871,7 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
 nodtls:
     if( dtlsrequired && !dtlsenabled ) {
-      napi_throw_error( env, "1", "DTLS requested but no possible" );
+      napi_throw_error( env, "1", "DTLS requested but not possible" );
       return NULL;
     }
 
