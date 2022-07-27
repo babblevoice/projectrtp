@@ -11,6 +11,7 @@ module.exports = class {
     this.ourstats = prtp.stats()
     this.messagehandlers = {}
     this.recevievedmessagecount = 0
+    this.id = uuidv4()
   }
 
 
@@ -35,7 +36,7 @@ module.exports = class {
     stats message has been sent and it must have an instance id */
     let msg = {}
     msg.status = this.ourstats
-    msg.status.instance = uuidv4()
+    msg.status.instance = this.id
     this.connection.write( message.createmessage( msg ) )
   }
 

@@ -307,18 +307,19 @@ describe( "rtpproxy server", function() {
     } )
 
     n2.setmessagehandler( "close", ( msg ) => {  
-      n.destroy()
-      p.destroy()
+      n2.destroy()
       closereceived = true
     } )
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     n.connect( listenport )
+    await p.waitfornewconnection()
     n2.connect( listenport )
     await p.waitfornewconnection()
-
-    let channel1 = await prtp.openchannel()
-    let channel2 = await prtp.openchannel()
+    await new Promise( ( r ) => { setTimeout( () => r(),  5000  ) } )
+    
+    let channel1 = await prtp.openchannel( {"selected_node": n.id} )
+    let channel2 = await prtp.openchannel( {"selected_node": n2.id} )
 
     channel1.mix( channel2 )
     channel1.unmix()
