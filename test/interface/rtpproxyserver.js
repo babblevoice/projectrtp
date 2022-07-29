@@ -283,7 +283,7 @@ describe( "rtpproxy server", function() {
           "id": msg.id,
           "uuid": "9dfc35d9-eafe-4d8b-8880-c48f528ec152",
           "channel": {
-            "port": 10002,
+            "port": 10004,
             "address": "192.168.0.141"
             },
           "status": n2.ourstats
@@ -313,10 +313,9 @@ describe( "rtpproxy server", function() {
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     n.connect( listenport )
-    await p.waitfornewconnection()
+    //await p.waitfornewconnection()
     n2.connect( listenport )
     await p.waitfornewconnection()
-    await new Promise( ( r ) => { setTimeout( () => r(),  5000  ) } )
     
     let channel1 = await prtp.openchannel( {"selected_node": n.id} )
     let channel2 = await prtp.openchannel( {"selected_node": n2.id} )
