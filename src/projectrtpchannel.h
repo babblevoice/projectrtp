@@ -147,7 +147,8 @@ private:
   std::atomic_bool active;
   unsigned short port;
   unsigned short rfc2833pt;
-  uint32_t lasttelephoneevent;
+  uint32_t lasttelephoneeventsn;
+  uint8_t lasttelephoneevent;
 
   boost::asio::ip::udp::resolver resolver;
 
@@ -172,6 +173,7 @@ private:
   void writerecordings( void );
 
   bool checkfordtmf( rtppacket *src );
+  void sendtelevent( void );
   void senddtmf( void );
 
   void handlertcpdata( void );

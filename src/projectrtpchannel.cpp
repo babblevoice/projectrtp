@@ -67,6 +67,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   active( false ),
   port( port ),
   rfc2833pt( 101 ),
+  lasttelephoneeventsn( 0 ),
   lasttelephoneevent( 0 ),
   resolver( workercontext ),
   rtpsocket( workercontext ),
@@ -533,6 +534,19 @@ bool projectrtpchannel::recordercompleted( const channelrecorder::pointer& rec )
   return rec->completed;
 }
 
+/**
+ * @brief Helper function for checkfordtmf - signal back to our control server that an event has been received.
+ * 
+ */
+static char dtmfchars[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '#', 'A', 'B', 'C', 'D', 'F' };
+void projectrtpchannel::sendtelevent( void ) {
+  if( this->player && this->player->doesinterupt() ) {
+    postdatabacktojsfromthread( shared_from_this(), "play", "end", "telephone-event" );
+    this->player = nullptr;
+  }
+
+  postdatabacktojsfromthread( shared_from_this(), "telephone-event", std::string( 1, dtmfchars[ this->lasttelephoneevent ] ) );
+}
 /*
 ## checkfordtmf
 
@@ -540,53 +554,60 @@ We should receive a start packet with mark set to true. This should then continu
 end of event marked in the 2833 payload. But we might lose any one of these packets and should still work
 if we do.
 */
-static char dtmfchars[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '#', 'A', 'B', 'C', 'D', 'F' };
 bool projectrtpchannel::checkfordtmf( rtppacket *src ) {
   /* The next section is sending to our recipient(s) */
-  if( nullptr != src &&
-      0 != this->rfc2833pt &&
+
+  if( nullptr == src ) return false;
+
+  uint16_t sn = src->getsequencenumber();
+
+  if( 0 != this->rfc2833pt &&
       src->getpayloadtype() == this->rfc2833pt ) {
 
     if( src->getpayloadlength() >= 4 ) {
       /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
-      uint16_t sn = src->getsequencenumber();
 
       uint8_t * pl = src->getpayload();
       uint8_t endbit = pl[ 1 ] >> 7;
       uint8_t event = pl[ 0 ] & 0x7f;
 
       if( event <= 16 ) {
-        uint8_t pm = src->getpacketmarker();
+        bool sendteleevent = false;
+        bool start = false;
 
-        /* Have we lost our mark packet */
-        if( 0 == pm && 0 == endbit &&
-            0 == this->lasttelephoneevent ) {
-          pm = 1;
+        /* Test for start */
+        if( 0 == endbit &&
+            0 == this->lasttelephoneeventsn ) {
+          start = true;
         }
 
-        /* did we lose the last end of event */
-        if( 0 != this->lasttelephoneevent &&
-            abs( static_cast< long long int >( sn - this->lasttelephoneevent ) ) > 20 ) {
-          pm = 1;
+        if( 0 == endbit &&
+            0 != this->lasttelephoneeventsn && 
+              event != this->lasttelephoneevent
+             ) {
+          /* Did we lose the last end of event */
+          this->lasttelephoneeventsn = 0;
+          sendteleevent = true;
+        } else if( 1 == endbit ) {
+          sendteleevent = true;
         }
 
-        if( 1 == pm ) {
-          if( this->player && this->player->doesinterupt() ) {
-            postdatabacktojsfromthread( shared_from_this(), "play", "end", "telephone-event" );
-            this->player = nullptr;
-          }
+        if( sendteleevent ) this->sendtelevent();
 
-          postdatabacktojsfromthread( shared_from_this(), "telephone-event", std::string( 1, dtmfchars[ event ] ) );
-        }
-
-        if( endbit ) {
-          this->lasttelephoneevent = 0;
-        } else {
-          this->lasttelephoneevent = sn;
+        if( start ) {
+          this->lasttelephoneeventsn = sn;
+          this->lasttelephoneevent = event;
+        } else if( 1 == endbit ) {
+          this->lasttelephoneeventsn = 0;
         }
       }
     }
     return true;
+  } else if( 0 != this->lasttelephoneeventsn &&
+             abs( static_cast< long long int >( sn - this->lasttelephoneeventsn ) ) > 20 ) {
+    /* timeout on waiting for end packet */
+    this->sendtelevent();
+    this->lasttelephoneeventsn = 0;
   }
   return false;
 }

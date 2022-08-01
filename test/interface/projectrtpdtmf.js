@@ -31,9 +31,9 @@ function sendpk( sn, sendtime, dstport, server, pt = 0 ) {
 }
 
 /*
-marker indicates start, endofevent marks the finish
+
 */
-function senddtmf( sn, ts, sendtime, dstport, server, marker, endofevent, ev ) {
+function senddtmf( sn, ts, sendtime, dstport, server, endofevent, ev ) {
 
   return setTimeout( () => {
     let ssrc = 25
@@ -42,7 +42,6 @@ function senddtmf( sn, ts, sendtime, dstport, server, marker, endofevent, ev ) {
     let header = Buffer.alloc( pklength )
 
     let pt = 101
-    if( marker ) pt = pt | 0x80
 
     header.writeUInt8( 0x80 )
     header.writeUInt8( pt, 1 ) // payload type
@@ -108,9 +107,9 @@ describe( "dtmf", function() {
         sendpk( i, i*20, channel.local.port, server )
       }
 
-      senddtmf( 23, 22 * 160, 23*20, channel.local.port, server, true, false, "4" )
-      senddtmf( 24, 22 * 160, 24*20, channel.local.port, server, false, false, "4" )
-      senddtmf( 25, 22 * 160, 25*20, channel.local.port, server, false, true, "4" )
+      senddtmf( 23, 22 * 160, 23*20, channel.local.port, server, false, "4" )
+      senddtmf( 24, 22 * 160, 24*20, channel.local.port, server, false, "4" )
+      senddtmf( 25, 22 * 160, 25*20, channel.local.port, server, true, "4" )
 
       for( let i = 26;  i < 40; i ++ ) {
         sendpk( i, (i-3)*20, channel.local.port, server )
@@ -374,22 +373,76 @@ describe( "dtmf", function() {
         sendpk( i, i*20, channel.local.port, server )
       }
 
-      senddtmf( 13, 12 * 160, 13*20, channel.local.port, server, true, false, "4" )
-      senddtmf( 14, 12 * 160, 14*20, channel.local.port, server, false, false, "4" )
+      senddtmf( 13, 12 * 160, 13*20, channel.local.port, server, false, "4" )
+      senddtmf( 14, 12 * 160, 14*20, channel.local.port, server, false, "4" )
       // Packet loss
-      // senddtmf( 15, 12 * 160, 15*20, channel.port, server, false, true, "4" )
+      // senddtmf( 15, 12 * 160, 15*20, channel.port, server, true, "4" )
 
       for( let i = 16;  i < 23; i ++ ) {
         sendpk( i, (i-3)*20, channel.local.port, server )
       }
 
-      senddtmf( 23, 22 * 160, 23*20, channel.local.port, server, true, false, "5" )
-      senddtmf( 24, 22 * 160, 24*20, channel.local.port, server, false, false, "5" )
-      senddtmf( 25, 22 * 160, 25*20, channel.local.port, server, false, true, "5" )
+      senddtmf( 23, 22 * 160, 23*20, channel.local.port, server, false, "5" )
+      senddtmf( 24, 22 * 160, 24*20, channel.local.port, server, false, "5" )
+      senddtmf( 25, 22 * 160, 25*20, channel.local.port, server, true, "5" )
 
       for( let i = 26;  i < 33; i ++ ) {
         sendpk( i, (i-6)*20, channel.local.port, server )
       }
+
+      setTimeout( () => channel.close(), 1000 )
+    } )
+  } )
+
+  it( `Loose end packet`, function( done ) {
+
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+    var receviedpkcount = 0
+    server.on( "message", function( msg, rinfo ) {
+      receviedpkcount++
+    } )
+
+    this.timeout( 3000 )
+    this.slow( 2500 )
+
+    server.bind()
+    server.on( "listening", async function() {
+
+      let ourport = server.address().port
+
+      let expectedmessagecount = 0
+      const expectedmessages = [
+        { action: 'telephone-event', event: '4' },
+        { action: 'close' }
+      ]
+
+      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+        expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
+        expectedmessagecount++
+
+        if( "close" === d.action ) {
+          server.close()
+          done()
+        }
+      } )
+
+      expect( channel.echo() ).to.be.true
+
+      /* send a packet every 20mS x 50 */
+      for( let i = 0;  i < 13; i ++ ) {
+        sendpk( i, i*20, channel.local.port, server )
+      }
+
+      senddtmf( 13, 12 * 160, 13*20, channel.local.port, server, false, "4" )
+      senddtmf( 14, 12 * 160, 14*20, channel.local.port, server, false, "4" )
+      // Packet loss
+      // senddtmf( 15, 12 * 160, 15*20, channel.port, server, true, "4" )
+
+      for( let i = 16;  i < 16+25; i ++ ) {
+        sendpk( i, (i-3)*20, channel.local.port, server )
+      }
+
 
       setTimeout( () => channel.close(), 1000 )
     } )
@@ -467,17 +520,17 @@ describe( "dtmf", function() {
       sendpk( i, i*20, channela.local.port, endpointa )
     }
 
-    senddtmf( 13, 12 * 160, 13*20, channela.local.port, endpointa, true, false, "4" )
-    senddtmf( 14, 12 * 160, 14*20, channela.local.port, endpointa, false, false, "4" )
-    senddtmf( 15, 12 * 160, 15*20, channela.local.port, endpointa, false, true, "4" )
+    senddtmf( 13, 12 * 160, 13*20, channela.local.port, endpointa, false, "4" )
+    senddtmf( 14, 12 * 160, 14*20, channela.local.port, endpointa, false, "4" )
+    senddtmf( 15, 12 * 160, 15*20, channela.local.port, endpointa, true, "4" )
 
     for( let i = 16;  i < 23; i ++ ) {
       sendpk( i, (i-3)*20, channela.local.port, endpointa )
     }
 
-    senddtmf( 23, 22 * 160, 23*20, channela.local.port, endpointa, true, false, "5" )
-    senddtmf( 24, 22 * 160, 24*20, channela.local.port, endpointa, false, false, "5" )
-    senddtmf( 25, 22 * 160, 25*20, channela.local.port, endpointa, false, true, "5" )
+    senddtmf( 23, 22 * 160, 23*20, channela.local.port, endpointa, false, "5" )
+    senddtmf( 24, 22 * 160, 24*20, channela.local.port, endpointa, false, "5" )
+    senddtmf( 25, 22 * 160, 25*20, channela.local.port, endpointa, true, "5" )
 
     for( let i = 26;  i < 50; i ++ ) {
       sendpk( i, (i-6)*20, channela.local.port, endpointa )
@@ -597,17 +650,17 @@ describe( "dtmf", function() {
       sendpk( i, i*20, channela.local.port, endpointa )
     }
 
-    senddtmf( 13, 12 * 160, 13*20, channela.local.port, endpointa, true, false, "4" )
-    senddtmf( 14, 12 * 160, 14*20, channela.local.port, endpointa, false, false, "4" )
-    senddtmf( 15, 12 * 160, 15*20, channela.local.port, endpointa, false, true, "4" )
+    senddtmf( 13, 12 * 160, 13*20, channela.local.port, endpointa, false, "4" )
+    senddtmf( 14, 12 * 160, 14*20, channela.local.port, endpointa, false, "4" )
+    senddtmf( 15, 12 * 160, 15*20, channela.local.port, endpointa, true, "4" )
 
     for( let i = 16;  i < 23; i ++ ) {
       sendpk( i, (i-3)*20, channela.local.port, endpointa )
     }
 
-    senddtmf( 23, 22 * 160, 23*20, channela.local.port, endpointa, true, false, "5" )
-    senddtmf( 24, 22 * 160, 24*20, channela.local.port, endpointa, false, false, "5" )
-    senddtmf( 25, 22 * 160, 25*20, channela.local.port, endpointa, false, true, "5" )
+    senddtmf( 23, 22 * 160, 23*20, channela.local.port, endpointa, false, "5" )
+    senddtmf( 24, 22 * 160, 24*20, channela.local.port, endpointa, false, "5" )
+    senddtmf( 25, 22 * 160, 25*20, channela.local.port, endpointa, true, "5" )
 
     for( let i = 26;  i < 50; i ++ ) {
       sendpk( i, (i-6)*20, channela.local.port, endpointa )
