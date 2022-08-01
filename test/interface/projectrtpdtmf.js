@@ -3,10 +3,28 @@ const expect = require( "chai" ).expect
 const projectrtp = require( "../../index.js" ).projectrtp
 const dgram = require( "dgram" )
 
-/* helper functions */
-function sendpk( sn, sendtime, dstport, server, pt = 0 ) {
+/*
+i.e. the RTP payload
+str = "80 e5 03 b5 00 02 44 a0 1e e3 61 fb 03 0a 00 a0 4c d1"
+returns
+Buffer.from( [ 0x80, ... ] )
+*/
+function fromstr( str ) {
+  let retval = []
+  str.split( " " ).forEach( v => retval.push ( parseInt( v, 16 ) ) )
+  return Buffer.from( retval )
+}
 
-  let ssrc = 25
+function sendpayload( sendtime, pk, dstport, server ) {
+  return setTimeout( () => {
+    server.send( pk, dstport, "localhost" )
+  }, sendtime )
+}
+
+/* helper functions */
+function sendpk( sn, sendtime, dstport, server, pt = 0, ts, ssrc ) {
+
+  if( !ssrc ) ssrc = 25
   let pklength = 172
 
   return setTimeout( () => {
@@ -14,7 +32,7 @@ function sendpk( sn, sendtime, dstport, server, pt = 0 ) {
     let payload = Buffer.alloc( pklength - 12 ).fill( projectrtp.codecx.linear162pcmu( sn ) & 0xff )
     let subheader = Buffer.alloc( 10 )
 
-    let ts = sn * 160
+    if( !ts ) ts = sn * 160
 
     subheader.writeUInt8( pt, 1 ) // payload type
     subheader.writeUInt16BE( ( sn ) % ( 2**16 ) )
@@ -483,10 +501,10 @@ describe( "dtmf", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
 
     endpointb.bind()
-    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
     let expectedmessagecount = 0
     const expectedmessages = [
@@ -685,5 +703,77 @@ describe( "dtmf", function() {
 
     await finished
 
+  } )
+
+  it( `DTMF captured not working`, async function() {
+
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+    var receviedpkcount = 0
+    server.on( "message", function( msg, rinfo ) {
+      receviedpkcount++
+    } )
+
+    this.timeout( 3000 )
+    this.slow( 2500 )
+
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
+    server.bind()
+    server.on( "listening", async function() {
+
+      let ourport = server.address().port
+
+      let expectedmessagecount = 0
+      const expectedmessages = [
+        { action: 'telephone-event', event: '3' },
+        { action: 'close' }
+      ]
+
+      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+
+        expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
+        expectedmessagecount++
+
+        if( "close" === d.action ) {
+          server.close()
+          done()
+        }
+      } )
+
+      expect( channel.echo() ).to.be.true
+
+      // Event "3"
+      const dstport = channel.local.port
+      sendpk( 948, 0, dstport, server, 0, 148480, 518218235 )
+      sendpayload( 20, fromstr( "80 e5 03 b5 00 02 44 a0 1e e3 61 fb 03 0a 00 a0 4c d1" ), dstport, server )
+      sendpk( 950, 40, dstport, server, 0, 148800, 518218235 )
+      sendpayload( 60, fromstr( "80 65 03 b7 00 02 44 a0 1e e3 61 fb 03 0a 01 40 25 b8" ), dstport, server )
+      sendpk( 952, 80, dstport, server, 0, 149120, 518218235 )
+      sendpayload( 100, fromstr( "80 65 03 b9 00 02 44 a0 1e e3 61 fb 03 0a 01 e0 e8 81" ), dstport, server )
+      sendpk( 954, 120, dstport, server, 0, 149440, 518218235 )
+      sendpayload( 140, fromstr( "80 65 03 bb 00 02 44 a0 1e e3 61 fb 03 0a 02 80 e2 74" ), dstport, server )
+      sendpk( 956, 160, dstport, server, 0, 149760, 518218235 )
+      sendpayload( 180, fromstr( "80 65 03 bd 00 02 44 a0 1e e3 61 fb 03 0a 03 20 1f bb" ), dstport, server )
+      sendpk( 958, 200, dstport, server, 0, 150080, 518218235 )
+      sendpayload( 220, fromstr( "80 65 03 bf 00 02 44 a0 1e e3 61 fb 03 0a 03 c0 13 0c" ), dstport, server )
+      sendpk( 960, 240, dstport, server, 0, 150400, 518218235 )
+      sendpayload( 260, fromstr( "80 65 03 c1 00 02 44 a0 1e e3 61 fb 03 0a 04 60 2e bf" ), dstport, server )
+      sendpk( 962, 280, dstport, server, 0, 150720, 518218235 )
+      sendpayload( 300, fromstr( "80 65 03 c3 00 02 44 a0 1e e3 61 fb 03 8a 04 60 05 c1" ), dstport, server )
+      sendpayload( 320 ,fromstr( "80 65 03 c4 00 02 44 a0 1e e3 61 fb 03 8a 04 60 bb 69" ), dstport, server )
+      sendpk( 964, 340, dstport, server, 0, 151200, 518218235 )
+      sendpayload( 360, fromstr( "80 65 03 c6 00 02 44 a0 1e e3 61 fb 03 8a 04 60 1e 27" ), dstport, server )
+      sendpk( 966, 380, dstport, server, 0, 151520, 518218235 )
+      sendpk( 967, 400, dstport, server, 0, 151680, 518218235 )
+      sendpk( 968, 420, dstport, server, 0, 151840, 518218235 )
+
+      setTimeout( () => channel.close(), 25*20 )
+
+      
+    } )
+
+    await finished
   } )
 } )

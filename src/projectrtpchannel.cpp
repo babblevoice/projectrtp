@@ -588,7 +588,8 @@ bool projectrtpchannel::checkfordtmf( rtppacket *src ) {
           /* Did we lose the last end of event */
           this->lasttelephoneeventsn = 0;
           sendteleevent = true;
-        } else if( 1 == endbit ) {
+        } else if( 1 == endbit &&
+                   0 != this->lasttelephoneeventsn ) {
           sendteleevent = true;
         }
 
