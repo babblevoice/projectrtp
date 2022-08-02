@@ -763,15 +763,14 @@ describe( "dtmf", function() {
       sendpk( 962, 280, dstport, server, 0, 150720, 518218235 )
       sendpayload( 300, fromstr( "80 65 03 c3 00 02 44 a0 1e e3 61 fb 03 8a 04 60 05 c1" ), dstport, server )
       sendpayload( 320 ,fromstr( "80 65 03 c4 00 02 44 a0 1e e3 61 fb 03 8a 04 60 bb 69" ), dstport, server )
-      sendpk( 964, 340, dstport, server, 0, 151200, 518218235 )
+      sendpk( 965, 340, dstport, server, 0, 151200, 518218235 )
       sendpayload( 360, fromstr( "80 65 03 c6 00 02 44 a0 1e e3 61 fb 03 8a 04 60 1e 27" ), dstport, server )
-      sendpk( 966, 380, dstport, server, 0, 151520, 518218235 )
-      sendpk( 967, 400, dstport, server, 0, 151680, 518218235 )
-      sendpk( 968, 420, dstport, server, 0, 151840, 518218235 )
+      sendpk( 967, 380, dstport, server, 0, 151520, 518218235 )
+      sendpk( 968, 400, dstport, server, 0, 151680, 518218235 )
+      sendpk( 969, 420, dstport, server, 0, 151840, 518218235 )
+      sendpk( 970, 440, dstport, server, 0, 152000, 518218235 )
 
       setTimeout( () => channel.close(), 25*20 )
-
-      
     } )
 
     await finished

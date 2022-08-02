@@ -116,7 +116,7 @@ docker buildx create --name rtpbuilder --use --bootstrap --platform linux/amd64,
 Then to build, and push to Docker hub:
 ```
 docker buildx prune
-docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.2.4 . --push
+docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.2.5 . --push
 ```
 
 NB: updating version, Docker file, this readme and package.json all need updating - is there a way of automating this?
