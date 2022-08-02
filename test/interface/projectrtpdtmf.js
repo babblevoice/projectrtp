@@ -3,6 +3,8 @@ const expect = require( "chai" ).expect
 const projectrtp = require( "../../index.js" ).projectrtp
 const dgram = require( "dgram" )
 
+const pcap = require( "./pcap.js" )
+
 /*
 i.e. the RTP payload
 str = "80 e5 03 b5 00 02 44 a0 1e e3 61 fb 03 0a 00 a0 4c d1"
@@ -774,5 +776,72 @@ describe( "dtmf", function() {
     } )
 
     await finished
+  } )
+
+  it( `DTMF PCAP playback test 1`, async function() {
+
+    this.timeout( 21000 )
+    this.slow( 20000 )
+
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
+    const receivedmessages = []
+
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+    var receviedpkcount = 0
+    server.on( "message", function( msg, rinfo ) {
+      receviedpkcount++
+    } )
+
+    server.bind()
+    server.on( "listening", async function() {
+
+      let ourport = server.address().port
+      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+        receivedmessages.push( d )
+
+        if( "close" === d.action ) {
+          server.close()
+          done()
+        }
+      } )
+      setTimeout( () => channel.close(), 1000 * 17 )
+      const dstport = channel.local.port
+
+      channel.play( { "interupt":true, "files": [ { "wav": "test/interface/pcaps/180fa1ac-08e5-11ed-bd4d-02dba5b5aad6.wav" } ] } )
+
+      let ourpcap = await pcap.readpcap( "test/interface/pcaps/dtmfcapture1.pcap" )
+
+      const offset = 4700
+
+      ourpcap.forEach( ( packet ) => {
+        if( packet.ipv4 && packet.ipv4.udp && 10230 == packet.ipv4.udp.dstport ) {
+          //console.dir( packet, { depth: null } )
+          //console.log(packet.ipv4.udp.data.readUInt16BE( 2 ) )
+
+          //const sn = packet.ipv4.udp.data.readUInt16BE( 2 )
+
+          sendpayload( ( 1000 * packet.ts_sec_offset ) - offset, packet.ipv4.udp.data, dstport, server )
+        }
+      } )
+    } )
+
+    await finished
+
+    const expectedmessages = [
+      { action: 'play', event: 'start', reason: 'new' },
+      { action: 'play', event: 'end', reason: 'telephone-event' },
+      { action: 'telephone-event', event: '2' },
+      { action: 'close' }
+    ]
+
+    expect( receivedmessages.length ).to.equal( 4 )
+    expect( receivedmessages[ 0 ] ).to.deep.include( expectedmessages[ 0 ] )
+    expect( receivedmessages[ 1 ] ).to.deep.include( expectedmessages[ 1 ] )
+    expect( receivedmessages[ 2 ] ).to.deep.include( expectedmessages[ 2 ] )
+    expect( receivedmessages[ 3 ] ).to.deep.include( expectedmessages[ 3 ] )
+
   } )
 } )

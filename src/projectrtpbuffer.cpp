@@ -94,10 +94,7 @@ Stores the last reserved packet.
 */
 void rtpbuffer::push( void ) {
 
-  if( nullptr == this->reserved ) {
-    return;
-  }
-
+  if( nullptr == this->reserved ) return;
   uint16_t sn = this->reserved->getsequencenumber();
 
   /*
@@ -106,16 +103,16 @@ void rtpbuffer::push( void ) {
     allow packets to build up to that level and gain some order.
     -1 as we have the this->reserved packet
   */
-  if( this->availablertpdata.size() == ( this->buffer.size() - 1 ) ) {
+  if( ( 1 + this->availablertpdata.size() ) == static_cast< std::size_t >( this->buffercount ) ) {
     this->outsn = sn - static_cast< uint16_t >( this->waterlevel );
-  } else {
-    /* out of range - based on our outsn counter */
-    if( ( static_cast< uint16_t >( sn - this->outsn ) ) > ( static_cast< uint16_t >( this->buffercount ) ) ) {
-      this->availablertpdata.push( this->reserved );
-      this->reserved = nullptr;
-      this->dropped++;
-      return;
-    }
+  }
+
+  /* out of range - based on our outsn counter */
+  if( ( static_cast< uint16_t >( sn - this->outsn ) ) > ( static_cast< uint16_t >( this->buffercount ) ) ) {
+    this->availablertpdata.push( this->reserved );
+    this->reserved = nullptr;
+    this->dropped++;
+    return;
   }
 
   if( nullptr == this->orderedrtpdata.at( sn % this->buffercount ) ) {
