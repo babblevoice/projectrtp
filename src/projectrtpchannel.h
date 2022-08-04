@@ -39,6 +39,12 @@ class projectchannelmux;
 /* Must be to the power 2 */
 #define OUTBUFFERPACKETCOUNT 16
 
+/* 
+   The SN difference between receiving the first DTMF EV and when we consider we have lost all end events.
+   Delay = MAXDTMFSNDIFFERENCE * 20mS
+*/
+#define MAXDTMFSNDIFFERENCE 75
+
 
 /*
 # projectrtpchannel

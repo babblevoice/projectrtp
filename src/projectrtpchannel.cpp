@@ -605,7 +605,7 @@ bool projectrtpchannel::checkfordtmf( rtppacket *src ) {
     }
     return true;
   } else if( 0 != this->lasttelephoneeventsn &&
-             abs( static_cast< long long int >( sn - this->lasttelephoneeventsn ) ) > 20 ) {
+             abs( static_cast< long long int >( sn - this->lasttelephoneeventsn ) ) > MAXDTMFSNDIFFERENCE ) {
     /* timeout on waiting for end packet */
     this->sendtelevent();
     this->lasttelephoneeventsn = 0;

@@ -96,7 +96,7 @@ describe( "dtls", function() {
 
     expect( channelb.echo() ).to.be.true
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 2000 ) } )
+    await new Promise( ( r ) => { setTimeout( () => r(), 2000 ) } )
 
     channela.close()
 
@@ -104,11 +104,11 @@ describe( "dtls", function() {
     await finished
 
     expect( channelaclose.reason ).to.equal( "requested" )
-    expect( channelaclose.stats.in.count ).to.be.above( 80 )
+    expect( channelaclose.stats.in.count ).to.be.above( 78 )
     expect( channelaclose.stats.in.skip ).to.equal( 0 )
 
     expect( channelbclose.reason ).to.equal( "requested" )
-    expect( channelbclose.stats.in.count ).to.be.above( 80 )
+    expect( channelbclose.stats.in.count ).to.be.above( 78 )
     expect( channelbclose.stats.in.skip ).to.equal( 0 )
 
   } )

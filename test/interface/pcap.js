@@ -6,7 +6,7 @@ function toHex( d ) {
 }
 
 
-module.exports.readpcap = async ( file, maxnumberofpackets = 1000 ) => {
+module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
 
   /* Buffer */
   const data = fs.readFileSync( file )

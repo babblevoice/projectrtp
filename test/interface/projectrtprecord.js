@@ -111,7 +111,7 @@ describe( "record", function() {
       }
     } )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1100 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
     channel.close()
 
     /* Now test the file */
@@ -121,9 +121,9 @@ describe( "record", function() {
     expect( wavinfo.samplerate ).to.equal( 8000 )
     expect( wavinfo.byterate ).to.equal( 32000 )
     expect( wavinfo.bitdepth ).to.equal( 16 )
-    expect( wavinfo.chunksize ).to.be.within( 28000, 29000 )
+    expect( wavinfo.chunksize ).to.be.within( 28000, 33000 )
     expect( wavinfo.fmtchunksize ).to.equal( 16 )
-    expect( wavinfo.subchunksize ).to.be.within( 28000, 29000 )
+    expect( wavinfo.subchunksize ).to.be.within( 28000, 33000 )
 
     let ourfile = await fspromises.open( "/tmp/ourrecording.wav", "r" )
     const buffer = Buffer.alloc( 28204 )
@@ -197,7 +197,7 @@ describe( "record", function() {
         "finish": true
       } ) , 600 )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1100 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
     channel.close()
     await finished
 
@@ -209,9 +209,9 @@ describe( "record", function() {
     expect( wavinfo.samplerate ).to.equal( 8000 )
     expect( wavinfo.byterate ).to.equal( 32000 )
     expect( wavinfo.bitdepth ).to.equal( 16 )
-    expect( wavinfo.chunksize ).to.be.within( 12000, 13000 )
+    expect( wavinfo.chunksize ).to.be.within( 8000, 13000 )
     expect( wavinfo.fmtchunksize ).to.equal( 16 )
-    expect( wavinfo.subchunksize ).to.be.within( 12000, 13000 )
+    expect( wavinfo.subchunksize ).to.be.within( 8000, 13000 )
 
   } )
 
@@ -261,7 +261,7 @@ describe( "record", function() {
       }, 400 )
     } )
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1100 ) } )
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1300 ) } )
     channel.close()
 
     await finished
@@ -273,12 +273,12 @@ describe( "record", function() {
     expect( wavinfo.samplerate ).to.equal( 8000 )
     expect( wavinfo.byterate ).to.equal( 32000 )
     expect( wavinfo.bitdepth ).to.equal( 16 )
-    expect( wavinfo.chunksize ).to.be.within( 5500, 7000 ) /* 200mS of audio */
+    expect( wavinfo.chunksize ).to.be.within( 3000, 7000 ) /* 200mS of audio */
     expect( wavinfo.fmtchunksize ).to.equal( 16 )
-    expect( wavinfo.subchunksize ).to.be.within( 5500, 7000 )
+    expect( wavinfo.subchunksize ).to.be.within( 3000, 7000 )
 
     let stats = fs.statSync( "/tmp/ourpausedrecording.wav" )
-    expect( stats.size ).to.be.within( 5500, 7000 )
+    expect( stats.size ).to.be.within( 3000, 7000 )
 
   } )
 

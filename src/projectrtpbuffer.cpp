@@ -138,6 +138,7 @@ rtppacket* rtpbuffer::reserve( void ) {
 
   /* Space was not available in availablertpdata - this should be rare and means data is
   comming in too fast so we clear to make way for new data */
+  fprintf( stderr, "Buffer too full - dumping\n" );
   while ( !this->availablertpdata.empty() ) this->availablertpdata.pop();
 
   for ( auto i = 0; i < this->buffercount; i++ ) {
