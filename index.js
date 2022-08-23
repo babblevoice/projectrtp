@@ -235,7 +235,7 @@ let actualprojectrtp = false
     this.proxy = new proxy()
   }
 
-  run() {
+  run( params ) {
 
     if( process.platform == "win32" && process.arch == "x64" ) {
       throw "Platform not currently supported"
@@ -247,8 +247,7 @@ let actualprojectrtp = false
 
     gencerts()
     actualprojectrtp = require( bin )
-    actualprojectrtp.run("5")
-    console.log('After run')
+    actualprojectrtp.run( params )
     this.dtls = actualprojectrtp.dtls
     this.tone = actualprojectrtp.tone
     this.rtpfilter = actualprojectrtp.rtpfilter
