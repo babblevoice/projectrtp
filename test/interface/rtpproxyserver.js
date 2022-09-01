@@ -200,7 +200,6 @@ describe( "rtpproxy server", function() {
       expect( msg.other ).to.have.property( "uuid" ).that.is.a( "string" )
       expect( msg ).to.have.property( "id" ).that.is.a( "string" )
       expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
-      console.log("abc")
       mixreceived = true
     } )
 
@@ -250,7 +249,7 @@ describe( "rtpproxy server", function() {
           "action": "open",
           "id": msg.id,
           "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
-          "channel": {
+          "local": {
             "port": 10002,
             "address": "192.168.0.141"
             },
@@ -275,6 +274,13 @@ describe( "rtpproxy server", function() {
       unmixreceived = true
     } )
 
+    n.setmessagehandler( "remote", ( msg ) => {
+      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "remote" )
+      expect( msg ).to.have.property( "id" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "remote" )
+    } )
+
     n.setmessagehandler( "close", ( msg ) => {  
       n.destroy()
       p.destroy()
@@ -286,7 +292,7 @@ describe( "rtpproxy server", function() {
           "action": "open",
           "id": msg.id,
           "uuid": "9dfc35d9-eafe-4d8b-8880-c48f528ec152",
-          "channel": {
+          "local": {
             "port": 10004,
             "address": "192.168.0.141"
             },
@@ -310,6 +316,13 @@ describe( "rtpproxy server", function() {
       unmixreceived = true
     } )
 
+    n2.setmessagehandler( "remote", ( msg ) => {
+      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "remote" )
+      expect( msg ).to.have.property( "id" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
+      expect( msg ).to.have.property( "remote" )
+    } )
+
     n2.setmessagehandler( "close", ( msg ) => {  
       n2.destroy()
       closereceived = true
@@ -317,7 +330,6 @@ describe( "rtpproxy server", function() {
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     n.connect( listenport )
-    //await p.waitfornewconnection()
     n2.connect( listenport )
     await p.waitfornewconnection()
     
@@ -352,7 +364,7 @@ describe( "rtpproxy server", function() {
           "action": "open",
           "id": msg.id,
           "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
-          "channel": {
+          "local": {
             "port": 10002,
             "address": "192.168.0.141"
             },
@@ -371,7 +383,7 @@ describe( "rtpproxy server", function() {
           "action": "open",
           "id": msg.id,
           "uuid": "9dfc35d9-eafe-4d8b-8880-c48f528ec152",
-          "channel": {
+          "local": {
             "port": 10004,
             "address": "192.168.0.141"
             },
