@@ -244,6 +244,7 @@ describe( "rtpproxy server", function() {
     let mixreceived = false
     let unmixreceived = false
     let closereceived = false
+
     n.setmessagehandler( "open", ( msg ) => {
       n.sendmessage( {
           "action": "open",
@@ -299,6 +300,7 @@ describe( "rtpproxy server", function() {
           "status": n2.ourstats
           } )
     } )
+
     n2.setmessagehandler( "mix", ( msg ) => {
       expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "mix" )
       expect( msg ).to.have.property( "other" ).that.is.a( "object" )
@@ -358,6 +360,7 @@ describe( "rtpproxy server", function() {
     let n2 = new mocknode()
     let firstopened = false
     let secondopened = false
+
     n.setmessagehandler( "open", ( msg ) => {
       firstopened = true
       n.sendmessage( {
@@ -369,9 +372,9 @@ describe( "rtpproxy server", function() {
             "address": "192.168.0.141"
             },
           "status": n.ourstats
-
           } )
     } )
+    
     n.setmessagehandler( "close", ( msg ) => {  
       n.destroy()
       p.destroy()

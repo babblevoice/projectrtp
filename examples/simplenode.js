@@ -5,6 +5,7 @@ const prtp = require( "@babblevoice/projectrtp" )
 const https = require( "https" )
 const fs = require( "fs" )
 
+// Get startport and endport from command line arguments
 var ports = process.argv.slice(2)
 var start = 10000
 var end = 20000

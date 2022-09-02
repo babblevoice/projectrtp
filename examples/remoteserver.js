@@ -9,7 +9,12 @@ async function connect() {
     let clientb = await projectrtp.openchannel({ "remote": { "address": "localhost", "port": clienta.local.port, "codec": 0 } })
     clienta.remote({ "address": "localhost", "port": clientb.local.port, "codec": 0 })
 
-    let channela = await projectrtp.openchannel()
+    let channela = await projectrtp.openchannel({}, ( d ) => {
+      if( "mix" === d.action ) {
+        console.log("mixed channel a")
+      }
+    } )
+    
     let channelb = await projectrtp.openchannel({}, ( d ) => {
         if( "mix" === d.action ) {
           console.log("mixed channel b")
