@@ -5,21 +5,20 @@ async function connect() {
     console.log("Server listening")
     await new Promise( ( r ) => { setTimeout( () => r(),  5000  ) } )
 
-    let clienta = await projectrtp.openchannel()
-    let clientb = await projectrtp.openchannel({ "remote": { "address": "localhost", "port": clienta.local.port, "codec": 0 } })
-    clienta.remote({ "address": "localhost", "port": clientb.local.port, "codec": 0 })
-
     let channela = await projectrtp.openchannel({}, ( d ) => {
       if( "mix" === d.action ) {
         console.log("mixed channel a")
       }
     } )
-    
     let channelb = await projectrtp.openchannel({}, ( d ) => {
         if( "mix" === d.action ) {
           console.log("mixed channel b")
         }
-      } )
+    } )
+
+    let clienta = await projectrtp.openchannel({ "remote": { "address": "localhost", "port": channela.local.port, "codec": 0 } })
+    let clientb = await projectrtp.openchannel({ "remote": { "address": "localhost", "port": channelb.local.port, "codec": 0 } })
+
     channela.mix(channelb)
 
     console.log("Channels mixed")
