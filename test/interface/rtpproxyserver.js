@@ -109,11 +109,12 @@ describe( "rtpproxy server", function() {
       receivedecho = true
     } )
 
-    let closereceived = false
+    let closeresolve
+    let closereceived = new Promise( resolve => closeresolve = resolve )
     n.setmessagehandler( "close", ( onmsg ) => {
       n.destroy()
       p.destroy()
-      closereceived = true
+      closeresolve()
     } )
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
@@ -123,11 +124,10 @@ describe( "rtpproxy server", function() {
     channel.echo()
     channel.close()
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+    /* this will only resolve when close received */
+    await closereceived
 
     expect( receivedecho ).to.be.true
-    expect( closereceived ).to.be.true
-
   } )
 
   it( `check dtmf`, async function() {
@@ -155,11 +155,12 @@ describe( "rtpproxy server", function() {
       expect( msg ).to.have.property( "digits" ).that.is.a( "string" ).to.equal( "#123" )
     } )
 
-    let closereceived = false
+    let closeresolve
+    let closereceived = new Promise( resolve => closeresolve = resolve )
     n.setmessagehandler( "close", ( onmsg ) => {
       n.destroy()
       p.destroy()
-      closereceived = true
+      closeresolve()
     } )
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
@@ -169,9 +170,8 @@ describe( "rtpproxy server", function() {
     channel.dtmf( "#123" )
     channel.close()
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+    await closereceived
 
-    expect( closereceived ).to.be.true
     expect( reveiveddtmf ).to.be.true
   } )
 
@@ -210,11 +210,12 @@ describe( "rtpproxy server", function() {
       unmixreceived = true
     } )
 
-    let closereceived = false
+    let closeresolve
+    let closereceived = new Promise( resolve => closeresolve = resolve )
     n.setmessagehandler( "close", ( msg ) => {
       n.destroy()
       p.destroy()
-      closereceived = true
+      closeresolve()
     } )
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
@@ -226,12 +227,10 @@ describe( "rtpproxy server", function() {
 
     channel.close()
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+    await closereceived
 
     expect( mixreceived ).to.be.true
     expect( unmixreceived ).to.be.true
-
-    expect( closereceived ).to.be.true
 
   } )
 
@@ -261,11 +260,12 @@ describe( "rtpproxy server", function() {
       remotereceived = true
     } )
 
-    let closereceived = false
+    let closeresolve
+    let closereceived = new Promise( resolve => closeresolve = resolve )
     n.setmessagehandler( "close", ( msg ) => {
       n.destroy()
       p.destroy()
-      closereceived = true
+      closeresolve()
     } )
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
@@ -275,11 +275,9 @@ describe( "rtpproxy server", function() {
     channel.remote( "wouldbearemoteobject" )
 
     channel.close()
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } )
+    await closereceived
 
     expect( remotereceived ).to.be.true
-    expect( closereceived ).to.be.true
-
   } )
 
 

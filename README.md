@@ -113,10 +113,15 @@ Or in one shot and build it. This create a docker image and container buildkit.
 docker buildx create --name rtpbuilder --use --bootstrap --platform linux/amd64,linux/arm64
 ```
 
+To clean up if you want to remove this buildx env:
+```
+docker buildx rm rtpbuilder
+```
+
 Then to build, and push to Docker hub:
 ```
 docker buildx prune
-docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.2.8 . --push
+docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.2.9 . --push
 ```
 
 NB: updating version, Docker file, this readme and package.json all need updating - is there a way of automating this?

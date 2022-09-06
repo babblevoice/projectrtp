@@ -222,6 +222,9 @@ private:
   dtlssession::pointer rtpdtls;
   std::atomic_bool rtpdtlslock;
 
+  dtlssession::mode dtlsmode;
+  std::string dtlsfingerprint;
+
   std::string remoteaddress;
   unsigned short remoteport;
 

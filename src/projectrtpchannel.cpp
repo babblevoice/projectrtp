@@ -94,6 +94,8 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   recorders(),
   rtpdtls( nullptr ),
   rtpdtlslock( false ),
+  dtlsmode( dtlssession::none ),
+  dtlsfingerprint( "" ),
   remoteaddress(),
   remoteport( 0 ),
   queueddigits(),
@@ -145,35 +147,59 @@ void projectrtpchannel::remote( std::string address,
                                 uint32_t codec,
                                 dtlssession::mode m,
                                 std::string fingerprint ) {
-  this->remoteconfirmed = false;
-  this->remoteaddress = address;
-  this->remoteport = port;
-  this->codec = codec;
 
-  if( dtlssession::none != m ) {
-    dtlssession::pointer newsession = dtlssession::create( m );
-    newsession->setpeersha256( fingerprint );
+  /* track changes which invalidate dtls session */
+  bool changed = false;
 
-    projectrtpchannel::pointer p = shared_from_this();
-    newsession->ondata( [ p ] ( const void *d , size_t l ) -> void {
-      /* Note to me, I need to confirm that gnutls maintains the buffer ptr until after the handshake is confirmed (or
-         at least until we have sent the packet). */
-      if( p->remoteconfirmed ) {
-        p->rtpsocket.async_send_to(
-                          boost::asio::buffer( d, l ),
-                          p->confirmedrtpsenderendpoint,
-                          []( const boost::system::error_code& ec, std::size_t bytes_transferred ) -> void {
-                            /* We don't need to do anything */
-                          } );
-      }
-    } );
-
-    AQUIRESPINLOCK( this->rtpdtlslock );
-    this->rtpdtls = newsession;
-    RELEASESPINLOCK( this->rtpdtlslock );
+  if( address != this->remoteaddress ) {
+    this->remoteaddress = address;
+    changed = true;
+  }
+  
+  if( port != this->remoteport ) {
+    this->remoteport = port;
+    changed = true;
   }
 
-  if( this->active ) this->doremote();
+  
+  if( this->dtlsfingerprint != fingerprint ) {
+    this->dtlsfingerprint = fingerprint;
+    changed = true;
+  }
+
+  if( this->dtlsmode != m ) {
+    this->dtlsmode = m;
+    changed = true;
+  }
+
+  this->codec = codec;
+
+  if( changed ) {
+    if( dtlssession::none != m ) {
+      dtlssession::pointer newsession = dtlssession::create( m );
+      newsession->setpeersha256( fingerprint );
+
+      projectrtpchannel::pointer p = shared_from_this();
+      newsession->ondata( [ p ] ( const void *d , size_t l ) -> void {
+        /* Note to me, I need to confirm that gnutls maintains the buffer ptr until after the handshake is confirmed (or
+          at least until we have sent the packet). */
+        if( p->remoteconfirmed ) {
+          p->rtpsocket.async_send_to(
+                            boost::asio::buffer( d, l ),
+                            p->confirmedrtpsenderendpoint,
+                            []( const boost::system::error_code& ec, std::size_t bytes_transferred ) -> void {
+                              /* We don't need to do anything */
+                            } );
+        }
+      } );
+
+      AQUIRESPINLOCK( this->rtpdtlslock );
+      this->rtpdtls = newsession;
+      RELEASESPINLOCK( this->rtpdtlslock );
+    }
+    this->remoteconfirmed = false;
+    if( this->active ) this->doremote();
+  }
 }
 
 /*
