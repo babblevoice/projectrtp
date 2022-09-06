@@ -108,7 +108,7 @@ public:
   void dtmf( std::string digits );
   rtppacket *gettempoutbuf( void );
 
-  uint32_t codec;
+  std::atomic_uint32_t codec;
   uint32_t ssrcin;
   uint32_t ssrcout;
   uint32_t tsout;
