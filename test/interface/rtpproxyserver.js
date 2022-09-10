@@ -335,8 +335,8 @@ describe( "rtpproxy server", function() {
     n2.connect( listenport )
     await p.waitfornewconnection()
     
-    let channel1 = await prtp.openchannel( {"selected_node": n.id} )
-    let channel2 = await prtp.openchannel( {"selected_node": n2.id} )
+    let channel1 = await prtp.openchannel( {"nodeinstance": n.id} )
+    let channel2 = await prtp.openchannel( {"nodeinstance": n2.id} )
 
     await channel1.mix( channel2 )
     channel1.unmix()

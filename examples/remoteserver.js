@@ -19,12 +19,16 @@ async function connect() {
     let clienta = await projectrtp.openchannel({ "remote": { "address": "localhost", "port": channela.local.port, "codec": 0 } })
     let clientb = await projectrtp.openchannel({ "remote": { "address": "localhost", "port": channelb.local.port, "codec": 0 } })
 
-    channela.mix(channelb)
+    await channela.mix(channelb)
+    let channelc = await projectrtp.openchannel()
+    await channela.mix(channelc)
 
     console.log("Channels mixed")
     await new Promise( ( r ) => { setTimeout( () => r(),  5000  ) } )
     clienta.play( { "loop": true, "files": [ { "wav": "/tmp/uksounds.wav" } ] } ) 
     clientb.echo()
+    channela.close()
+
     await new Promise( ( r ) => { setTimeout( () => r(),  10000  ) } )
 }
 
