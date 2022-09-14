@@ -92,6 +92,19 @@ After installing standard build tools - including g++.
 dnf install ilbc-devel spandsp-devel boost gnutls libsrtp libsrtp-devel
 ```
 
+### Ubuntu
+
+Build ilbc from the sub module plus install other dependancies.
+
+```bash
+
+apt install libboost-dev libspandsp-dev gnutls-dev libsrtp2-dev cmake 
+
+cd ilbc
+cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; cmake --build .; cmake --install .
+cd ..
+```
+
 ## Docker/Podman
 
 Podman has some shortfalls. Remove and install docker.
