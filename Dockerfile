@@ -12,7 +12,7 @@ RUN apk add --no-cache \
     tar xvzf libilbc-3.0.4.tar.gz; \
     cd libilbc-3.0.4; \
     cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; cmake --build .; cmake --install .; \
-    npm -g install @babblevoice/projectrtp@2.2.10; \
+    npm -g install @babblevoice/projectrtp@2.2.12; \
     rm -fr /usr/local/lib/node_modules/@babblevoice/projectrtp/src/build/Release/obj.target/projectrtp
 
 FROM node:18-alpine as app
