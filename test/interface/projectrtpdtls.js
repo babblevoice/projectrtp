@@ -261,10 +261,8 @@ describe( "dtls", function() {
       }
     } )
 
-    let clientbclose
     let clientb = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
-        clientbclose = d
         done()
       }
     } )
@@ -294,6 +292,153 @@ describe( "dtls", function() {
     expect( clientaclose.reason ).to.equal( "requested" )
     expect( clientaclose.stats.in.count ).to.be.above( 70 )
     expect( clientaclose.stats.in.skip ).to.equal( 0 )
+
+  } )
+
+  it( `Connect then remote to another session`, async function() {
+
+    /*
+                    |     internal projectrtp      |
+    Clienta         |  channela          channelb  |        clientb
+        |  RTP (DTLS)     |       MIX       |      RTP        |
+        |<--------------->|<--------------->|<--------------->| Step 1.
+        |<-(close)-(rem)->|<--------------->|<--------------->| Step 2.
+    Clientc
+        |<--------------->|<--------------->|<--------------->|Step 3.
+        play                                                 echo
+
+    
+    */
+
+    this.timeout( 6000 )
+    this.slow( 2500 )
+
+    projectrtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000", "/tmp/ukringing.wav" )
+
+    let channeltargeta = {
+      "address": "localhost",
+      "port": 0,
+      "codec": 0,
+      "dtls": {
+        "fingerprint": {
+          "hash": ""
+        },
+        "mode": "active" // - is this in the right place and the right way round!
+      }
+    }
+
+    let channeltargetc = {
+      "address": "localhost",
+      "port": 0,
+      "codec": 0,
+      "dtls": {
+        "fingerprint": {
+          "hash": ""
+        },
+        "mode": "active" // - is this in the right place and the right way round!
+      }
+    }
+
+    let clienttargeta = {
+      "address": "localhost",
+      "port": 12008,
+      "codec": 0,
+      "dtls": {
+        "fingerprint": {
+          "hash": ""
+        },
+        "mode": "passive"
+      }
+    }
+
+    let channeltargetb = {
+      "address": "localhost",
+      "port": 0,
+      "codec": 0
+    }
+
+    let clienttargetb = {
+      "address": "localhost",
+      "port": 12010,
+      "codec": 0
+    }
+
+    let done
+    let finished = new Promise( ( r ) => { done = r } )
+
+    let channela = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) {
+        channelb.close()
+      }
+    } )
+
+    let clientaclose
+    let clienta = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) {
+        clientaclose = d
+      }
+    } )
+
+    channeltargeta.dtls.fingerprint.hash = clienta.local.dtls.fingerprint
+    channeltargeta.port = clienta.local.port
+    expect( channela.remote( channeltargeta ) ).to.be.true
+    clienttargeta.port = channela.local.port
+    clienttargeta.dtls.fingerprint.hash = channela.local.dtls.fingerprint
+    expect( clienta.remote( clienttargeta ) ).to.be.true
+
+    clienta.play( { "loop": true, "files": [
+                    { "wav": "/tmp/ukringing.wav" } ] } )
+
+
+    let channelb = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) {
+        clientb.close()
+      }
+    } )
+
+    let clientb = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) {
+        clientc.close()
+      }
+    } )
+
+    let clientcclose
+    let clientc = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) {
+        clientcclose = d
+        done()
+      }
+    } )
+
+    channeltargetb.port = clientb.local.port
+    expect( channelb.remote( channeltargetb ) ).to.be.true
+    clienttargetb.port = channelb.local.port
+    expect( clientb.remote( clienttargetb ) ).to.be.true
+    expect( clientb.echo() ).to.be.true
+
+    channela.mix( channelb )
+
+    await new Promise( ( r ) => { setTimeout( () => r(), 500 ) } )
+
+    channeltargetc.dtls.fingerprint.hash = clientc.local.dtls.fingerprint
+    channeltargetc.port = clientc.local.port
+    expect( channela.remote( channeltargetc ) ).to.be.true
+    expect( clientc.remote( clienttargeta ) ).to.be.true
+
+    clientc.play( { "loop": true, "files": [
+      { "wav": "/tmp/ukringing.wav" } ] } )
+    clienta.close()
+
+    await new Promise( ( r ) => { setTimeout( () => r(), 1500 ) } )
+
+    channela.close()
+
+    await fs.promises.unlink( "/tmp/ukringing.wav" ).catch( () => {} )
+    await finished
+
+    expect( clientcclose.stats.in.count ).to.be.above( 10 )
+    expect( clientcclose.stats.in.skip ).to.equal( 0 )
+
 
   } )
 
