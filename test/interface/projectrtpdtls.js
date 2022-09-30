@@ -1,9 +1,66 @@
 /*
 Currently we use ourselelves to test us working - which is not ideal but better than nothing.
+
+Ref: https://github.com/nplab/DTLS-Examples/blob/master/DTLS.pdf
+
+
+Client                              Server            Flight
+  |-------Client Hello--------------->| (use_srtp)      1
+  |<------Hello Verify Request--------| (optional)      2
+  |-------Client Hello--------------->| (optional)      3
+  |<------Server Hello----------------| (use_srtp)      4
+  |<------Server Certificate----------| (optional)      4
+  |<------Certificate Request---------| (optional)      4
+  |<------Server Key Exchange---------| (optional)      4
+  |<------Server hello done-----------|                 4
+  |-------Client Certificate--------->| (optional)      5
+  |-------Client Key Exchange-------->|                 5
+  |-------Certificate Verify--------->| (optional)      5
+  |-------Change Cipher spec--------->|                 5
+  |-------Finished------------------->|                 5
+  |<------Change Cipher spec----------|                 6
+  |<------Finished--------------------|                 6
+
+  RFC also makes note of this diagram:
+
+           Client                                               Server
+
+         ClientHello                  -------->
+                                                         ServerHello
+                                                        Certificate*
+                                                  ServerKeyExchange*
+                                                 CertificateRequest*
+                                      <--------      ServerHelloDone
+         Certificate*
+         ClientKeyExchange
+         CertificateVerify*
+         [ChangeCipherSpec]
+         Finished                     -------->
+                                                  [ChangeCipherSpec]
+                                      <--------             Finished
+         Application Data             <------->     Application Data
+
+  Items which are optional in the DTLS are marked with *
+
+  As UDP is unreliable then timeouts can occur. Each message is not timed out and resent - each flight is
+  so if something is missing then the whole flight will be retranmitted.
+
+  RFC 5764 requirements:
+  The client must use use_srtp extension
+  If supported, the server must respond in its hello with a use_srtp extension
+  The client *must* offer a protection profile
+  The server *must* offer a protection profile which has been offered by the client
+  If there is no shared profile the use_srtp extension should not be added
+
+  The srtp_mki value MAY... (only may so I won't look for issues there yet)
+
+    
 */
 const expect = require( "chai" ).expect
 const projectrtp = require( "../../index.js" ).projectrtp
 const fs = require( "fs" )
+
+const { exec } = require( "node:child_process" )
 
 /* Tests */
 describe( "dtls", function() {
@@ -32,7 +89,7 @@ describe( "dtls", function() {
     await finished
   } )
 
-  it( `Create 2 channels and negotiate`, async function() {
+  it( `Create 2 channels and negotiate dtls`, async function() {
 
     this.timeout( 6000 )
     this.slow( 2500 )
@@ -237,6 +294,137 @@ describe( "dtls", function() {
     expect( clientaclose.reason ).to.equal( "requested" )
     expect( clientaclose.stats.in.count ).to.be.above( 70 )
     expect( clientaclose.stats.in.skip ).to.equal( 0 )
+
+  } )
+
+
+  it( `Create TLS UDP server`, async function() {
+    
+    /* only used to play with */
+    if(1)return
+    /*
+    Use openssl to test our connection.
+    openssl (client)               project (server)
+       |                              |
+       |-------client hello---------->| (use_dtls)
+       |<------server hello-----------|
+       |<------certificate------------|
+       |<------server key exchange----|
+       |<------cert request  (frag)---| (multiple)
+       |<------server hello done------|
+       |---cert client key exchange---|
+       ...
+    */
+
+    this.timeout( 25000 )
+    this.slow( 15000 )
+
+    let channeltarget = {
+      "address": "localhost",
+      "port": 10002,
+      "codec": 0,
+      "dtls": {
+        "fingerprint": {
+          "hash": ""
+        },
+        "mode": "passive" // - is this in the right place and the right way round!
+      }
+    }
+
+    let channel = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) {
+        channelclose = d
+      }
+    } )
+
+    channeltarget.dtls.fingerprint.hash = channel.local.dtls.fingerprint
+    channel.remote( channeltarget )
+
+    await new Promise( ( r ) => { setTimeout( () => r(), 1000 ) } )
+
+    let execcompleted
+    let execwait = new Promise( ( r ) => execcompleted )
+
+    exec( `openssl s_client -connect 127.0.0.1:10000 -cert ~/.projectrtp/certs/dtls-srtp.pem -noservername -brief -dtls -mtu 1452 -bind 127.0.0.1:10002`, ( error, stdout, stderr ) => {
+      if (error) {
+        console.error(`exec error: ${error}`);
+        return;
+      }
+      console.log(`stdout: ${stdout}`);
+      console.error(`stderr: ${stderr}`);
+
+      execcompleted()
+    } )
+
+    console.log("hi")
+
+    await execwait
+
+    
+  } )
+
+  it( `Create TLS UDP client`, async function() {
+    /* only used to play with */
+    if(1)return
+    /*
+    Use openssl to test our connection.
+    project (client)                                   openssl (server)
+       |                                                  |
+       |--------------client hello----------------------->|
+       |<-------------hello verify request----------------|
+       |--------------client hello----------------------->|
+       |<--server hello, certificate, server key exchange-|
+       |<--server key exchange(reas) server hello done----|
+       |<-------------client key exchange-----------------| (one)
+       |<-------------change cypher spec------------------|
+       |<---------encryped handshake message--------------|
+       |--------new session ticket----------------------->|
+       ...
+    */
+
+    this.timeout( 25000 )
+    this.slow( 15000 )
+
+    let channeltarget = {
+      "address": "localhost",
+      "port": 10002,
+      "codec": 0,
+      "dtls": {
+        "fingerprint": {
+          "hash": ""
+        },
+        "mode": "active" // - is this in the right place and the right way round!
+      }
+    }
+
+    let channel = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) {
+        channelclose = d
+      }
+    } )
+
+    channeltarget.dtls.fingerprint.hash = channel.local.dtls.fingerprint
+    channel.remote( channeltarget )
+
+    await new Promise( ( r ) => { setTimeout( () => r(), 1000 ) } )
+
+    let execcompleted
+    let execwait = new Promise( ( r ) => execcompleted )
+
+    exec( `openssl s_server -cert ~/.projectrtp/certs/dtls-srtp.pem -brief -dtls1_2 -use_srtp SRTP_AES128_CM_SHA1_80 -mtu 1452 -port 10002`, ( error, stdout, stderr ) => {
+      if (error) {
+        console.error(`exec error: ${error}`);
+        return;
+      }
+      console.log(`stdout: ${stdout}`);
+      console.error(`stderr: ${stderr}`);
+
+      execcompleted()
+    } )
+
+    console.log("hi")
+
+    await execwait
 
   } )
 } )
