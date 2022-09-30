@@ -15,8 +15,8 @@
 
 #define MAXKEYLEN 96
 
-#define DTLSMTUSIZE 1200
-#define DTLSNUMBUFFERS 10
+#define DTLSMTUSIZE 1452
+#define DTLSNUMBUFFERS 12
 
 #define DTLSMAXKEYMATERIAL (64 * 4)
 
@@ -72,6 +72,7 @@ public:
 
   bool protect( rtppacket *pk );
   bool unprotect( rtppacket *pk );
+  int bye( void );
 
   std::atomic_bool rtpdtlshandshakeing;
 private:
@@ -94,6 +95,8 @@ private:
   srtp_policy_t srtrecvppolicy;
   srtp_t srtpsendsession;
   srtp_t srtprecvsession;
+
+  gnutls_anti_replay_t antireplay;
 };
 
 void dtlsinit( void );
