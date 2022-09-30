@@ -150,6 +150,7 @@ void projectrtpchannel::remote( std::string address,
 
   /* track changes which invalidate dtls session */
   bool changed = false;
+  if( "" == address ) return;
 
   if( address != this->remoteaddress ) {
     this->remoteaddress = address;
@@ -337,6 +338,11 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   if( error == boost::asio::error::operation_aborted ) return;
   if( !this->active ) return;
 
+  if( this->dtlsnegotiate() ) {
+    this->setnexttick();
+    return;
+  }
+
   if( this->mixing ) {
     this->setnexttick();
     return;
@@ -348,17 +354,6 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   }
 
   this->startticktimer();
-
-  AQUIRESPINLOCK( this->rtpdtlslock );
-  dtlssession::pointer currentdtlssession = this->rtpdtls;
-  RELEASESPINLOCK( this->rtpdtlslock );
-
-  if( nullptr != currentdtlssession && currentdtlssession->rtpdtlshandshakeing ) {
-    this->dtlsnegotiate();
-    this->endticktimer();
-    this->setnexttick();
-    return;
-  }
 
   this->incrtsout();
   if( this->checkidlerecv() ) return;
@@ -373,6 +368,11 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
     AQUIRESPINLOCK( this->rtpbufferlock );
     src = this->inbuff->pop();
     RELEASESPINLOCK( this->rtpbufferlock );
+
+    AQUIRESPINLOCK( this->rtpdtlslock );
+    dtlssession::pointer currentdtlssession = this->rtpdtls;
+    RELEASESPINLOCK( this->rtpdtlslock );
+
 
     if( nullptr != currentdtlssession &&
         !currentdtlssession->rtpdtlshandshakeing ) {
@@ -696,8 +696,12 @@ bool projectrtpchannel::dtlsnegotiate( void ) {
   auto dtlsstate = oursession->handshake();
   RELEASESPINLOCK( this->rtpdtlslock );
 
-  if( GNUTLS_E_SUCCESS == dtlsstate ) {
-    oursession->rtpdtlshandshakeing = false;
+  if( GNUTLS_E_SUCCESS != dtlsstate && 0 != gnutls_error_is_fatal( dtlsstate ) ) {
+    oursession->bye();
+
+    std::stringstream out;
+    out << "error.dtlsfail: " << dtlsstate;
+    this->requestclose( out.str() );
   }
 
   return oursession->rtpdtlshandshakeing;
@@ -722,8 +726,12 @@ bool projectrtpchannel::handlestun( uint8_t *pk, size_t len ) {
                                     shared_from_this(),
                                     boost::asio::placeholders::error,
                                     boost::asio::placeholders::bytes_transferred ) );
+
+      this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
+      this->remoteconfirmed = true;
+      this->receivedrtp = true;
     }
-    
+
     return true;
   }
 
@@ -796,13 +804,6 @@ void projectrtpchannel::readsomertp( void ) {
           return;
         }
 
-        /* Sanity checking TODO - check size for the CODEC type*/
-        if( bytesrecvd > 200 ) {
-          this->receivedpkskip++;
-          this->readsomertp();
-          return;
-        }
-
         this->tickswithnortpcount = 0;
 
         if( !this->receivedrtp ) {
@@ -815,12 +816,14 @@ void projectrtpchannel::readsomertp( void ) {
             this->readsomertp();
             return;
           }
-
+#warning This would be a good additional check, but needs further testing.
+#if 0
           if( buf->getssrc() != this->ssrcin ) {
             this->receivedpkskip++;
             this->readsomertp();
             return;
           }
+#endif
         }
 
         buf->length = bytesrecvd;
