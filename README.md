@@ -35,12 +35,14 @@ Only when we release version 1.0.0 will the public API be settled.
 ## Release process
 
 1. Update package.json to the new version number (see Version numbers above)
-2. npm test && stress testing
-2. npm publish
-3. docker buildx prune
-4. docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:<version> . --push
-5. Git release
-6. Github tag <version> 
+2. Update Dockerfile with the new version number
+3. npm test && stress testing
+4. git commit && push
+5. npm publish
+6. docker buildx prune
+7. docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:<version> . --push
+8. Git release
+9. Github tag <version> 
 
 <version> should simply the semantic version number. For late stage test builds this could be <version>betax.
 
