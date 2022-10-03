@@ -31,6 +31,8 @@ static std::string fingerprintsha256;
 static void serverlogfunc(int level, const char *str) {
   std::cerr << +level << ":" << str;
 }
+#else
+#define serverlogfunc(x,y) 
 #endif
 
 void gnutlserrorcheck( int errval, std::string errstr ) {
@@ -355,98 +357,94 @@ bool dtlssession::unprotect( rtppacket *pk ) {
   int length = pk->length;
   auto stat = srtp_unprotect( this->srtprecvsession, pk->pk, &length );
   if( srtp_err_status_ok != stat ) {
-
-    fprintf( stderr, "Error: srtp unprotect failed with code %d ", stat );
-
     switch( stat ) {
       case srtp_err_status_ok: break; /* silence compiler warning */
       case srtp_err_status_bad_param:
-        fprintf( stderr, "(srtp_err_status_bad_param)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_bad_param)\n" );
         return false;
 
       case srtp_err_status_alloc_fail:
-        fprintf( stderr, "(srtp_err_status_alloc_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_alloc_fail)\n" );
         return false;
 
       case srtp_err_status_init_fail:
-        fprintf( stderr, "(srtp_err_status_init_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_init_fail)\n" );
         return false;
 
       case srtp_err_status_no_ctx:
-        fprintf( stderr, "(srtp_err_status_no_ctx)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_no_ctx)\n" );
         return false;
 
       case srtp_err_status_fail:
-        fprintf( stderr, "(srtp_err_status_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_fail)\n" );
         return false;
       case srtp_err_status_dealloc_fail:
-        fprintf( stderr, "(srtp_err_status_dealloc_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_dealloc_fail)\n" );
         return false;
       case srtp_err_status_terminus:
-        fprintf( stderr, "(srtp_err_status_terminus)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_terminus)\n" );
         return false;
       case srtp_err_status_auth_fail:
-        fprintf( stderr, "(srtp_err_status_auth_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_auth_fail)\n" );
         return false;
       case srtp_err_status_cipher_fail:
-        fprintf( stderr, "(srtp_err_status_cipher_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_cipher_fail)\n" );
         return false;
       case srtp_err_status_replay_fail:
-        fprintf( stderr, "(srtp_err_status_replay_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_replay_fail)\n" );
         return false;
       case srtp_err_status_replay_old:
-        fprintf( stderr, "(srtp_err_status_replay_old)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_replay_old)\n" );
         return false;
       case srtp_err_status_algo_fail:
-        fprintf( stderr, "(srtp_err_status_algo_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_algo_fail)\n" );
         return false;
       case srtp_err_status_no_such_op:
-        fprintf( stderr, "(srtp_err_status_no_such_op)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_no_such_op)\n" );
         return false;
       case srtp_err_status_cant_check:
-        fprintf( stderr, "(srtp_err_status_cant_check)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_cant_check)\n" );
         return false;
       case srtp_err_status_key_expired:
-        fprintf( stderr, "(srtp_err_status_key_expired)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_key_expired)\n" );
         return false;
       case srtp_err_status_socket_err:
-        fprintf( stderr, "(srtp_err_status_socket_err)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_socket_err)\n" );
         return false;
       case srtp_err_status_signal_err:
-        fprintf( stderr, "(srtp_err_status_signal_err)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_signal_err)\n" );
         return false;
       case srtp_err_status_nonce_bad:
-        fprintf( stderr, "(srtp_err_status_nonce_bad)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_nonce_bad)\n" );
         return false;
       case srtp_err_status_read_fail:
-        fprintf( stderr, "(srtp_err_status_read_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_read_fail)\n" );
         return false;
       case srtp_err_status_write_fail:
-        fprintf( stderr, "(srtp_err_status_write_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_write_fail)\n" );
         return false;
       case srtp_err_status_parse_err:
-        fprintf( stderr, "(srtp_err_status_parse_err)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_parse_err)\n" );
         return false;
       case srtp_err_status_encode_err:
-        fprintf( stderr, "(srtp_err_status_encode_err)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_encode_err)\n" );
         return false;
       case srtp_err_status_semaphore_err:
-        fprintf( stderr, "(srtp_err_status_semaphore_err)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_semaphore_err)\n" );
         return false;
       case srtp_err_status_pfkey_err:
-        fprintf( stderr, "(srtp_err_status_pfkey_err)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_pfkey_err)\n" );
         return false;
       case srtp_err_status_bad_mki:
-        fprintf( stderr, "(srtp_err_status_bad_mki)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_bad_mki)\n" );
         return false;
       case srtp_err_status_pkt_idx_old:
-        fprintf( stderr, "(srtp_err_status_pkt_idx_old)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_pkt_idx_old)\n" );
         return false;
       case srtp_err_status_pkt_idx_adv:
-        fprintf( stderr, "(srtp_err_status_pkt_idx_adv)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_pkt_idx_adv)\n" );
         return false;
     }
-    
   }
 
   pk->length = length;
