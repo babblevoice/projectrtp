@@ -525,9 +525,7 @@ describe( "dtmf", function() {
     let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       receivedmessages.push( d )
 
-      if( "close" === d.action ) {
-        channelb.close()
-      }
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
@@ -647,24 +645,15 @@ describe( "dtmf", function() {
     endpointc.bind()
     await new Promise( ( r ) => { endpointc.on( "listening", function() { r() } ) } )
 
-    let expectedmessagecount = 0
-    const expectedmessages = [
-      { action: 'telephone-event', event: '4' },
-      { action: 'telephone-event', event: '5' },
-      { action: 'close' }
-    ]
+    const receveiedmessages = []
 
     let done
     let finished = new Promise( ( r ) => { done = r } )
 
     let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
-      expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
-      expectedmessagecount++
+      receveiedmessages.push( d )
 
-      if( "close" === d.action ) {
-        expect( expectedmessagecount ).to.equal( 3 )
-        channelb.close()
-      }
+      if( "close" === d.action ) channelb.close()
     } )
 
     let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
@@ -709,17 +698,31 @@ describe( "dtmf", function() {
     endpointb.close()
     endpointc.close()
 
+    await finished
+
     expect( endpointapkcount ).to.be.within( 59, 70 )
     expect( endpointbpkcount ).to.be.within( 59, 70 )
     expect( endpointcpkcount ).to.be.within( 59, 70 )
 
     // 3 after we return to the event loop and enter the callback with close event.
-    expect( expectedmessagecount ).to.equal( 2 )
     expect( dtmfapkcount ).to.equal( 0 )
     expect( dtmfbpkcount ).to.equal( 6 )
     expect( dtmfcpkcount ).to.equal( 6 )
 
-    await finished
+    const expectedmessages = [
+      { action: 'mix', event: 'start' }, //b
+      { action: 'mix', event: 'start' }, //c
+      { action: 'telephone-event', event: '4' },
+      { action: 'telephone-event', event: '5' },
+      { action: 'mix', event: 'finished' },
+      { action: 'close' }
+    ]
+
+    for( let i = 0; i <  expectedmessages.length; i++ ) {
+      expect( expectedmessages[ i ].action ).to.equal( receveiedmessages[ i ].action )
+      if( expectedmessages[ i ].event ) expect( receveiedmessages[ i ].event ).to.equal( receveiedmessages[ i ].event )
+    }
+    
 
   } )
 

@@ -446,25 +446,27 @@ describe( "record", function() {
   } )
 
 
-  it( `dual recording one with power detect one ongoing`, function( done ) {
+  it( `dual recording one with power detect one ongoing`, async function () {
 
-    this.timeout( 7000 )
-    this.slow( 6000 )
+    this.timeout( 8000 )
+    this.slow( 7000 )
+
+    let done
+    let finished = new Promise( ( r ) => done = r )
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    var channel
+    let channel
 
     /* generate our data */
     const startsilenceseconds = 1
-    const tonedurationseconds = 1
+    const tonedurationseconds = 2
     const endsilnceseconds = 2
     const totalseconds = startsilenceseconds + tonedurationseconds + endsilnceseconds
     const amplitude = 20000
     const frequescyhz = 50
     const samplingrate = 8000
-    const lowamplitude = 500
+    const lowamplitude = 200
 
     let sendbuffer = Buffer.concat( [
       Buffer.alloc( samplingrate*startsilenceseconds, projectrtp.codecx.linear162pcmu( 0 ) ),
@@ -472,12 +474,54 @@ describe( "record", function() {
       genpcmutone( endsilnceseconds, frequescyhz, samplingrate, lowamplitude )
     ] )
 
+    let receviedpkcount
     server.on( "message", function( msg, rinfo ) {
       receviedpkcount++
     } )
 
     server.bind()
-    let delayedjobs = []
+    const receivedmessages = []
+
+    server.on( "listening", async function() {
+
+      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+        receivedmessages.push( d )  
+        if( "close" === d.action ) {
+          done()
+        }
+      } )
+
+      expect( channel.record( {
+        "file": "/tmp/dualrecording.wav"
+      } ) ).to.be.true
+
+      expect( channel.record( {
+        "file": "/tmp/dualrecordingpower.wav",
+        "startabovepower": 200,
+        "finishbelowpower": 180,
+        "minduration": 200,
+        "maxduration": 3500,
+        "poweraveragepackets": 10 /* faster response */
+      } ) ).to.be.true
+
+      /* something to record */
+      expect( channel.echo() ).to.be.true
+
+      for( let i = 0;  i < 50*totalseconds; i ++ ) {
+        sendpk( i, i, channel.local.port, server, sendbuffer )
+      }
+    } )
+
+    setTimeout( () => channel.close(), totalseconds * 1000 )
+    await finished
+
+    server.close()
+
+    let stats = fs.statSync( "/tmp/dualrecordingpower.wav" )
+    expect( stats.size ).to.be.within( 40000, 52000 )
+
+    stats = fs.statSync( "/tmp/dualrecording.wav" )
+    expect( stats.size ).to.be.within( 110000, 190000 )
 
     /*
       Messages we receive in this order:
@@ -489,62 +533,12 @@ describe( "record", function() {
       { action: 'record', file: '/tmp/dualrecording.wav', event: 'finished.channelclosed' },
       { action: 'close' }
     ]
-    let expectedmessagecount = 0
 
-    server.on( "listening", async function() {
-
-      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
-        expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
-        expectedmessagecount++
-
-        if( "record" === d.action && "finished.channelclosed" == d.event ) {
-
-          expect( d.file ).to.equal( "/tmp/dualrecording.wav" )
-          let stats = fs.statSync( "/tmp/dualrecording.wav" )
-          expect( stats.size ).to.be.within( 128000, 129000 )
-
-        } else if( "record" === d.action && "finished.belowpower" == d.event ) {
-
-          expect( d.file ).to.equal( "/tmp/dualrecordingpower.wav" )
-          let stats = fs.statSync( "/tmp/dualrecordingpower.wav" )
-          expect( stats.size ).to.be.within( 37000, 38000 )
-
-        } else if( "close" === d.action ) {
-          delayedjobs.every( ( id ) => {
-            clearTimeout( id )
-            return true
-          } )
-          server.close()
-
-          expect( expectedmessagecount ).to.equal( expectedmessages.length )
-          done()
-        }
-      } )
-
-      expect( channel.record( {
-        "file": "/tmp/dualrecording.wav"
-      } ) ).to.be.true
-
-      expect( channel.record( {
-        "file": "/tmp/dualrecordingpower.wav",
-        "startabovepower": 800,
-        "finishbelowpower": 600,
-        "minduration": 200,
-        "maxduration": 1500,
-        "poweraveragepackets": 10 /* faster response */
-      } ) ).to.be.true
-
-      /* something to record */
-      expect( channel.echo() ).to.be.true
-
-      for( let i = 0;  i < 50*totalseconds; i ++ ) {
-        delayedjobs.push(
-          sendpk( i, i, channel.local.port, server, sendbuffer )
-        )
-      }
-    } )
-
-    setTimeout( () => channel.close(), 4000 )
+    for( let i = 0; i < expectedmessages.length; i ++ ) {
+      expect( expectedmessages[ i ].action ).to.equal( receivedmessages[ i ].action )
+      if( expectedmessages[ i ].file ) expect( expectedmessages[ i ].file ).to.equal( receivedmessages[ i ].file )
+      if( expectedmessages[ i ].event ) expect( expectedmessages[ i ].event ).to.equal( receivedmessages[ i ].event )
+    }
   } )
 
   after( async () => {
