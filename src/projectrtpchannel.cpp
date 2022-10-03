@@ -77,6 +77,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   rtcpsenderendpoint(),
   receivedrtp( false ),
   remoteconfirmed( false ),
+  autoadjust( true ),
   mixerlock( false ),
   mixer( nullptr ),
   mixing( false ),
@@ -117,21 +118,6 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   localicepwd[ 24 ] = 0;
 
   this->icelocalpwd = localicepwd;
-}
-
-
-/*
-## requestopen
-*/
-uint32_t projectrtpchannel::requestopen( void ) {
-
-  /* this shouldn't happen */
-  if( this->active ) return this->ssrcout;
-
-  boost::asio::post( workercontext,
-        boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
-
-  return this->ssrcout;
 }
 
 void projectrtpchannel::requestclose( std::string reason ) {
@@ -198,14 +184,80 @@ void projectrtpchannel::remote( std::string address,
       this->rtpdtls = newsession;
       RELEASESPINLOCK( this->rtpdtlslock );
     }
+    
+    this->receivedrtp = false;
     this->remoteconfirmed = false;
-    if( this->active ) this->doremote();
+    this->autoadjust = true;
+
+    this->doremote();
   }
 }
 
-/*
-Must be called in the workercontext.
-*/
+/**
+ * Convert our requested address and port into boost::asio::ip::udp::endpoint
+ */
+void projectrtpchannel::doremote( void ) {
+
+  if( "" == this->remoteaddress ) return;
+
+  boost::asio::ip::udp::resolver::query query(
+    boost::asio::ip::udp::v4(),
+    this->remoteaddress,
+    std::to_string( this->remoteport ) );
+
+  /* Resolve the address */
+  this->resolver.async_resolve( query,
+      boost::bind( &projectrtpchannel::handleremoteresolve,
+        shared_from_this(),
+        boost::asio::placeholders::error,
+        boost::asio::placeholders::iterator ) );
+}
+
+/**
+ * handleremoteresolve
+ * We have resolved the remote address and port now use it. Further work could be to inform control there is an issue.
+ */
+void projectrtpchannel::handleremoteresolve (
+            boost::system::error_code e,
+            boost::asio::ip::udp::resolver::iterator it ) {
+  boost::asio::ip::udp::resolver::iterator end;
+
+  if( e == boost::asio::error::operation_aborted ) return;
+
+  if( it == end ) {
+    /* Failure - silent (the call will be as well!) */
+    this->requestclose( "failed.remote" );
+    return;
+  }
+
+  this->confirmedrtpsenderendpoint = *it;
+  this->remoteconfirmed = true;
+
+  /* allow us to re-auto correct */
+  this->autoadjust = true;
+
+  /* allow us to grab ssrc */
+  this->receivedrtp = false;
+}
+
+
+/**
+ * requestopen - post a request to call doopen in the worker context.
+ */
+uint32_t projectrtpchannel::requestopen( void ) {
+
+  /* this shouldn't happen */
+  if( this->active ) return this->ssrcout;
+
+  boost::asio::post( workercontext,
+        boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
+
+  return this->ssrcout;
+}
+
+/**
+ * Must be called in the workercontext.
+ */
 void projectrtpchannel::doopen( void ) {
 
   this->outcodec.reset();
@@ -713,6 +765,10 @@ bool projectrtpchannel::dtlsnegotiate( void ) {
     this->requestclose( out.str() );
   }
 
+  if( !oursession->rtpdtlshandshakeing ) {
+    this->correctaddress();
+  }
+
   return oursession->rtpdtlshandshakeing;
 }
 
@@ -736,15 +792,35 @@ bool projectrtpchannel::handlestun( uint8_t *pk, size_t len ) {
                                     boost::asio::placeholders::error,
                                     boost::asio::placeholders::bytes_transferred ) );
 
-      this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
-      this->remoteconfirmed = true;
-      this->receivedrtp = true;
+      this->correctaddress();
     }
 
     return true;
   }
 
   return false;
+}
+
+/**
+ * Auto correct our to send to address if required. 
+ */
+void projectrtpchannel::correctaddress( void ) {
+
+  if( this->autoadjust ) {
+    this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
+    this->remoteconfirmed = true;
+    this->autoadjust = false;
+  }
+}
+
+/**
+ * Auto correct our SSRC if required
+ */
+void projectrtpchannel::correctssrc( uint32_t ssrc ) {
+  if( !this->receivedrtp ) {
+    this->receivedrtp = true;
+    this->ssrcin = ssrc;
+  }
 }
 
 /*
@@ -807,31 +883,30 @@ void projectrtpchannel::readsomertp( void ) {
         this->receivedpkcount++;
 
         if( !this->recv ) {
+          this->receivedpkskip++;
           this->readsomertp();
           return;
         }
 
         this->tickswithnortpcount = 0;
 
-        if( !this->receivedrtp ) {
-          this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
-          this->receivedrtp = true;
-          this->ssrcin = buf->getssrc();
-        } else {
+        this->correctaddress();
+        this->correctssrc( buf->getssrc() );
+        
+        if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint ) {
           /* After the first packet - we only accept data from the verified source */
-          if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint ) {
-            this->readsomertp();
-            return;
-          }
-#warning This would be a good additional check, but needs further testing.
-#if 0
-          if( buf->getssrc() != this->ssrcin ) {
-            this->receivedpkskip++;
-            this->readsomertp();
-            return;
-          }
-#endif
+          this->receivedpkskip++;
+          this->readsomertp();
+          return;
         }
+
+        if( buf->getssrc() != this->ssrcin ) {
+          this->receivedpkskip++;
+          this->readsomertp();
+          return;
+        }
+
+
 
         buf->length = bytesrecvd;
 
@@ -940,7 +1015,7 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
     }
   }
 
-  if( this->receivedrtp || this->remoteconfirmed ) {
+  if( this->remoteconfirmed ) {
     this->snout++;
 
     this->rtpsocket.async_send_to(
@@ -950,48 +1025,9 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
                                     shared_from_this(),
                                     boost::asio::placeholders::error,
                                     boost::asio::placeholders::bytes_transferred ) );
-  }
-}
-
-void projectrtpchannel::doremote( void ) {
-  if( "" == this->remoteaddress ) return;
-
-  this->receivedrtp = false;
-  boost::asio::ip::udp::resolver::query query(
-    boost::asio::ip::udp::v4(),
-    this->remoteaddress,
-    std::to_string( this->remoteport ) );
-
-  /* Resolve the address */
-  this->resolver.async_resolve( query,
-      boost::bind( &projectrtpchannel::handleremoteresolve,
-        shared_from_this(),
-        boost::asio::placeholders::error,
-        boost::asio::placeholders::iterator ) );
-}
-
-/*!md
-## handleremoteresolve
-We have resolved the remote address and port now use it. Further work could be to inform control there is an issue.
-*/
-void projectrtpchannel::handleremoteresolve (
-            boost::system::error_code e,
-            boost::asio::ip::udp::resolver::iterator it ) {
-  boost::asio::ip::udp::resolver::iterator end;
-
-  if( e == boost::asio::error::operation_aborted ) return;
-
-  if( it == end ) {
-    /* Failure - silent (the call will be as well!) */
-    this->requestclose( "failed.remote" );
     return;
   }
-
-  this->confirmedrtpsenderendpoint = *it;
-  this->remoteconfirmed = true;
-
-  /* allow us to re-auto correct */
-  this->receivedrtp = false;
+  this->outpkskipcount++;
 }
 
 /*

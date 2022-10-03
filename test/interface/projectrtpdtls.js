@@ -181,6 +181,12 @@ describe( "dtls", function() {
 
     Once confiured, call remote on clienta again to try and break
     (simulate the current issue with 183).
+
+    ussually - when run standalone (not garanteed):
+    clienta port: 10002
+    channela port: 10000
+    channelb port: 10004
+    clientb port: 10006
     */
 
     this.timeout( 6000 )
@@ -261,8 +267,10 @@ describe( "dtls", function() {
       }
     } )
 
+    let clientbclose
     let clientb = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
+        clientbclose = d
         done()
       }
     } )
