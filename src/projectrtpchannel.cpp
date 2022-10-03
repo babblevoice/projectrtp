@@ -539,10 +539,12 @@ void projectrtpchannel::removeoldrecorders( void ) {
         continue;
       }
 
-      if( rec->lastpowercalc < rec->finishbelowpower ) {
-        rec->completed = true;
-        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.belowpower" );
-        continue;
+      if( rec->finishbelowpower > 0 ) {
+        if( rec->lastpowercalc < rec->finishbelowpower ) {
+          rec->completed = true;
+          postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.belowpower" );
+          continue;
+        }
       }
 
       if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
@@ -662,16 +664,23 @@ void projectrtpchannel::writerecordings( void ) {
 
     if( rec->completed ) continue;
 
-    if( 0 == rec->startabovepower && 0 == rec->finishbelowpower ) {
-      if( !rec->isactive() ) {
+    /* calculate power for the below tests and the finish test in ::removeoldrecorders */
+    uint16_t pav = 0;
+    if( ( !rec->isactive() && rec->startabovepower > 0 ) || 
+        ( rec->isactive() && rec->finishbelowpower > 0 ) ) {
+      pav = rec->poweravg( power );
+    }
+
+
+    if( !rec->isactive() ) {
+      if( 0 == rec->startabovepower ) {
         rec->active();
         postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording" );
-      }
-    } else {
-      auto pav = rec->poweravg( power );
-      if( !rec->isactive() && pav > rec->startabovepower ) {
-        rec->active();
-        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording.abovepower" );
+      } else {
+        if( pav > rec->startabovepower ) {
+          rec->active();
+          postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording.abovepower" );
+        }
       }
     }
 
@@ -798,9 +807,7 @@ void projectrtpchannel::readsomertp( void ) {
         this->receivedpkcount++;
 
         if( !this->recv ) {
-          if( bytesrecvd > 0 ) {
-            this->readsomertp();
-          }
+          this->readsomertp();
           return;
         }
 
