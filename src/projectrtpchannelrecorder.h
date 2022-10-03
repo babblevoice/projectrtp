@@ -21,7 +21,7 @@ public:
   static pointer create( std::string file );
   uint16_t poweravg( uint16_t power );
   void active( void );
-  bool isactive( void ) { return this->_active & !this->completed; }
+  bool isactive( void ) { return this->_active && !this->completed; }
 
   std::string file;
 
