@@ -135,12 +135,12 @@ static napi_value startserver( napi_env env, napi_callback_info info ) {
         hasit &&
         napi_ok == napi_get_named_property( env, argv[ 0 ], "ports", &nports ) ) 
     {
-      if( napi_ok == napi_has_named_property( env, nports, "start", &hasit ) &&
+    if( napi_ok == napi_has_named_property( env, nports, "start", &hasit ) &&
         hasit &&
         napi_ok == napi_get_named_property( env, nports, "start", &nstartport ) ) {
         napi_get_value_int32( env, nstartport, &startport );
       }
-      if( napi_ok == napi_has_named_property( env, nports, "end", &hasit ) &&
+    if( napi_ok == napi_has_named_property( env, nports, "end", &hasit ) &&
         hasit &&
         napi_ok == napi_get_named_property( env, nports, "end", &nendport ) ) {
         napi_get_value_int32( env, nendport, &endport );

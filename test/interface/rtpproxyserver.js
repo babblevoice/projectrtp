@@ -210,30 +210,27 @@ describe( "rtpproxy server", function() {
       unmixreceived = true
     } )
 
-    let closereceived = false
+    let closeresolve
+    let closereceived = new Promise( resolve => closeresolve = resolve )
     n.setmessagehandler( "close", ( msg ) => {
       n.destroy()
       p.destroy()
-      closereceived = true
+      closeresolve()
     } )
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     n.connect( listenport )
     await p.waitfornewconnection()
-    let channel1 = await prtp.openchannel()
-    let channel2 = await prtp.openchannel()
-    channel1.mix( channel2 )
-    channel1.unmix()
+    let channel = await prtp.openchannel()
+    channel.mix( { "id": "otheruuid", "uuid": "787-87686" } )
+    channel.unmix()
 
-    channel1.close()
+    channel.close()
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+    await closereceived
 
     expect( mixreceived ).to.be.true
-
     expect( unmixreceived ).to.be.true
-
-    expect( closereceived ).to.be.true
 
   } )
 

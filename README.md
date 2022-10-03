@@ -89,7 +89,7 @@ git submodule update --init --recursive
 After installing standard build tools - including g++.
 
 ```
-dnf install ilbc-devel spandsp-devel boost gnutls libsrtp libsrtp-devel
+dnf install ilbc-devel spandsp-devel boost gnutls libsrtp libsrtp-devel g++
 ```
 
 ## Node Module
