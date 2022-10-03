@@ -25,6 +25,7 @@ module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
   // Do we need version info for now?
   //var uint16array = new Uint16Array(data)
   /* Magic number */
+  if(0) //debug
   if ( 2712847316 == data.readUInt32LE( 0 ) ) {
     /* Native byte order */
     console.log( "Native byte order" )
