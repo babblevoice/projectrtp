@@ -14,4 +14,13 @@ describe( "server", function() {
     expect( s.channel.current ).to.be.below( 100 )
     done()
   } )
+
+  it( `check mixes array`, async function( done ) {
+    let channelb = await projectrtp.openchannel()
+    let channela = await projectrtp.openchannel()
+
+    await channela.mix( channelb )
+
+    expect( channela.mixes.length ).to.be.equal( 2 )
+  } )
 } )
