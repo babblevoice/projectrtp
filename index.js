@@ -246,6 +246,10 @@ let actualprojectrtp = false
     if( actualprojectrtp ) return
 
     gencerts()
+    if ( !params )
+    {
+      params = {}
+    }
     actualprojectrtp = require( bin )
     actualprojectrtp.run( params )
     this.dtls = actualprojectrtp.dtls
