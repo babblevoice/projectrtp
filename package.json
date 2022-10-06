@@ -33,12 +33,11 @@
   "homepage": "https://github.com/tinpotnick/projectrtp#readme",
   "dependencies": {
     "chai": "^4.3.4",
-    "mocha": "^9.0.3",
+    "mocha": "^9.2.2",
     "net": "^1.0.2",
     "nodeplotlib": "^0.7.5",
     "uuid": "^8.3.2"
   },
-  "devDependencies": {},
   "keywords": [
     "RTP",
     "SIP",
