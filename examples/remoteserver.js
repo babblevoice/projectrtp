@@ -3,7 +3,7 @@ const projectrtp = require( "@babblevoice/projectrtp" ).projectrtp
 async function connect() {
     projectrtp.proxy.listen()
     console.log("Server listening")
-    await new Promise( ( r ) => { setTimeout( () => r(),  5000  ) } )
+    await new Promise( ( r ) => { setTimeout( () => r(),  10000  ) } )
 
     let channela = await projectrtp.openchannel({}, ( d ) => {
       if( "mix" === d.action ) {
