@@ -238,9 +238,14 @@ describe( "rtpproxy server", function() {
 
     let n = new mocknode()
     let n2 = new mocknode()
-    let mixreceived = false
-    let unmixreceived = false
-    let closereceived = false
+
+    let mixreceived1 = false
+    let unmixreceived1 = false
+    let closereceived1 = false
+
+    let mixreceived2 = false
+    let unmixreceived2 = false
+    let closereceived2 = false
 
     n.setmessagehandler( "open", ( msg ) => {
       n.sendmessage( {
@@ -262,14 +267,15 @@ describe( "rtpproxy server", function() {
       expect( msg.other ).to.have.property( "uuid" ).that.is.a( "string" )
       expect( msg ).to.have.property( "id" ).that.is.a( "string" )
       expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
-      mixreceived = true
+      mixreceived1 = true
+      console.log("Hello")
     } )
 
     n.setmessagehandler( "unmix", ( msg ) => {
       expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "unmix" )
       expect( msg ).to.have.property( "id" ).that.is.a( "string" )
       expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
-      unmixreceived = true
+      unmixreceived1 = true
     } )
 
     n.setmessagehandler( "remote", ( msg ) => {
@@ -282,7 +288,7 @@ describe( "rtpproxy server", function() {
     n.setmessagehandler( "close", ( msg ) => {  
       n.destroy()
       p.destroy()
-      closereceived = true
+      closereceived1 = true
     } )
 
     n2.setmessagehandler( "open", ( msg ) => {
@@ -305,14 +311,14 @@ describe( "rtpproxy server", function() {
       expect( msg.other ).to.have.property( "uuid" ).that.is.a( "string" )
       expect( msg ).to.have.property( "id" ).that.is.a( "string" )
       expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
-      mixreceived = true
+      mixreceived2 = true
     } )
 
     n2.setmessagehandler( "unmix", ( msg ) => {
       expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "unmix" )
       expect( msg ).to.have.property( "id" ).that.is.a( "string" )
       expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
-      unmixreceived = true
+      unmixreceived2 = true
     } )
 
     n2.setmessagehandler( "remote", ( msg ) => {
@@ -324,7 +330,7 @@ describe( "rtpproxy server", function() {
 
     n2.setmessagehandler( "close", ( msg ) => {  
       n2.destroy()
-      closereceived = true
+      closereceived2 = true
     } )
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
@@ -334,20 +340,27 @@ describe( "rtpproxy server", function() {
     
     let channel1 = await prtp.openchannel( {"nodeinstance": n.id} )
     let channel2 = await prtp.openchannel( {"nodeinstance": n2.id} )
-
+    console.log( n.id, n2.id )
     await channel1.mix( channel2 )
     channel1.unmix()
+    //channel2.unmix()
 
     channel1.close()
     channel2.close()
 
     await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
 
-    expect( mixreceived ).to.be.true
+    expect( mixreceived1 ).to.be.true
 
-    expect( unmixreceived ).to.be.true
+    expect( unmixreceived1 ).to.be.true
 
-    expect( closereceived ).to.be.true
+    expect( closereceived1 ).to.be.true
+
+    expect( mixreceived2 ).to.be.true
+
+    expect( unmixreceived2 ).to.be.true
+
+    expect( closereceived2 ).to.be.true
 
   } )
 
