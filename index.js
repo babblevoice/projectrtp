@@ -281,9 +281,13 @@ let actualprojectrtp = false
     } else {
       /* use local */
       let chan = actualprojectrtp.openchannel( params, ( d ) => {
-        if( chan.em ) {
-          chan.em.emit( "all", d )
-          if( d.action ) chan.em.emit( d.action, d )
+        try{
+          if( chan.em ) {
+            chan.em.emit( "all", d )
+            if( d.action ) chan.em.emit( d.action, d )
+          }
+        } catch ( e ) {
+          console.trace( e )
         }
       } )
       /* I can't find a way of defining a getter in napi - so here we override */

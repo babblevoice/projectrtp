@@ -31,7 +31,15 @@ static std::string fingerprintsha256;
 static void serverlogfunc(int level, const char *str) {
   std::cerr << +level << ":" << str;
 }
+#else
+#define serverlogfunc(x,y) 
 #endif
+
+void gnutlserrorcheck( int errval, std::string errstr ) {
+  if( GNUTLS_E_SUCCESS != errval ) {
+    std::cerr << "DTLS error: " << errstr << std::endl;
+  }
+}
 
 dtlssession::dtlssession( dtlssession::mode mode ) :
   rtpdtlshandshakeing( true ),
@@ -45,17 +53,20 @@ dtlssession::dtlssession( dtlssession::mode mode ) :
   srtsendppolicy(),
   srtrecvppolicy(),
   srtpsendsession( nullptr ),
-  srtprecvsession( nullptr ) {
+  srtprecvsession( nullptr ),
+  antireplay() {
   if( dtlssession::act == mode ) {
-    gnutls_init( &this->session, GNUTLS_CLIENT | GNUTLS_DATAGRAM | GNUTLS_NONBLOCK );
+    gnutlserrorcheck( gnutls_init( &this->session, GNUTLS_CLIENT | GNUTLS_DATAGRAM | GNUTLS_NONBLOCK ), "gnutls_init - client" );
   } else {
-    gnutls_init( &this->session, GNUTLS_SERVER | GNUTLS_DATAGRAM | GNUTLS_NONBLOCK );
-    gnutls_certificate_server_set_request( this->session, GNUTLS_CERT_REQUIRE );
+    gnutlserrorcheck( gnutls_init( &this->session, GNUTLS_SERVER | GNUTLS_DATAGRAM | GNUTLS_NONBLOCK ), "gnutls_init - server" );
+    //gnutls_certificate_server_set_request( this->session, GNUTLS_CERT_REQUIRE );
+    gnutls_certificate_server_set_request( this->session, GNUTLS_CERT_IGNORE );
 
     gnutls_datum_t skey;
 
-    gnutls_session_ticket_key_generate( &skey );
-    gnutls_session_ticket_enable_server( this->session, &skey );
+    gnutlserrorcheck( gnutls_session_ticket_key_generate( &skey ), "gnutls_session_ticket_key_generate" );
+    gnutlserrorcheck( gnutls_session_ticket_enable_server( this->session, &skey ), "gnutls_session_ticket_enable_server" );
+    gnutls_memset( skey.data, 0, sizeof( skey ) );
     gnutls_free( skey.data );
   }
 
@@ -64,12 +75,18 @@ dtlssession::dtlssession( dtlssession::mode mode ) :
   gnutls_global_set_log_level( 4711 );
 #endif
 
-  gnutls_set_default_priority( this->session );
-  gnutls_credentials_set( this->session, GNUTLS_CRD_CERTIFICATE, xcred );
+  gnutls_anti_replay_init( &this->antireplay );
+  gnutls_anti_replay_enable( this->session, this->antireplay );
+
+  gnutls_handshake_set_timeout( this->session, GNUTLS_DEFAULT_HANDSHAKE_TIMEOUT );
+
+  gnutlserrorcheck( gnutls_set_default_priority( this->session ), "gnutls_set_default_priority" );
+  //gnutls_session_enable_compatibility_mode( this->session ); /* opt for compatability over security */
+  gnutlserrorcheck( gnutls_credentials_set( this->session, GNUTLS_CRD_CERTIFICATE, xcred ), "gnutls_credentials_set" );
 
   gnutls_dtls_set_mtu( this->session, DTLSMTUSIZE );
 
-  gnutls_srtp_set_profile( this->session, GNUTLS_SRTP_AES128_CM_HMAC_SHA1_80 ); // or maybe GNUTLS_SRTP_AES128_CM_HMAC_SHA1_32?
+  gnutlserrorcheck( gnutls_srtp_set_profile( this->session, GNUTLS_SRTP_AES128_CM_HMAC_SHA1_80 ), "gnutls_srtp_set_profile" ); // or maybe GNUTLS_SRTP_AES128_CM_HMAC_SHA1_32?
   gnutls_transport_set_ptr( this->session, this );
 
   gnutls_dtls_set_timeouts( this->session, 500, 60 * 1000 );
@@ -103,6 +120,8 @@ dtlssession::~dtlssession() {
 
   if( nullptr != this->srtpsendsession ) srtp_dealloc( this->srtpsendsession );
   if( nullptr != this->srtprecvsession ) srtp_dealloc( this->srtprecvsession );
+
+  gnutls_anti_replay_deinit( this->antireplay );
 }
 
 dtlssession::pointer dtlssession::create( dtlssession::mode mode ) {
@@ -114,17 +133,14 @@ void dtlssession::push( const void *data, size_t size ) {
 
 #ifdef DTLSDEBUGOUTPUT
   DTLSPlaintext *tmp = ( DTLSPlaintext* ) data;
+  std::stringstream ourstr;
+  if( 22 == tmp->type ) ourstr << "handshake" << std::endl;
+  if( 254 == tmp->version.major && 253 == tmp->version.minor ) ourstr << "TLS:1.2" << std::endl;
+  ourstr << "length: " << tmp->length << std::endl;
 
-  std::cout << "type 22 = handshake. major.minor = 254.253 for TLS 1.2" << std::endl;
-  std::cout << "DTLSPlaintext->type:" << +tmp->type << std::endl;
-  std::cout << "DTLSPlaintext->version->major:" << +tmp->version.major << std::endl;
-  std::cout << "DTLSPlaintext->version->minor:" << +tmp->version.minor << std::endl;
-  std::cout << "DTLSPlaintext->epoch:" << +tmp->epoch << std::endl;
-  std::cout << "DTLSPlaintext->sequencenumber:" << +tmp->sequencenumber << std::endl;
-  std::cout << "DTLSPlaintext->length:" << +tmp->length << std::endl;
+  std::cerr << ourstr.str();
 #endif
 
-  //gnutls_transport_set_errno( this->session, EAGAIN );
 }
 
 int dtlssession::pull( void *data, size_t size ) {
@@ -161,15 +177,19 @@ int dtlssession::timeout( unsigned int ms ) {
 
 int dtlssession::handshake( void ) {
   auto retval = gnutls_handshake( this->session );
-  if( GNUTLS_E_AGAIN == retval ) return GNUTLS_E_AGAIN;
-  if( 0 == retval ) this->getkeys();
 
   if( GNUTLS_E_SUCCESS == retval ) {
+    this->getkeys();
     this->rtpdtlshandshakeing = false;
   }
 
   return retval;
 }
+
+int dtlssession::bye( void ) {
+  return gnutls_bye( this->session, GNUTLS_SHUT_WR );
+}
+
 
 void dtlssession::write( const void *data, size_t size ) {
   if( this->incount > DTLSNUMBUFFERS ) {
@@ -337,98 +357,94 @@ bool dtlssession::unprotect( rtppacket *pk ) {
   int length = pk->length;
   auto stat = srtp_unprotect( this->srtprecvsession, pk->pk, &length );
   if( srtp_err_status_ok != stat ) {
-
-    fprintf( stderr, "Error: srtp unprotect failed with code %d ", stat );
-
     switch( stat ) {
-      case srtp_err_status_ok: break; /* silence compiler waring */
+      case srtp_err_status_ok: break; /* silence compiler warning */
       case srtp_err_status_bad_param:
-        fprintf( stderr, "(srtp_err_status_bad_param)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_bad_param)\n" );
         return false;
 
       case srtp_err_status_alloc_fail:
-        fprintf( stderr, "(srtp_err_status_alloc_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_alloc_fail)\n" );
         return false;
 
       case srtp_err_status_init_fail:
-        fprintf( stderr, "(srtp_err_status_init_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_init_fail)\n" );
         return false;
 
       case srtp_err_status_no_ctx:
-        fprintf( stderr, "(srtp_err_status_no_ctx)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_no_ctx)\n" );
         return false;
 
       case srtp_err_status_fail:
-        fprintf( stderr, "(srtp_err_status_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_fail)\n" );
         return false;
       case srtp_err_status_dealloc_fail:
-        fprintf( stderr, "(srtp_err_status_dealloc_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_dealloc_fail)\n" );
         return false;
       case srtp_err_status_terminus:
-        fprintf( stderr, "(srtp_err_status_terminus)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_terminus)\n" );
         return false;
       case srtp_err_status_auth_fail:
-        fprintf( stderr, "(srtp_err_status_auth_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_auth_fail)\n" );
         return false;
       case srtp_err_status_cipher_fail:
-        fprintf( stderr, "(srtp_err_status_cipher_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_cipher_fail)\n" );
         return false;
       case srtp_err_status_replay_fail:
-        fprintf( stderr, "(srtp_err_status_replay_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_replay_fail)\n" );
         return false;
       case srtp_err_status_replay_old:
-        fprintf( stderr, "(srtp_err_status_replay_old)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_replay_old)\n" );
         return false;
       case srtp_err_status_algo_fail:
-        fprintf( stderr, "(srtp_err_status_algo_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_algo_fail)\n" );
         return false;
       case srtp_err_status_no_such_op:
-        fprintf( stderr, "(srtp_err_status_no_such_op)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_no_such_op)\n" );
         return false;
       case srtp_err_status_cant_check:
-        fprintf( stderr, "(srtp_err_status_cant_check)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_cant_check)\n" );
         return false;
       case srtp_err_status_key_expired:
-        fprintf( stderr, "(srtp_err_status_key_expired)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_key_expired)\n" );
         return false;
       case srtp_err_status_socket_err:
-        fprintf( stderr, "(srtp_err_status_socket_err)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_socket_err)\n" );
         return false;
       case srtp_err_status_signal_err:
-        fprintf( stderr, "(srtp_err_status_signal_err)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_signal_err)\n" );
         return false;
       case srtp_err_status_nonce_bad:
-        fprintf( stderr, "(srtp_err_status_nonce_bad)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_nonce_bad)\n" );
         return false;
       case srtp_err_status_read_fail:
-        fprintf( stderr, "(srtp_err_status_read_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_read_fail)\n" );
         return false;
       case srtp_err_status_write_fail:
-        fprintf( stderr, "(srtp_err_status_write_fail)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_write_fail)\n" );
         return false;
       case srtp_err_status_parse_err:
-        fprintf( stderr, "(srtp_err_status_parse_err)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_parse_err)\n" );
         return false;
       case srtp_err_status_encode_err:
-        fprintf( stderr, "(srtp_err_status_encode_err)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_encode_err)\n" );
         return false;
       case srtp_err_status_semaphore_err:
-        fprintf( stderr, "(srtp_err_status_semaphore_err)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_semaphore_err)\n" );
         return false;
       case srtp_err_status_pfkey_err:
-        fprintf( stderr, "(srtp_err_status_pfkey_err)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_pfkey_err)\n" );
         return false;
       case srtp_err_status_bad_mki:
-        fprintf( stderr, "(srtp_err_status_bad_mki)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_bad_mki)\n" );
         return false;
       case srtp_err_status_pkt_idx_old:
-        fprintf( stderr, "(srtp_err_status_pkt_idx_old)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_pkt_idx_old)\n" );
         return false;
       case srtp_err_status_pkt_idx_adv:
-        fprintf( stderr, "(srtp_err_status_pkt_idx_adv)\n" );
+        serverlogfunc( 0, "srtp failed(srtp_err_status_pkt_idx_adv)\n" );
         return false;
     }
-    
   }
 
   pk->length = length;
@@ -444,26 +460,27 @@ void dtlsinit( void ) {
   if( dtlsinitied ) return;
   dtlsinitied = true;
 
+  if ( gnutls_check_version( "3.6.5" ) == NULL ) {
+    fprintf( stderr, "GnuTLS 3.6.5 or later is required \n" );
+    exit( 1 );
+  }
+
   gnutls_global_init();
 
   /* X509 stuff */
   gnutls_certificate_allocate_credentials( &xcred );
-  gnutls_certificate_set_flags( xcred, GNUTLS_CERTIFICATE_API_V2 );
+  //gnutls_certificate_set_flags( xcred, GNUTLS_CERTIFICATE_API_V2 );
 
   /* sets the system trusted CAs for Internet PKI */
   gnutls_certificate_set_x509_system_trust( xcred );
 
   std::string pemfile = std::string( std::getenv( "HOME" ) ) + "/.projectrtp/certs/dtls-srtp.pem";
 
-  gnutls_certificate_set_x509_crl_file( xcred,
-                                            pemfile.c_str(),
-                                            GNUTLS_X509_FMT_PEM );
-
   int idx;
   if( ( idx = gnutls_certificate_set_x509_key_file( xcred,
                                               pemfile.c_str(),
                                               pemfile.c_str(),
-                                              GNUTLS_X509_FMT_PEM ) ) < 0 ) {
+                                              GNUTLS_X509_FMT_PEM ) ) != GNUTLS_E_SUCCESS ) {
     fprintf( stderr, "No private key and certificate found (%s) - quiting\n", pemfile.c_str() );
     exit( 1 );
   }

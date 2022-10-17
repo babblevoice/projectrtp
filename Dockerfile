@@ -19,6 +19,7 @@ WORKDIR /usr/local/lib/node_modules/@babblevoice/projectrtp/
 COPY . .
 RUN npm run rebuild
 
+
 FROM node:18-alpine as app
 
 RUN apk add --no-cache \
@@ -29,7 +30,7 @@ COPY --from=builder /lib/libilbc* /lib/
 
 ENV NODE_PATH=/usr/local/lib/node_modules
 
-EXPOSE 10000-20000
+EXPOSE 10000-50000/udp
 
 WORKDIR /usr/local/lib/node_modules/@babblevoice/projectrtp/
 CMD [ "node", "examples/remoteserver.js" ]

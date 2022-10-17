@@ -109,11 +109,12 @@ describe( "rtpproxy server", function() {
       receivedecho = true
     } )
 
-    let closereceived = false
+    let closeresolve
+    let closereceived = new Promise( resolve => closeresolve = resolve )
     n.setmessagehandler( "close", ( onmsg ) => {
       n.destroy()
       p.destroy()
-      closereceived = true
+      closeresolve()
     } )
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
@@ -123,11 +124,10 @@ describe( "rtpproxy server", function() {
     channel.echo()
     channel.close()
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+    /* this will only resolve when close received */
+    await closereceived
 
     expect( receivedecho ).to.be.true
-    expect( closereceived ).to.be.true
-
   } )
 
   it( `check dtmf`, async function() {
@@ -155,11 +155,12 @@ describe( "rtpproxy server", function() {
       expect( msg ).to.have.property( "digits" ).that.is.a( "string" ).to.equal( "#123" )
     } )
 
-    let closereceived = false
+    let closeresolve
+    let closereceived = new Promise( resolve => closeresolve = resolve )
     n.setmessagehandler( "close", ( onmsg ) => {
       n.destroy()
       p.destroy()
-      closereceived = true
+      closeresolve()
     } )
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
@@ -169,9 +170,8 @@ describe( "rtpproxy server", function() {
     channel.dtmf( "#123" )
     channel.close()
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+    await closereceived
 
-    expect( closereceived ).to.be.true
     expect( reveiveddtmf ).to.be.true
   } )
 
@@ -297,6 +297,7 @@ describe( "rtpproxy server", function() {
 
     expect( secondopened ).to.be.true
 
+
   } )
 
   it( `check remote`, async function() {
@@ -325,11 +326,12 @@ describe( "rtpproxy server", function() {
       remotereceived = true
     } )
 
-    let closereceived = false
+    let closeresolve
+    let closereceived = new Promise( resolve => closeresolve = resolve )
     n.setmessagehandler( "close", ( msg ) => {
       n.destroy()
       p.destroy()
-      closereceived = true
+      closeresolve()
     } )
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
@@ -339,15 +341,16 @@ describe( "rtpproxy server", function() {
     channel.remote( "wouldbearemoteobject" )
 
     channel.close()
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+    await closereceived
 
     expect( remotereceived ).to.be.true
-    expect( closereceived ).to.be.true
-
   } )
 
 
   it( `check play/record`, async function() {
+
+    let done
+    const completed = new Promise( ( r ) => { done = r } )
 
     /* set up our mock node object */
     let n = new mocknode()
@@ -363,31 +366,27 @@ describe( "rtpproxy server", function() {
           } )
     } )
 
-    let playreceived = false
-    let recordreceived = false
+    let playmsg
     n.setmessagehandler( "play", ( msg ) => {
-      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "play" )
-      expect( msg ).to.have.property( "id" ).that.is.a( "string" )
-      expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
-      expect( msg ).to.have.property( "soup" ).that.is.a( "string" ).to.equal( "wouldbeaplayobject" )
+      playmsg = msg
 
-      playreceived = true
+      n.sendmessage( {
+        "action": "play",
+        "id": msg.id,
+        "uuid": msg.uuid
+        } )
+
+      setTimeout( () => channel.record( "wouldbearecordobject" ), 10 )
     } )
 
+    let recmsg
     n.setmessagehandler( "record", ( msg ) => {
-      expect( msg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "record" )
-      expect( msg ).to.have.property( "id" ).that.is.a( "string" )
-      expect( msg ).to.have.property( "uuid" ).that.is.a( "string" )
-      expect( msg ).to.have.property( "options" ).that.is.a( "string" ).to.equal( "wouldbearecordobject" )
-
-      recordreceived = true
+      recmsg = msg
+      channel.close()
     } )
 
-    let closereceived = false
-    n.setmessagehandler( "close", ( msg ) => {
-      n.destroy()
-      p.destroy()
-      closereceived = true
+    n.setmessagehandler( "close", () => {
+      done()
     } )
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
@@ -395,13 +394,75 @@ describe( "rtpproxy server", function() {
     await p.waitfornewconnection()
     let channel = await prtp.openchannel()
     channel.play( "wouldbeaplayobject" )
-    channel.record( "wouldbearecordobject" )
 
-    channel.close()
+    await completed
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+    n.destroy()
+    p.destroy()
 
-    expect( playreceived ).to.be.true
-    expect( recordreceived ).to.be.true
+    expect( recmsg ).to.be.an( "object" )
+    expect( recmsg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "record" )
+    expect( recmsg ).to.have.property( "id" ).that.is.a( "string" )
+    expect( recmsg ).to.have.property( "uuid" ).that.is.a( "string" )
+    expect( recmsg ).to.have.property( "options" ).that.is.a( "string" ).to.equal( "wouldbearecordobject" )
+
+    expect( playmsg ).to.be.an( "object" )
+    expect( playmsg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "play" )
+    expect( playmsg ).to.have.property( "id" ).that.is.a( "string" )
+    expect( playmsg ).to.have.property( "uuid" ).that.is.a( "string" )
+    expect( playmsg ).to.have.property( "soup" ).that.is.a( "string" ).to.equal( "wouldbeaplayobject" )
+
+    expect( channel.history ).to.be.an( "array" ).to.have.length( 6 )
+
+  } )
+
+  it( `check direction( { send, recv } )`, async function() {
+
+    let done
+    const completed = new Promise( ( r ) => { done = r } )
+
+    /* set up our mock node object */
+    let n = new mocknode()
+    n.setmessagehandler( "open", ( msg ) => {
+      n.sendmessage( {
+          "action": "open",
+          "id": msg.id,
+          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+          "channel": {
+            "port": 10002,
+            "address": "192.168.0.141"
+            }
+          } )
+    } )
+
+    let directionmsg
+    n.setmessagehandler( "direction", ( msg ) => {
+      directionmsg = msg.options
+
+      n.sendmessage( {
+        "action": "direction",
+        "id": msg.id,
+        "uuid": msg.uuid
+        } )
+
+        setTimeout( () => channel.close(), 10 )
+    } )
+    n.setmessagehandler( "close", () => {
+      done()
+    } )
+
+    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
+    n.connect( listenport )
+    await p.waitfornewconnection()
+    let channel = await prtp.openchannel()
+    channel.direction( { send: false, recv: false } )
+
+    await completed
+
+    n.destroy()
+    p.destroy()
+
+    expect( directionmsg.send ).to.be.false
+    expect( directionmsg.recv ).to.be.false
   } )
 } )

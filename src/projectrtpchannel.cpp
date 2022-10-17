@@ -67,6 +67,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   active( false ),
   port( port ),
   rfc2833pt( 101 ),
+  lasttelephoneeventsn( 0 ),
   lasttelephoneevent( 0 ),
   resolver( workercontext ),
   rtpsocket( workercontext ),
@@ -76,6 +77,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   rtcpsenderendpoint(),
   receivedrtp( false ),
   remoteconfirmed( false ),
+  autoadjust( true ),
   mixerlock( false ),
   mixer( nullptr ),
   mixing( false ),
@@ -93,6 +95,8 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   recorders(),
   rtpdtls( nullptr ),
   rtpdtlslock( false ),
+  dtlsmode( dtlssession::none ),
+  dtlsfingerprint( "" ),
   remoteaddress(),
   remoteport( 0 ),
   queueddigits(),
@@ -116,21 +120,6 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   this->icelocalpwd = localicepwd;
 }
 
-
-/*
-## requestopen
-*/
-uint32_t projectrtpchannel::requestopen( void ) {
-
-  /* this shouldn't happen */
-  if( this->active ) return this->ssrcout;
-
-  boost::asio::post( workercontext,
-        boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
-
-  return this->ssrcout;
-}
-
 void projectrtpchannel::requestclose( std::string reason ) {
   if( !this->_requestclose.exchange( true, std::memory_order_acquire ) ) {
     this->closereason = reason;
@@ -144,40 +133,131 @@ void projectrtpchannel::remote( std::string address,
                                 uint32_t codec,
                                 dtlssession::mode m,
                                 std::string fingerprint ) {
-  this->remoteconfirmed = false;
-  this->remoteaddress = address;
-  this->remoteport = port;
-  this->codec = codec;
 
-  if( dtlssession::none != m ) {
-    dtlssession::pointer newsession = dtlssession::create( m );
-    newsession->setpeersha256( fingerprint );
+  /* track changes which invalidate dtls session */
+  bool changed = false;
+  if( "" == address ) return;
 
-    projectrtpchannel::pointer p = shared_from_this();
-    newsession->ondata( [ p ] ( const void *d , size_t l ) -> void {
-      /* Note to me, I need to confirm that gnutls maintains the buffer ptr until after the handshake is confirmed (or
-         at least until we have sent the packet). */
-      if( p->remoteconfirmed ) {
-        p->rtpsocket.async_send_to(
-                          boost::asio::buffer( d, l ),
-                          p->confirmedrtpsenderendpoint,
-                          []( const boost::system::error_code& ec, std::size_t bytes_transferred ) -> void {
-                            /* We don't need to do anything */
-                          } );
-      }
-    } );
-
-    AQUIRESPINLOCK( this->rtpdtlslock );
-    this->rtpdtls = newsession;
-    RELEASESPINLOCK( this->rtpdtlslock );
+  if( address != this->remoteaddress ) {
+    this->remoteaddress = address;
+    changed = true;
+  }
+  
+  if( port != this->remoteport ) {
+    this->remoteport = port;
+    changed = true;
   }
 
-  if( this->active ) this->doremote();
+  
+  if( this->dtlsfingerprint != fingerprint ) {
+    this->dtlsfingerprint = fingerprint;
+    changed = true;
+  }
+
+  if( this->dtlsmode != m ) {
+    this->dtlsmode = m;
+    changed = true;
+  }
+
+  this->codec = codec;
+
+  if( changed ) {
+    if( dtlssession::none != m ) {
+      dtlssession::pointer newsession = dtlssession::create( m );
+      newsession->setpeersha256( fingerprint );
+
+      projectrtpchannel::pointer p = shared_from_this();
+      newsession->ondata( [ p ] ( const void *d , size_t l ) -> void {
+        /* Note to me, I need to confirm that gnutls maintains the buffer ptr until after the handshake is confirmed (or
+          at least until we have sent the packet). */
+        if( p->remoteconfirmed ) {
+          p->rtpsocket.async_send_to(
+                            boost::asio::buffer( d, l ),
+                            p->confirmedrtpsenderendpoint,
+                            []( const boost::system::error_code& ec, std::size_t bytes_transferred ) -> void {
+                              /* We don't need to do anything */
+                            } );
+        }
+      } );
+
+      AQUIRESPINLOCK( this->rtpdtlslock );
+      this->rtpdtls = newsession;
+      RELEASESPINLOCK( this->rtpdtlslock );
+    }
+    
+    this->receivedrtp = false;
+    this->remoteconfirmed = false;
+    this->autoadjust = true;
+
+    this->doremote();
+  }
 }
 
-/*
-Must be called in the workercontext.
-*/
+/**
+ * Convert our requested address and port into boost::asio::ip::udp::endpoint
+ */
+void projectrtpchannel::doremote( void ) {
+
+  if( "" == this->remoteaddress ) return;
+
+  boost::asio::ip::udp::resolver::query query(
+    boost::asio::ip::udp::v4(),
+    this->remoteaddress,
+    std::to_string( this->remoteport ) );
+
+  /* Resolve the address */
+  this->resolver.async_resolve( query,
+      boost::bind( &projectrtpchannel::handleremoteresolve,
+        shared_from_this(),
+        boost::asio::placeholders::error,
+        boost::asio::placeholders::iterator ) );
+}
+
+/**
+ * handleremoteresolve
+ * We have resolved the remote address and port now use it. Further work could be to inform control there is an issue.
+ */
+void projectrtpchannel::handleremoteresolve (
+            boost::system::error_code e,
+            boost::asio::ip::udp::resolver::iterator it ) {
+  boost::asio::ip::udp::resolver::iterator end;
+
+  if( e == boost::asio::error::operation_aborted ) return;
+
+  if( it == end ) {
+    /* Failure - silent (the call will be as well!) */
+    this->requestclose( "failed.remote" );
+    return;
+  }
+
+  this->confirmedrtpsenderendpoint = *it;
+  this->remoteconfirmed = true;
+
+  /* allow us to re-auto correct */
+  this->autoadjust = true;
+
+  /* allow us to grab ssrc */
+  this->receivedrtp = false;
+}
+
+
+/**
+ * requestopen - post a request to call doopen in the worker context.
+ */
+uint32_t projectrtpchannel::requestopen( void ) {
+
+  /* this shouldn't happen */
+  if( this->active ) return this->ssrcout;
+
+  boost::asio::post( workercontext,
+        boost::bind( &projectrtpchannel::doopen, shared_from_this() ) );
+
+  return this->ssrcout;
+}
+
+/**
+ * Must be called in the workercontext.
+ */
 void projectrtpchannel::doopen( void ) {
 
   this->outcodec.reset();
@@ -310,6 +390,11 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   if( error == boost::asio::error::operation_aborted ) return;
   if( !this->active ) return;
 
+  if( this->dtlsnegotiate() ) {
+    this->setnexttick();
+    return;
+  }
+
   if( this->mixing ) {
     this->setnexttick();
     return;
@@ -321,17 +406,6 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   }
 
   this->startticktimer();
-
-  AQUIRESPINLOCK( this->rtpdtlslock );
-  dtlssession::pointer currentdtlssession = this->rtpdtls;
-  RELEASESPINLOCK( this->rtpdtlslock );
-
-  if( nullptr != currentdtlssession && currentdtlssession->rtpdtlshandshakeing ) {
-    this->dtlsnegotiate();
-    this->endticktimer();
-    this->setnexttick();
-    return;
-  }
 
   this->incrtsout();
   if( this->checkidlerecv() ) return;
@@ -346,6 +420,11 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
     AQUIRESPINLOCK( this->rtpbufferlock );
     src = this->inbuff->pop();
     RELEASESPINLOCK( this->rtpbufferlock );
+
+    AQUIRESPINLOCK( this->rtpdtlslock );
+    dtlssession::pointer currentdtlssession = this->rtpdtls;
+    RELEASESPINLOCK( this->rtpdtlslock );
+
 
     if( nullptr != currentdtlssession &&
         !currentdtlssession->rtpdtlshandshakeing ) {
@@ -512,10 +591,12 @@ void projectrtpchannel::removeoldrecorders( void ) {
         continue;
       }
 
-      if( rec->lastpowercalc < rec->finishbelowpower ) {
-        rec->completed = true;
-        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.belowpower" );
-        continue;
+      if( rec->finishbelowpower > 0 ) {
+        if( rec->lastpowercalc < rec->finishbelowpower ) {
+          rec->completed = true;
+          postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.belowpower" );
+          continue;
+        }
       }
 
       if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
@@ -533,6 +614,19 @@ bool projectrtpchannel::recordercompleted( const channelrecorder::pointer& rec )
   return rec->completed;
 }
 
+/**
+ * @brief Helper function for checkfordtmf - signal back to our control server that an event has been received.
+ * 
+ */
+static char dtmfchars[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '#', 'A', 'B', 'C', 'D', 'F' };
+void projectrtpchannel::sendtelevent( void ) {
+  if( this->player && this->player->doesinterupt() ) {
+    postdatabacktojsfromthread( shared_from_this(), "play", "end", "telephone-event" );
+    this->player = nullptr;
+  }
+
+  postdatabacktojsfromthread( shared_from_this(), "telephone-event", std::string( 1, dtmfchars[ this->lasttelephoneevent ] ) );
+}
 /*
 ## checkfordtmf
 
@@ -540,53 +634,61 @@ We should receive a start packet with mark set to true. This should then continu
 end of event marked in the 2833 payload. But we might lose any one of these packets and should still work
 if we do.
 */
-static char dtmfchars[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '#', 'A', 'B', 'C', 'D', 'F' };
 bool projectrtpchannel::checkfordtmf( rtppacket *src ) {
   /* The next section is sending to our recipient(s) */
-  if( nullptr != src &&
-      0 != this->rfc2833pt &&
+
+  if( nullptr == src ) return false;
+
+  uint16_t sn = src->getsequencenumber();
+
+  if( 0 != this->rfc2833pt &&
       src->getpayloadtype() == this->rfc2833pt ) {
 
     if( src->getpayloadlength() >= 4 ) {
       /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
-      uint16_t sn = src->getsequencenumber();
 
       uint8_t * pl = src->getpayload();
       uint8_t endbit = pl[ 1 ] >> 7;
       uint8_t event = pl[ 0 ] & 0x7f;
 
       if( event <= 16 ) {
-        uint8_t pm = src->getpacketmarker();
+        bool sendteleevent = false;
+        bool start = false;
 
-        /* Have we lost our mark packet */
-        if( 0 == pm && 0 == endbit &&
-            0 == this->lasttelephoneevent ) {
-          pm = 1;
+        /* Test for start */
+        if( 0 == endbit &&
+            0 == this->lasttelephoneeventsn ) {
+          start = true;
         }
 
-        /* did we lose the last end of event */
-        if( 0 != this->lasttelephoneevent &&
-            abs( static_cast< long long int >( sn - this->lasttelephoneevent ) ) > 20 ) {
-          pm = 1;
+        if( 0 == endbit &&
+            0 != this->lasttelephoneeventsn && 
+              event != this->lasttelephoneevent
+             ) {
+          /* Did we lose the last end of event */
+          this->lasttelephoneeventsn = 0;
+          sendteleevent = true;
+        } else if( 1 == endbit &&
+                   0 != this->lasttelephoneeventsn ) {
+          sendteleevent = true;
         }
 
-        if( 1 == pm ) {
-          if( this->player && this->player->doesinterupt() ) {
-            postdatabacktojsfromthread( shared_from_this(), "play", "end", "telephone-event" );
-            this->player = nullptr;
-          }
+        if( sendteleevent ) this->sendtelevent();
 
-          postdatabacktojsfromthread( shared_from_this(), "telephone-event", std::string( 1, dtmfchars[ event ] ) );
-        }
-
-        if( endbit ) {
-          this->lasttelephoneevent = 0;
-        } else {
-          this->lasttelephoneevent = sn;
+        if( start ) {
+          this->lasttelephoneeventsn = sn;
+          this->lasttelephoneevent = event;
+        } else if( 1 == endbit ) {
+          this->lasttelephoneeventsn = 0;
         }
       }
     }
     return true;
+  } else if( 0 != this->lasttelephoneeventsn &&
+             abs( static_cast< long long int >( sn - this->lasttelephoneeventsn ) ) > MAXDTMFSNDIFFERENCE ) {
+    /* timeout on waiting for end packet */
+    this->sendtelevent();
+    this->lasttelephoneeventsn = 0;
   }
   return false;
 }
@@ -614,16 +716,23 @@ void projectrtpchannel::writerecordings( void ) {
 
     if( rec->completed ) continue;
 
-    if( 0 == rec->startabovepower && 0 == rec->finishbelowpower ) {
-      if( !rec->isactive() ) {
+    /* calculate power for the below tests and the finish test in ::removeoldrecorders */
+    uint16_t pav = 0;
+    if( ( !rec->isactive() && rec->startabovepower > 0 ) || 
+        ( rec->isactive() && rec->finishbelowpower > 0 ) ) {
+      pav = rec->poweravg( power );
+    }
+
+
+    if( !rec->isactive() ) {
+      if( 0 == rec->startabovepower ) {
         rec->active();
         postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording" );
-      }
-    } else {
-      auto pav = rec->poweravg( power );
-      if( !rec->isactive() && pav > rec->startabovepower ) {
-        rec->active();
-        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording.abovepower" );
+      } else {
+        if( pav > rec->startabovepower ) {
+          rec->active();
+          postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording.abovepower" );
+        }
       }
     }
 
@@ -648,8 +757,16 @@ bool projectrtpchannel::dtlsnegotiate( void ) {
   auto dtlsstate = oursession->handshake();
   RELEASESPINLOCK( this->rtpdtlslock );
 
-  if( GNUTLS_E_SUCCESS == dtlsstate ) {
-    oursession->rtpdtlshandshakeing = false;
+  if( GNUTLS_E_SUCCESS != dtlsstate && 0 != gnutls_error_is_fatal( dtlsstate ) ) {
+    oursession->bye();
+
+    std::stringstream out;
+    out << "error.dtlsfail: " << dtlsstate;
+    this->requestclose( out.str() );
+  }
+
+  if( !oursession->rtpdtlshandshakeing ) {
+    this->correctaddress();
   }
 
   return oursession->rtpdtlshandshakeing;
@@ -674,12 +791,36 @@ bool projectrtpchannel::handlestun( uint8_t *pk, size_t len ) {
                                     shared_from_this(),
                                     boost::asio::placeholders::error,
                                     boost::asio::placeholders::bytes_transferred ) );
+
+      this->correctaddress();
     }
-    
+
     return true;
   }
 
   return false;
+}
+
+/**
+ * Auto correct our to send to address if required. 
+ */
+void projectrtpchannel::correctaddress( void ) {
+
+  if( this->autoadjust ) {
+    this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
+    this->remoteconfirmed = true;
+    this->autoadjust = false;
+  }
+}
+
+/**
+ * Auto correct our SSRC if required
+ */
+void projectrtpchannel::correctssrc( uint32_t ssrc ) {
+  if( !this->receivedrtp ) {
+    this->receivedrtp = true;
+    this->ssrcin = ssrc;
+  }
 }
 
 /*
@@ -742,14 +883,6 @@ void projectrtpchannel::readsomertp( void ) {
         this->receivedpkcount++;
 
         if( !this->recv ) {
-          if( bytesrecvd > 0 ) {
-            this->readsomertp();
-          }
-          return;
-        }
-
-        /* Sanity checking TODO - check size for the CODEC type*/
-        if( bytesrecvd > 200 ) {
           this->receivedpkskip++;
           this->readsomertp();
           return;
@@ -757,23 +890,23 @@ void projectrtpchannel::readsomertp( void ) {
 
         this->tickswithnortpcount = 0;
 
-        if( !this->receivedrtp ) {
-          this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
-          this->receivedrtp = true;
-          this->ssrcin = buf->getssrc();
-        } else {
+        this->correctaddress();
+        this->correctssrc( buf->getssrc() );
+        
+        if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint ) {
           /* After the first packet - we only accept data from the verified source */
-          if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint ) {
-            this->readsomertp();
-            return;
-          }
-
-          if( buf->getssrc() != this->ssrcin ) {
-            this->receivedpkskip++;
-            this->readsomertp();
-            return;
-          }
+          this->receivedpkskip++;
+          this->readsomertp();
+          return;
         }
+
+        if( buf->getssrc() != this->ssrcin ) {
+          this->receivedpkskip++;
+          this->readsomertp();
+          return;
+        }
+
+
 
         buf->length = bytesrecvd;
 
@@ -882,7 +1015,7 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
     }
   }
 
-  if( this->receivedrtp || this->remoteconfirmed ) {
+  if( this->remoteconfirmed ) {
     this->snout++;
 
     this->rtpsocket.async_send_to(
@@ -892,48 +1025,9 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
                                     shared_from_this(),
                                     boost::asio::placeholders::error,
                                     boost::asio::placeholders::bytes_transferred ) );
-  }
-}
-
-void projectrtpchannel::doremote( void ) {
-  if( "" == this->remoteaddress ) return;
-
-  this->receivedrtp = false;
-  boost::asio::ip::udp::resolver::query query(
-    boost::asio::ip::udp::v4(),
-    this->remoteaddress,
-    std::to_string( this->remoteport ) );
-
-  /* Resolve the address */
-  this->resolver.async_resolve( query,
-      boost::bind( &projectrtpchannel::handleremoteresolve,
-        shared_from_this(),
-        boost::asio::placeholders::error,
-        boost::asio::placeholders::iterator ) );
-}
-
-/*!md
-## handleremoteresolve
-We have resolved the remote address and port now use it. Further work could be to inform control there is an issue.
-*/
-void projectrtpchannel::handleremoteresolve (
-            boost::system::error_code e,
-            boost::asio::ip::udp::resolver::iterator it ) {
-  boost::asio::ip::udp::resolver::iterator end;
-
-  if( e == boost::asio::error::operation_aborted ) return;
-
-  if( it == end ) {
-    /* Failure - silent (the call will be as well!) */
-    this->requestclose( "failed.remote" );
     return;
   }
-
-  this->confirmedrtpsenderendpoint = *it;
-  this->remoteconfirmed = true;
-
-  /* allow us to re-auto correct */
-  this->receivedrtp = false;
+  this->outpkskipcount++;
 }
 
 /*
@@ -1772,7 +1866,9 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
 
   /* our final call - allow js to clean up */
   if( "close" == ev->event ) {
-    if( napi_ok != napi_release_threadsafe_function( p->cb, napi_tsfn_abort ) ) {
+    napi_threadsafe_function cb = p->cb;
+    p->cb = NULL;
+    if( napi_ok != napi_release_threadsafe_function( cb, napi_tsfn_abort ) ) {
       fprintf( stderr, "Error releasing threadsafe function\n" );
     }
   }
@@ -1869,7 +1965,7 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
 
 nodtls:
     if( dtlsrequired && !dtlsenabled ) {
-      napi_throw_error( env, "1", "DTLS requested but no possible" );
+      napi_throw_error( env, "1", "DTLS requested but not possible" );
       return NULL;
     }
 

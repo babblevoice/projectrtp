@@ -35,12 +35,14 @@ Only when we release version 1.0.0 will the public API be settled.
 ## Release process
 
 1. Update package.json to the new version number (see Version numbers above)
-2. npm test && stress testing
-2. npm publish
-3. docker buildx prune
-4. docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:<version> . --push
-5. Git release
-6. Github tag <version> 
+2. Update Dockerfile with the new version number
+3. npm test && stress testing
+4. git commit && push
+5. npm publish
+6. docker buildx prune
+7. docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:<version> . --push
+8. Git release
+9. Github tag <version> 
 
 <version> should simply the semantic version number. For late stage test builds this could be <version>betax.
 
@@ -92,25 +94,17 @@ After installing standard build tools - including g++.
 dnf install ilbc-devel spandsp-devel boost gnutls libsrtp libsrtp-devel g++
 ```
 
-## Node Module
+### Ubuntu
 
-node-gyp is required to build the module:
+Build ilbc from the sub module plus install other dependancies.
 
-```
-sudo npm install -g node-gyp
-sudo npm install -g node-addon-api
-```
+```bash
 
-From the src folder
-```
-node-gyp configure
-node-gyp build
-```
+apt install libboost-dev libspandsp-dev gnutls-dev libsrtp2-dev cmake 
 
-Or
-
-```
-node-gyp build --debug
+cd ilbc
+cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; cmake --build .; cmake --install .
+cd ..
 ```
 
 ## Docker/Podman
@@ -134,11 +128,18 @@ Or in one shot and build it. This create a docker image and container buildkit.
 docker buildx create --name rtpbuilder --use --bootstrap --platform linux/amd64,linux/arm64
 ```
 
-Then to build, and push to Docker hub:
+To clean up if you want to remove this buildx env:
+```
+docker buildx rm rtpbuilder
+```
+
+Then to build, and push to Docker hub (REMEMBER to update all references to version number including in Dockerfile)
 ```
 docker buildx prune
-docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.1.0beta1 . --push
+docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.2.10 . --push
 ```
+
+NB: updating version, Docker file, this readme and package.json all need updating - is there a way of automating this?
 
 ### Runing
 
@@ -146,7 +147,7 @@ The enviroment variable HOST should contain the host address of the control serv
 
 The enviroment variable PA is takes the below form- where the address is passed back to the control server so it can be published in SDP - i.e. this allows for multiple RTP nodes all on different IP addresses. If you do not pass this in, then the default script will determin your public IP address by calling https://checkip.amazonaws.com to obtain your IP.
 
-podman run --restart=always --net=host -d -it --env PA=127.0.0.1 --name=prtp projectrtp:latest
+docker run --restart=always --net=host -d -it --env PA=127.0.0.1 --name=prtp projectrtp:latest
 
 ## Example scripts
 
@@ -185,7 +186,7 @@ Example:
 
 ```js
 
-const prtp = require( "projectrtp" ).projectrtp
+const prtp = require( "@babblevoice/projectrtp" ).projectrtp
 
 /* This switches this server to a central 
 server and requires nodes to connect to us
@@ -337,7 +338,7 @@ What we need to provide is a utility to generate wav files which will generate t
 
 ```js
 
-const prtp = require( "projectrtp" ).projectrtp
+const prtp = require( "@babblevoice/projectrtp" ).projectrtp
 
 let filename = "/some/file.wav"
 prtp.tone.generate( "350+440*0.5:1000", filename )
@@ -386,4 +387,19 @@ prtp.tone.generate( "697+1209*0.5/0/697+1336*0.5/0/697+1477*0.5/0:400/100", "dtm
 
 ### TODO
 
-Format conversion between wav file types (l16, rate pcmu, pcma etc).
+* Format conversion between wav file types (l16, rate pcmu, pcma etc).
+* Add support for cppcheck on commit and tidy up current warnings (see below).
+
+```
+cppcheck --enable=warning,performance,portability,style --error-exitcode=1 src/
+```
+
+# Ref
+
+* [RFC 3550 - RTP: A Transport Protocol for Real-Time Applications](https://www.rfc-editor.org/rfc/rfc3550)
+* [RFC 3711 - The Secure Real-time Transport Protocol (SRTP)](https://www.rfc-editor.org/rfc/rfc3711)
+* [RFC 5763 - Framework for Establishing a Secure Real-time Transport Protocol (SRTP) Security Context Using Datagram Transport Layer Security (DTLS)](https://www.rfc-editor.org/rfc/rfc5763)
+* [RFC 5764 - Datagram Transport Layer Security (DTLS) Extension to Establish Keys for the Secure Real-time Transport Protocol (SRTP)](https://www.rfc-editor.org/rfc/rfc5764)
+* [RFC 8842 - Session Description Protocol (SDP) Offer/Answer Considerations for Datagram Transport Layer Security (DTLS) and Transport Layer Security (TLS)](https://www.rfc-editor.org/rfc/rfc8842)
+
+

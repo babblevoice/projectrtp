@@ -66,10 +66,10 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } )
 
     endpointb.bind()
-    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } )
 
     let done
     let finished = new Promise( ( r ) => { done = r } )
@@ -90,7 +90,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1300 ) } )
 
     channela.close()
     endpointa.close()
@@ -160,7 +160,7 @@ describe( "channel mix", function() {
     } )
 
     /* 1S for 50 packets to get through, 0.5 seconds to allow all through jitter buffers */
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } )
 
     channelb.unmix()
     channelb.close()
@@ -233,7 +233,7 @@ describe( "channel mix", function() {
     } )
 
     /* 1S for 50 packets @ 20mS 0.5 seconds to allow through jitter buffers */
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } )
 
     channelb.close()
     channela.close()
@@ -298,7 +298,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1500 ) } )
 
     channela.close()
     endpointa.close()
@@ -366,7 +366,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1400 ) } )
 
     channela.close()
     endpointa.close()
@@ -426,7 +426,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1500 ) } )
 
     channela.close()
     endpointa.close()
@@ -618,13 +618,13 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } )
 
     endpointc.bind()
-    await new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( r ) => { endpointc.on( "listening", function() { r() } ) } )
 
     let done
     let finished = new Promise( ( r ) => { done = r } )
@@ -650,16 +650,16 @@ describe( "channel mix", function() {
       sendpk( i, i, channelc.local.port, endpointc )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+    await new Promise( ( r ) => { setTimeout( () => r(), 1500 ) } )
 
     channela.close()
     endpointa.close()
     endpointb.close()
     endpointc.close()
 
-    expect( endpointapkcount ).to.be.within( 59, 61 )
-    expect( endpointbpkcount ).to.be.within( 59, 61 )
-    expect( endpointcpkcount ).to.be.within( 59, 61 )
+    expect( endpointapkcount ).to.be.within( 70, 80 )
+    expect( endpointbpkcount ).to.be.within( 70, 80 )
+    expect( endpointcpkcount ).to.be.within( 70, 80 )
 
     await finished
 
@@ -708,13 +708,13 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } )
 
     endpointb.bind()
-    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } )
 
     endpointc.bind()
-    await new Promise( ( resolve, reject ) => { endpointc.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( r ) => { endpointc.on( "listening", function() { r() } ) } )
 
     let done
     let finished = new Promise( ( r ) => { done = r } )
@@ -742,18 +742,19 @@ describe( "channel mix", function() {
       sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+    await new Promise( ( r ) => { setTimeout( () => r(), 1500 ) } )
 
     channela.close()
     endpointa.close()
     endpointb.close()
     endpointc.close()
 
-    expect( endpointapkcountzero ).to.be.within( 48, 52 )
-    expect( endpointbpkcountzero ).to.be.within( 48, 52 )
-    expect( endpointcpkcountzero ).to.be.within( 58, 62 )
-    expect( endpointapkcountnotzero ).to.be.within( 8, 12 )
-    expect( endpointbpkcountnotzero ).to.be.within( 8, 12 )
+    expect( endpointapkcountzero ).to.be.within( 65, 75 )
+    expect( endpointbpkcountzero ).to.be.within( 65, 75 )
+    expect( endpointcpkcountzero ).to.be.within( 65, 75 )
+    expect( endpointapkcountnotzero ).to.be.within( 4, 12 )
+    expect( endpointbpkcountnotzero ).to.be.within( 4
+      , 12 )
     expect( endpointcpkcountnotzero ).to.be.below( 2 )
 
     await finished
@@ -824,7 +825,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1500 ) } )
 
     channela.close()
     endpointa.close()
@@ -833,7 +834,7 @@ describe( "channel mix", function() {
 
     expect( endpointapkcount ).to.be.at.most( 15 )
     expect( endpointbpkcount ).to.be.at.most( 15 )
-    expect( endpointcpkcount ).to.be.within( 59, 61 )
+    expect( endpointcpkcount ).to.be.within( 59, 75 )
 
     await finished
 

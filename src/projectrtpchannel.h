@@ -39,6 +39,12 @@ class projectchannelmux;
 /* Must be to the power 2 */
 #define OUTBUFFERPACKETCOUNT 16
 
+/* 
+   The SN difference between receiving the first DTMF EV and when we consider we have lost all end events.
+   Delay = MAXDTMFSNDIFFERENCE * 20mS
+*/
+#define MAXDTMFSNDIFFERENCE 75
+
 
 /*
 # projectrtpchannel
@@ -102,7 +108,7 @@ public:
   void dtmf( std::string digits );
   rtppacket *gettempoutbuf( void );
 
-  uint32_t codec;
+  std::atomic_uint32_t codec;
   uint32_t ssrcin;
   uint32_t ssrcout;
   uint32_t tsout;
@@ -147,20 +153,30 @@ private:
   std::atomic_bool active;
   unsigned short port;
   unsigned short rfc2833pt;
-  uint32_t lasttelephoneevent;
+  uint32_t lasttelephoneeventsn;
+  uint8_t lasttelephoneevent;
 
   boost::asio::ip::udp::resolver resolver;
 
   boost::asio::ip::udp::socket rtpsocket;
   boost::asio::ip::udp::socket rtcpsocket;
 
+  /* where the last pk came from */
   boost::asio::ip::udp::endpoint rtpsenderendpoint;
+
+  /* where we send to */
   boost::asio::ip::udp::endpoint confirmedrtpsenderendpoint;
   boost::asio::ip::udp::endpoint rtcpsenderendpoint;
 
-  /* confirmation of where the other end of the RTP stream is */
+  /* have we received some rtp */
   std::atomic_bool receivedrtp;
+  /* has confirmedrtpsenderendpoint been confirmed */
   std::atomic_bool remoteconfirmed;
+  /*
+    Allow auto adjustment to take place. This will auto adjust
+    network address and port. We will detect based on RTP, STUN or DTLS negotaition.
+  */
+  std::atomic_bool autoadjust; 
 
   void readsomertp( void );
   void readsomertcp( void );
@@ -172,6 +188,7 @@ private:
   void writerecordings( void );
 
   bool checkfordtmf( rtppacket *src );
+  void sendtelevent( void );
   void senddtmf( void );
 
   void handlertcpdata( void );
@@ -185,6 +202,8 @@ private:
   void endticktimer( void );
 
   bool handlestun( uint8_t *pk, size_t len );
+  void correctaddress( void );
+  void correctssrc( uint32_t ssrc );
 
   static bool recordercompleted( const channelrecorder::pointer& value );
   void dounmix( void );
@@ -213,6 +232,9 @@ private:
   /* DTLS Session */
   dtlssession::pointer rtpdtls;
   std::atomic_bool rtpdtlslock;
+
+  dtlssession::mode dtlsmode;
+  std::string dtlsfingerprint;
 
   std::string remoteaddress;
   unsigned short remoteport;

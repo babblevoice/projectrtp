@@ -11,9 +11,12 @@
 
 /* Defaults */
 /* The number of packets we will keep in a buffer */
-#define BUFFERPACKETCOUNT 20
-/* The level we start dropping packets to clear backlog */
-#define BUFFERPACKETCAP 10  /* 200mS @ a ptime of 20mS */
+#define BUFFERPACKETCOUNT 40
+/* 
+  How many packets we receive before we start taking packets out of the buffer 
+  If we fill, Delay = ( BUFFERPACKETCOUNT - BUFFERPACKETCAP ) * 20mS 
+*/
+#define BUFFERPACKETCAP 15  /* 200mS @ a ptime of 20mS */
 
 /*
 My thoughts on buffers. We reorder as we might want to use the data
