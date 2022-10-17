@@ -152,9 +152,9 @@ describe( "rtpproxy multi node", function() {
     rtp1.connect( listenport )
     rtp2.connect( listenport )
     await p.waitfornewconnection()
-    
-    let channel1 = await prtp.openchannel( { "nodeinstance": rtp1.id } )
-    let channel2 = await prtp.openchannel( { "nodeinstance": rtp2.id } )
+
+    let channel1 = await prtp.openchannel( { "nodeinstance": rtp1.instance } )
+    let channel2 = await prtp.openchannel( { "nodeinstance": rtp2.instance } )
     await channel1.mix( channel2 )
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1000 ) } )
     channel1.unmix()
@@ -169,6 +169,7 @@ describe( "rtpproxy multi node", function() {
     {
       actual[ msg.channel ] += 1
     }
+
     for ( let action in expected )
     {
       expect( expected[ action ] ).to.equal( actual[ action ] )
