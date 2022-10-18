@@ -14,5 +14,4 @@ describe( "server", function() {
     expect( s.channel.current ).to.be.below( 100 )
     done()
   } )
-
 } )
