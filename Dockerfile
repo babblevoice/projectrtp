@@ -29,4 +29,3 @@ EXPOSE 10000-50000/udp
 
 WORKDIR /usr/local/lib/node_modules/@babblevoice/projectrtp/
 CMD [ "node", "examples/simplenode.js" ]
-
