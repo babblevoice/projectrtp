@@ -293,6 +293,7 @@ let actualprojectrtp = false
       /* I can't find a way of defining a getter in napi - so here we override */
 
       chan.local.address = localaddress
+      chan.local.privateaddress = privateaddress
 
       chan.em = new EventEmitter()
       if( cb ) chan.em.on( "all", cb )
@@ -310,6 +311,9 @@ let actualprojectrtp = false
 
   setaddress( address ) {
     localaddress = address
+  }
+  setprivateaddress( address ) {
+    privateaddress = address
   }
 }
 
