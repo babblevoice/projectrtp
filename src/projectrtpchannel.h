@@ -256,7 +256,7 @@ typedef std::unordered_map<std::string, projectrtpchannel::pointer> activertpcha
 #ifdef NODE_MODULE
 #include <node_api.h>
 
-void initrtpchannel( napi_env env, napi_value &result );
+void initrtpchannel( napi_env env, napi_value &result, int32_t startport, int32_t endport);
 void getchannelstats( napi_env env, napi_value &result );
 
 class jschannelevent {

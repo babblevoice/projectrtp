@@ -234,6 +234,72 @@ describe( "rtpproxy server", function() {
 
   } )
 
+  it( `check node selection`, async function() {
+
+    let n = new mocknode()
+    let n2 = new mocknode()
+    let firstopened = false
+    let secondopened = false
+
+    n.setmessagehandler( "open", ( msg ) => {
+      firstopened = true
+      n.sendmessage( {
+          "action": "open",
+          "id": msg.id,
+          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+          "local": {
+            "port": 10002,
+            "address": "192.168.0.141"
+            },
+          "status": n.ourstats
+          } )
+    } )
+    
+    n.setmessagehandler( "close", ( msg ) => {  
+      n.destroy()
+      p.destroy()
+    } )
+
+    n2.setmessagehandler( "open", ( msg ) => {
+      secondopened = true
+      n2.sendmessage( {
+          "action": "open",
+          "id": msg.id,
+          "uuid": "9dfc35d9-eafe-4d8b-8880-c48f528ec152",
+          "local": {
+            "port": 10004,
+            "address": "192.168.0.141"
+            },
+          "status": n2.ourstats
+          } )
+
+    } )
+
+    n2.setmessagehandler( "close", ( msg ) => {  
+      n2.destroy()
+    } )
+
+    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
+    n.connect( listenport )
+    n2.connect( listenport )
+    await p.waitfornewconnection()
+    
+    n.ourstats.channel.current = 1
+    let channel1 = await prtp.openchannel()
+    let channel2 = await prtp.openchannel()
+
+    channel1.close()
+    channel2.close()
+
+    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 10 ) } )
+
+    expect( firstopened ).to.be.true
+
+    expect( secondopened ).to.be.true
+
+
+  } )
+
   it( `check remote`, async function() {
 
     /* set up our mock node object */
