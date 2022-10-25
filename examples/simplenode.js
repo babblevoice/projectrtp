@@ -5,6 +5,18 @@ const prtp = require( "@babblevoice/projectrtp" )
 const https = require( "https" )
 const fs = require( "fs" )
 
+
+// Get startport and endport from command line arguments
+var ports = process.argv.slice(2)
+var start = 10000
+var end = 20000
+if ( ports.length === 2 )
+{
+  start = parseInt(ports[0])
+  end = parseInt(ports[1])
+}
+prtp.projectrtp.run( { "ports": { "start": start, "end": end }} )
+
 function wgets( url ) {
   return new Promise( r => {
     https.get( url, res => {
@@ -65,9 +77,7 @@ async function connect() {
   if( undefined !== process.env.HOST ) host = process.env.HOST
 
   prtp.projectrtp.proxy.connect( port, host )
-  prtp.projectrtp.run()
   console.log( "RTP Server running" )
 }
-
 createuktones()
 connect()

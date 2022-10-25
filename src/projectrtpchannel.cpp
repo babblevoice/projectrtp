@@ -2178,10 +2178,11 @@ void getchannelstats( napi_env env, napi_value &result ) {
   if( napi_ok != napi_set_named_property( env, channel, "current", chcount ) ) return;
 }
 
-void initrtpchannel( napi_env env, napi_value &result ) {
+void initrtpchannel( napi_env env, napi_value &result, int32_t startport, int32_t endport ) {
   napi_value ccreate;
 
-  for( int i = 10000; i < 20000; i = i + 2 ) {
+  while(!availableports.empty()) availableports.pop();
+  for( int i = (int) startport; i < (int) endport; i = i + 2 ) {
     availableports.push( i );
   }
 

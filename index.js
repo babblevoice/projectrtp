@@ -235,7 +235,7 @@ let actualprojectrtp = false
     this.proxy = new proxy()
   }
 
-  run() {
+  run( params ) {
 
     if( process.platform == "win32" && process.arch == "x64" ) {
       throw "Platform not currently supported"
@@ -246,8 +246,12 @@ let actualprojectrtp = false
     if( actualprojectrtp ) return
 
     gencerts()
+    if ( !params )
+    {
+      params = {}
+    }
     actualprojectrtp = require( bin )
-    actualprojectrtp.run()
+    actualprojectrtp.run( params )
     this.dtls = actualprojectrtp.dtls
     this.tone = actualprojectrtp.tone
     this.rtpfilter = actualprojectrtp.rtpfilter
@@ -289,6 +293,7 @@ let actualprojectrtp = false
       /* I can't find a way of defining a getter in napi - so here we override */
 
       chan.local.address = localaddress
+      chan.local.privateaddress = privateaddress
 
       chan.em = new EventEmitter()
       if( cb ) chan.em.on( "all", cb )
@@ -306,6 +311,9 @@ let actualprojectrtp = false
 
   setaddress( address ) {
     localaddress = address
+  }
+  setprivateaddress( address ) {
+    privateaddress = address
   }
 }
 

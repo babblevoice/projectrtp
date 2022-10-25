@@ -3,6 +3,7 @@
 
 FROM node:18-alpine as builder
 
+
 WORKDIR /usr/src/
 
 RUN apk add --no-cache \
@@ -11,9 +12,13 @@ RUN apk add --no-cache \
     wget https://github.com/TimothyGu/libilbc/releases/download/v3.0.4/libilbc-3.0.4.tar.gz; \
     tar xvzf libilbc-3.0.4.tar.gz; \
     cd libilbc-3.0.4; \
-    cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; cmake --build .; cmake --install .; \
-    npm -g install @babblevoice/projectrtp@2.2.13; \
-    rm -fr /usr/local/lib/node_modules/@babblevoice/projectrtp/src/build/Release/obj.target/projectrtp
+    cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; cmake --build .; cmake --install .; 
+    
+WORKDIR /usr/local/lib/node_modules/@babblevoice/projectrtp/
+
+COPY . .
+RUN npm run rebuild
+
 
 FROM node:18-alpine as app
 
@@ -28,4 +33,4 @@ ENV NODE_PATH=/usr/local/lib/node_modules
 EXPOSE 10000-50000/udp
 
 WORKDIR /usr/local/lib/node_modules/@babblevoice/projectrtp/
-CMD [ "node", "examples/simplenode.js" ]
+CMD [ "node", "examples/remoteserver.js" ]

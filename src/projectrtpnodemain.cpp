@@ -25,6 +25,8 @@ boost::asio::io_context workercontext;
 static napi_async_work workhandle;
 static bool started = false;
 static std::atomic_bool warningissued( false );
+int32_t startport = 10000;
+int32_t endport = 20000;
 
 void boost::throw_exception( std::exception const & e ) {
   std::string err = boost::diagnostic_information( e );
@@ -117,10 +119,37 @@ static napi_value stopserver( napi_env env, napi_callback_info info ) {
 static napi_value startserver( napi_env env, napi_callback_info info ) {
 
   if( started ) return NULL;
-  started = true;
-
   dtlsinit();
 
+  started = true;
+  napi_value nports;
+  napi_value nstartport;
+  napi_value nendport;
+  napi_value argv[ 1 ];
+  size_t argc = 1;
+  napi_value result;
+  bool hasit;
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
+  if( 1 == argc ) {
+    if( napi_ok == napi_has_named_property( env, argv[ 0 ], "ports", &hasit ) &&
+        hasit &&
+        napi_ok == napi_get_named_property( env, argv[ 0 ], "ports", &nports ) ) 
+    {
+    if( napi_ok == napi_has_named_property( env, nports, "start", &hasit ) &&
+        hasit &&
+        napi_ok == napi_get_named_property( env, nports, "start", &nstartport ) ) {
+        napi_get_value_int32( env, nstartport, &startport );
+      }
+    if( napi_ok == napi_has_named_property( env, nports, "end", &hasit ) &&
+        hasit &&
+        napi_ok == napi_get_named_property( env, nports, "end", &nendport ) ) {
+        napi_get_value_int32( env, nendport, &endport );
+      }
+
+      initrtpchannel( env, result, startport, endport );
+    }
+  }
+  
   napi_value workname;
 
   if( napi_ok != napi_create_string_utf8( env, "projectrtp", NAPI_AUTO_LENGTH, &workname ) ) {
@@ -191,7 +220,7 @@ NAPI_MODULE_INIT() {
   /* Init our modules */
   initserver( env, result );
   initrtpbuffer( env, result );
-  initrtpchannel( env, result );
+  initrtpchannel( env, result, startport, endport );
   initrtpsoundfile( env, result );
   initrtpcodecx( env, result );
   initfilter( env, result );

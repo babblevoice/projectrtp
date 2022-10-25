@@ -3,6 +3,7 @@ const expect = require( "chai" ).expect
 const net = require( "net" )
 const message = require( "../../lib/message.js" )
 const prtp = require( "../../index.js" ).projectrtp
+const { v4: uuidv4 } = require( "uuid" )
 
 module.exports = class {
   constructor() {
@@ -10,7 +11,10 @@ module.exports = class {
     this.ourstats = prtp.stats()
     this.messagehandlers = {}
     this.recevievedmessagecount = 0
+    this.id = uuidv4()
   }
+
+
 
   connect( port = 9002, address = "127.0.0.1" ) {
     this.connection = net.createConnection( port, address )
@@ -32,7 +36,7 @@ module.exports = class {
     stats message has been sent and it must have an instance id */
     let msg = {}
     msg.status = this.ourstats
-    msg.instance = "1"
+    msg.status.instance = this.id
     this.connection.write( message.createmessage( msg ) )
   }
 
