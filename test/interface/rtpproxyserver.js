@@ -465,4 +465,13 @@ describe( "rtpproxy server", function() {
     expect( directionmsg.send ).to.be.false
     expect( directionmsg.recv ).to.be.false
   } )
+
+  it( `Two mock nodes listening for connections`, async () => {
+
+
+  } )
+
+  it( `Two mock nodes listening, 2 openchannels on the same node close each in turn to ensure connection is maintained`, async () => {
+
+  } )
 } )
