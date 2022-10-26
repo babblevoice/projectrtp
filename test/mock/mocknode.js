@@ -16,10 +16,14 @@ module.exports = class {
 
 
 
-  connect( port = 9002, address = "127.0.0.1" ) {
+  async connect( port = 9002, address = "127.0.0.1" ) {
+
+    let connectpromise = new Promise( r => this._newconnectresolve = r )
     this.connection = net.createConnection( port, address )
     this.connection.on( "connect", this._onsocketconnect.bind( this ) )
     this.connection.on( "data", this._onsocketdata.bind( this ) )
+
+    await connectpromise
   }
 
   setmessagehandler( event, cb ) {
@@ -38,6 +42,8 @@ module.exports = class {
     msg.status = this.ourstats
     msg.status.instance = this.id
     this.connection.write( message.createmessage( msg ) )
+
+    this._newconnectresolve()
   }
 
   _onsocketdata( data ) {
