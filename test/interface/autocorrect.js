@@ -71,7 +71,6 @@ describe( "autocorrect", function() {
     let channelclose = new Promise( ( r ) => channelcloseresolv = r )
     let channelaclosestats
     const channela = await projectrtp.openchannel( {}, ( d ) => {
-      console.log(d)
       if( "close" == d.action ) {
         channelaclosestats = d
         channelcloseresolv()
