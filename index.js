@@ -9,6 +9,7 @@ const fs = require( "fs" )
 const { spawnSync } = require( "child_process" )
 
 let localaddress = "127.0.0.1"
+let privateaddress = "127.0.0.1"
 const bin = "./src/build/Release/projectrtp"
 
 /*
@@ -108,10 +109,10 @@ class proxy {
    * @param { Object } port - port to listen on
    * @param { string } address - what address to listen to on
    * @param { object } em - event emitter
-   * @return { rtpserver }
+   * @return { Promise< rtpserver > }
    */
-  listen( em, address = "127.0.0.1", port = 9002 ) {
-    return server.listen( port, address, em )
+  async listen( em, address = "127.0.0.1", port = 9002 ) {
+    return await server.listen( port, address, em )
   }
 
   /**
@@ -219,7 +220,6 @@ RFC 2833 telephone-event
 @param {Object} [properties.direction] - direction from our perspective
 @param {boolean} [properties.direction.send=true]
 @param {boolean} [properties.direction.recv=true]
-@param {Array<string>} [properties.related] - an array of related channel UUID to help in the decision of which node to create the channel on
 @param {channelcallback} [callback] - events are passed back to the caller via this callback
 @returns {Promise<channel>} - the newly created channel
 */
