@@ -451,7 +451,7 @@ describe( "rtpproxy server", function() {
 
   } )
 
-  it( `Two mock nodes listening, 2 openchannels on the same node close each in turn to ensure connection is maintained`, async () => {
+  /*it( `Two mock nodes listening, 2 openchannels on the same node close each in turn to ensure connection is maintained`, async () => {
 
-  } )
+  } )*/
 } )
