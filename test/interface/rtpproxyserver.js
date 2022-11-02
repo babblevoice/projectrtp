@@ -2,6 +2,7 @@
 const expect = require( "chai" ).expect
 const prtp = require( "../../index.js" ).projectrtp
 const mocknode = require( "../mock/mocknode.js" )
+const mockserver = require( "../mock/mockproxyserver.js" )
 
 /*
 The tests in this file are to ensure what we send out over
@@ -446,9 +447,37 @@ describe( "rtpproxy server", function() {
     expect( directionmsg.recv ).to.be.false
   } )
 
-  it( `Two mock nodes listening for connections`, async () => {
+  it( `Node as listener mockserver to test`, async () => {
 
+    prtp.proxy.addnode( { host: "127.0.0.1", port: 9002 } )
+    let n = new mocknode()
+    await n.listen( 9002 )
+    n.setmessagehandler( "open", ( msg ) => {
+      n.sendmessage( {
+          "action": "open",
+          "id": msg.id,
+          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+          "channel": {
+            "port": 10002,
+            "address": "192.168.0.141"
+            }
+          } )
+    } )
+    let chnl = await prtp.openchannel()
 
+/*
+    expect( chnl ).to.have.property( "status" ).that.is.a( "object" )
+    expect( receivedmsg.status ).to.have.property( "workercount" ).that.is.a( "number" )
+    expect( receivedmsg.status ).to.have.property( "instance" ).that.is.a( "string" )
+    expect( receivedmsg.status ).to.have.property( "channel" ).that.is.a( "object" )
+    expect( receivedmsg.status.channel ).to.have.property( "available" ).that.is.a( "number" )
+    expect( receivedmsg.status.channel ).to.have.property( "current" ).that.is.a( "number" )
+    */
+
+    n.destroy()
+    chnl.close()
+
+    /* close and test with expect */
   } )
 
   /*it( `Two mock nodes listening, 2 openchannels on the same node close each in turn to ensure connection is maintained`, async () => {

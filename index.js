@@ -111,8 +111,10 @@ class proxy {
    * @param { object } em - event emitter
    * @return { Promise< rtpserver > }
    */
-  async listen( em, address = "127.0.0.1", port = 9002 ) {
-    return await server.listen( port, address, em )
+  async listen( em, address = "127.0.0.1", port = 9002, serv = true ) {
+    if ( serv ) return await server.listen( port, address, em )
+    
+    return await node.listen( new projectrtp() )
   }
 
   /**
@@ -155,6 +157,20 @@ class proxy {
   */
   connect( port = 9002, host = "127.0.0.1" ) {
     return node.connect( module.exports.projectrtp, port, host )
+  }
+
+  /**
+   * Finish me
+   * @param { object } node - object contain port and host
+   * @param { string } node.host - host name
+   * @param { number } node.port - port to connect to
+   */
+  addnode( node ) {
+    server.addnode( node )
+  }
+
+  get () {
+    return server.get()
   }
 }
 
@@ -277,7 +293,7 @@ let actualprojectrtp = false
 
     if( undefined === params.forcelocal &&
         server.get() ) {
-      return server.get().openchannel( params, cb )
+      return await server.get().openchannel( params, cb )
     } else {
       /* use local */
       let chan = actualprojectrtp.openchannel( params, ( d ) => {

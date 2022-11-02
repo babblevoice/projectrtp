@@ -12,6 +12,7 @@ module.exports = class {
     this.messagehandlers = {}
     this.recevievedmessagecount = 0
     this.id = uuidv4()
+    this.socks = []
   }
 
 
@@ -26,12 +27,35 @@ module.exports = class {
     await connectpromise
   }
 
+  /**
+   * Listen for connections to this mock node.
+   * @param { number } [ port ] - default 9002
+   * @return { Promise } 
+   */
+  listen( port = 9002 ) {
+    let listenresolve
+    let listenpromise = new Promise( ( r ) => listenresolve = r )
+    this.port = port
+    this.server = net.createServer( ( connection ) => {
+      /* only mock one connection for now */
+      this.connection = connection
+      this.connection.on( "data", this._onsocketdata.bind( this ) )
+      
+    } )
+
+    this.server.listen( port, "127.0.0.1" )
+    this.server.on( "listening", () => listenresolve() )
+    this.server.on( "close", () => {} )
+    return listenpromise
+  }
+
   setmessagehandler( event, cb ) {
     this.messagehandlers[ event ] = cb
   }
 
   destroy() {
-    this.connection.destroy()
+    if( this.connection ) this.connection.destroy()
+    if( this.server ) this.server.close()
   }
 
   _onsocketconnect() {
@@ -60,7 +84,4 @@ module.exports = class {
     this.connection.write( message.createmessage( obj ) )
   }
 
-  destroy() {
-    this.connection.destroy()
-  }
 }
