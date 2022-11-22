@@ -3,6 +3,8 @@ const expect = require( "chai" ).expect
 const prtp = require( "../../index.js" ).projectrtp
 const mocknode = require( "../mock/mocknode.js" )
 const mockserver = require( "../mock/mockproxyserver.js" )
+const node = require( "../../lib/node.js" )
+const message = require( "../../lib/message.js" )
 
 /*
 The tests in this file are to ensure what we send out over
@@ -447,12 +449,15 @@ describe( "rtpproxy server", function() {
     expect( directionmsg.recv ).to.be.false
   } )
 
-  it( `Node as listener mockserver to test`, async () => {
+  it( `Mocknode as listener server to test`, async () => {
 
+    let openreceived = false
+    let closereceived = false
     prtp.proxy.addnode( { host: "127.0.0.1", port: 9002 } )
     let n = new mocknode()
     await n.listen( 9002 )
     n.setmessagehandler( "open", ( msg ) => {
+      openreceived = true
       n.sendmessage( {
           "action": "open",
           "id": msg.id,
@@ -463,24 +468,96 @@ describe( "rtpproxy server", function() {
             }
           } )
     } )
+    n.setmessagehandler( "close", ( msg ) => {
+      closereceived = true
+      n.sendmessage( {
+        "action": "close",
+        "uuid": msg.uuid,
+        "id": msg.id
+      } )
+    } )
     let chnl = await prtp.openchannel()
 
-/*
-    expect( chnl ).to.have.property( "status" ).that.is.a( "object" )
-    expect( receivedmsg.status ).to.have.property( "workercount" ).that.is.a( "number" )
-    expect( receivedmsg.status ).to.have.property( "instance" ).that.is.a( "string" )
-    expect( receivedmsg.status ).to.have.property( "channel" ).that.is.a( "object" )
-    expect( receivedmsg.status.channel ).to.have.property( "available" ).that.is.a( "number" )
-    expect( receivedmsg.status.channel ).to.have.property( "current" ).that.is.a( "number" )
-    */
-
-    n.destroy()
     chnl.close()
-
-    /* close and test with expect */
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    n.destroy()
+    
+    expect( openreceived ).to.be.true
+    expect( closereceived ).to.be.true
   } )
 
-  /*it( `Two mock nodes listening, 2 openchannels on the same node close each in turn to ensure connection is maintained`, async () => {
+  it( `Two mock nodes listening, 2 openchannels on the same node close each in turn to ensure connection is maintained`, async () => {
+    let openreceived = false
+    let closereceived = false
+    let ouruuid = 1
+    prtp.proxy.addnode( { host: "127.0.0.1", port: 9002 } )
+    let n = new mocknode()
+    await n.listen( 9002 )
+    n.setmessagehandler( "open", ( msg ) => {
+      openreceived = true
+      n.sendmessage( {
+          "action": "open",
+          "id": msg.id,
+          "uuid": ""+ouruuid++,
+          "channel": {
+            "port": 9002,
+            "address": "127.0.0.1"
+            }
+          } )
+    } )
+    n.setmessagehandler( "close", ( msg ) => {
+      closereceived = true
+    } )
+    let chnl = await prtp.openchannel()
+    let chnl2 = await chnl.openchannel()
 
-  } )*/
+    chnl.close()
+    chnl2.close()
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    n.destroy()
+    expect( openreceived ).to.be.true
+    expect( closereceived ).to.be.true
+  } )
+
+  it( `Node as listener server to test`, async () => {
+
+    prtp.proxy.addnode( { host: "127.0.0.1", port: 9002 } )
+    let n = await node.listen( prtp, "127.0.0.1", 9002 )
+    let chnl = await prtp.openchannel()
+    await chnl.close()
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    n.destroy()
+  } )
+
+  it( `Node as listener mockserver to test`, async () => {
+    /*
+      Test node as listener running a mock server to connect to the node.
+      1. Open channel on node
+      2. Close channel on node
+    */
+    let openreceived = false
+    let closereceived = false
+    let p = new mockserver()
+    let n = await node.listen( prtp, "127.0.0.1", 9002 )
+    p.setmessagehandler( "open", ( msg ) => {
+      openreceived = true
+
+      p.connection.write(
+        message.createmessage( {
+          "id": "54",
+          "channel": "close",
+          "uuid": msg.uuid
+        } ) )
+    } )
+
+    p.setmessagehandler( "close", ( msg ) => {
+      closereceived = true
+    } )
+    await p.openchannel()
+    
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    p.connection.destroy()
+    n.destroy()
+    expect( openreceived ).to.be.true
+  } )
 } )

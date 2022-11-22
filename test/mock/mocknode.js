@@ -37,10 +37,9 @@ module.exports = class {
     let listenpromise = new Promise( ( r ) => listenresolve = r )
     this.port = port
     this.server = net.createServer( ( connection ) => {
-      /* only mock one connection for now */
       this.connection = connection
+      this.connection.setKeepAlive( true )
       this.connection.on( "data", this._onsocketdata.bind( this ) )
-      
     } )
 
     this.server.listen( port, "127.0.0.1" )

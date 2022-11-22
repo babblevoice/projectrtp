@@ -166,7 +166,7 @@ class proxy {
    * @param { number } node.port - port to connect to
    */
   addnode( node ) {
-    server.addnode( node )
+    return server.addnode( node )
   }
 
   get () {
