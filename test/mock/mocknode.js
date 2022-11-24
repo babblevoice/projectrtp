@@ -32,17 +32,18 @@ module.exports = class {
    * @param { number } [ port ] - default 9002
    * @return { Promise } 
    */
-  listen( port = 9002 ) {
+  listen( port = 9002, host = "127.0.0.1" ) {
     let listenresolve
     let listenpromise = new Promise( ( r ) => listenresolve = r )
     this.port = port
+    this.host = host
     this.server = net.createServer( ( connection ) => {
       this.connection = connection
       this.connection.setKeepAlive( true )
       this.connection.on( "data", this._onsocketdata.bind( this ) )
     } )
 
-    this.server.listen( port, "127.0.0.1" )
+    this.server.listen( port, host )
     this.server.on( "listening", () => listenresolve() )
     this.server.on( "close", () => {} )
     return listenpromise

@@ -477,7 +477,11 @@ describe( "rtpproxy server", function() {
       } )
     } )
     let chnl = await prtp.openchannel()
-
+    expect( chnl ).to.have.property( "id" ).that.is.a( "string" )
+    expect( chnl ).to.have.property( "uuid" ).that.is.a( "string" )
+    expect( chnl ).to.have.property( "channel" ).that.is.a( "object" )
+    expect( chnl.channel ).to.have.property( "port" ).that.is.a( "number" )
+    expect( chnl.channel ).to.have.property( "address" ).that.is.a( "string" )
     chnl.close()
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
     n.destroy()
@@ -491,8 +495,11 @@ describe( "rtpproxy server", function() {
     let closereceived = false
     let ouruuid = 1
     prtp.proxy.addnode( { host: "127.0.0.1", port: 9002 } )
+    prtp.proxy.addnode( { host: "127.0.0.1", port: 9003 } )
     let n = new mocknode()
+    let n2 = new mocknode()
     await n.listen( 9002 )
+    await n2.listen( 9003 )
     n.setmessagehandler( "open", ( msg ) => {
       openreceived = true
       n.sendmessage( {
@@ -508,13 +515,31 @@ describe( "rtpproxy server", function() {
     n.setmessagehandler( "close", ( msg ) => {
       closereceived = true
     } )
+    n2.setmessagehandler( "open", ( msg ) => {
+      openreceived = true
+      n2.sendmessage( {
+          "action": "open",
+          "id": msg.id,
+          "uuid": ""+ouruuid++,
+          "channel": {
+            "port": 9003,
+            "address": "127.0.0.1"
+            }
+          } )
+    } )
+    n2.setmessagehandler( "close", ( msg ) => {
+      closereceived = true
+    } )
     let chnl = await prtp.openchannel()
     let chnl2 = await chnl.openchannel()
 
+    expect( chnl.connectednode.host ).to.be.equal( chnl2.connectednode.host )
+    expect( chnl.connectednode.port ).to.be.equal( chnl2.connectednode.port )
     chnl.close()
     chnl2.close()
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
     n.destroy()
+    n2.destroy()
     expect( openreceived ).to.be.true
     expect( closereceived ).to.be.true
   } )
@@ -559,5 +584,6 @@ describe( "rtpproxy server", function() {
     p.connection.destroy()
     n.destroy()
     expect( openreceived ).to.be.true
+    expect( closereceived ).to.be.true
   } )
 } )
