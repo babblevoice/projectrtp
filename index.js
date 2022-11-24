@@ -111,7 +111,7 @@ class proxy {
    * @param { object } em - event emitter
    * @return { Promise< rtpserver > }
    */
-  async listen( em, address = "127.0.0.1", port = 9002) {
+  async listen( em, address = "127.0.0.1", port = 9002 ) {
     return await server.listen( port, address, em )
   }
 
@@ -158,7 +158,6 @@ class proxy {
   }
 
   /**
-   * Finish me
    * @param { object } node - object contain port and host
    * @param { string } node.host - host name
    * @param { number } node.port - port to connect to
