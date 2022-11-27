@@ -5,6 +5,7 @@ const mocknode = require( "../mock/mocknode.js" )
 const mockserver = require( "../mock/mockproxyserver.js" )
 const node = require( "../../lib/node.js" )
 const message = require( "../../lib/message.js" )
+const { listen } = require("../../lib/server.js")
 
 /*
 The tests in this file are to ensure what we send out over
@@ -453,9 +454,9 @@ describe( "rtpproxy server", function() {
 
     let openreceived = false
     let closereceived = false
-    prtp.proxy.addnode( { host: "127.0.0.1", port: 9002 } )
+    prtp.proxy.addnode( { host: "127.0.0.1", port: listenport } )
     let n = new mocknode()
-    await n.listen( 9002 )
+    await n.listen( listenport )
     n.setmessagehandler( "open", ( msg ) => {
       openreceived = true
       n.sendmessage( {
@@ -494,12 +495,15 @@ describe( "rtpproxy server", function() {
     let openreceived = false
     let closereceived = false
     let ouruuid = 1
-    prtp.proxy.addnode( { host: "127.0.0.1", port: 9002 } )
-    prtp.proxy.addnode( { host: "127.0.0.1", port: 9003 } )
+    prtp.proxy.addnode( { host: "127.0.0.1", port: listenport } )
     let n = new mocknode()
+    await n.listen( listenport )
+    console.log(listenport)
+    listenport++
+    prtp.proxy.addnode( { host: "127.0.0.1", port: listenport } )
     let n2 = new mocknode()
-    await n.listen( 9002 )
-    await n2.listen( 9003 )
+    await n2.listen( listenport )
+    console.log(listenport)
     n.setmessagehandler( "open", ( msg ) => {
       openreceived = true
       n.sendmessage( {
@@ -507,7 +511,7 @@ describe( "rtpproxy server", function() {
           "id": msg.id,
           "uuid": ""+ouruuid++,
           "channel": {
-            "port": 9002,
+            "port": listenport - 1,
             "address": "127.0.0.1"
             }
           } )
@@ -522,7 +526,7 @@ describe( "rtpproxy server", function() {
           "id": msg.id,
           "uuid": ""+ouruuid++,
           "channel": {
-            "port": 9003,
+            "port": listenport,
             "address": "127.0.0.1"
             }
           } )
@@ -546,8 +550,8 @@ describe( "rtpproxy server", function() {
 
   it( `Node as listener server to test`, async () => {
 
-    prtp.proxy.addnode( { host: "127.0.0.1", port: 9002 } )
-    let n = await node.listen( prtp, "127.0.0.1", 9002 )
+    prtp.proxy.addnode( { host: "127.0.0.1", port: listenport } )
+    let n = await node.listen( prtp, "127.0.0.1", listenport )
     let chnl = await prtp.openchannel()
     await chnl.close()
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
@@ -563,7 +567,7 @@ describe( "rtpproxy server", function() {
     let openreceived = false
     let closereceived = false
     let p = new mockserver()
-    let n = await node.listen( prtp, "127.0.0.1", 9002 )
+    let n = await node.listen( prtp, "127.0.0.1", listenport )
     p.setmessagehandler( "open", ( msg ) => {
       openreceived = true
 
@@ -578,7 +582,7 @@ describe( "rtpproxy server", function() {
     p.setmessagehandler( "close", ( msg ) => {
       closereceived = true
     } )
-    await p.openchannel()
+    await p.openchannel( listenport, "127.0.0.1" )
     
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
     p.connection.destroy()

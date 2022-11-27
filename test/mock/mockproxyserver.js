@@ -14,7 +14,6 @@ module.exports = class {
   }
 
   async connect( port = 9002, address = "127.0.0.1" ) {
-
     let newconnectresolve
     let connectpromise = new Promise( r => newconnectresolve = r )
     this.connection = net.createConnection( port, address )
@@ -83,8 +82,8 @@ module.exports = class {
     }
   }
 
-  async openchannel() {
-    await this.connect()
+  async openchannel( port, address ) {
+    await this.connect( port, address )
     this.connection.write(
       message.createmessage( {
         "id": "54",
