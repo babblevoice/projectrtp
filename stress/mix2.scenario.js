@@ -48,7 +48,7 @@ module.exports = async ( mstimeout ) => {
   clientb.remote( { "address": "localhost", "port": channelb.local.port, "codec": bcodec } )
   utils.lognewchannel()
 
-  expect( channela.mix( channelb ) ).to.be.true
+  expect( await channela.mix( channelb ) ).to.be.true
   expect( clienta.play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
   expect( clientb.echo() ).to.be.true
 

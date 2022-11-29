@@ -3,16 +3,17 @@ const fs = require( "fs" )
 
 const projectrtp = require( "../index.js" ).projectrtp
 const utils = require( "./utils.js" )
+const node = require( "../lib/node.js" )
 
 let scenarios = []
-scenarios.push( require( "./mix3.scenario.js" ) )
-scenarios.push( require( "./dtls.scenario.js" ) )
-scenarios.push( require( "./echorecord.scenario.js" ) )
-scenarios.push( require( "./playbackrecord.scenario.js" ) )
-scenarios.push( require( "./echodualrecordpower.scenario.js" ) )
-scenarios.push( require( "./echodualrecordpausestop.scenario.js" ) )
+//scenarios.push( require( "./mix3.scenario.js" ) )
+//scenarios.push( require( "./dtls.scenario.js" ) )
+//scenarios.push( require( "./echorecord.scenario.js" ) )
+//scenarios.push( require( "./playbackrecord.scenario.js" ) )
+//scenarios.push( require( "./echodualrecordpower.scenario.js" ) )
+//scenarios.push( require( "./echodualrecordpausestop.scenario.js" ) )
 scenarios.push( require( "./mix2.scenario.js" ) )
-scenarios.push( require( "./mixunmix.scenario.js" ) )
+//scenarios.push( require( "./mixunmix.scenario.js" ) )
 
 /*
 The purpose of this script is to load up projectrtp to expose any issues with timing.
@@ -38,6 +39,8 @@ const run = async () => {
   await fs.promises.unlink( "/tmp/powerdetectprofile.wav" ).catch( ()=>{} )
   projectrtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000", "/tmp/ukringing.wav" )
   projectrtp.tone.generate( "0/800*0.5:700/2000", "/tmp/powerdetectprofile.wav" )
+  projectrtp.proxy.addnode( { host: "127.0.0.1", port: 9002 } )
+  await node.listen( projectrtp, "127.0.0.1", 9002 )
 
   while ( rununtil > Math.floor( Date.now() / 1000 ) ) {
     if( utils.currentchannelcount() < maxnumberofsessions ) {
