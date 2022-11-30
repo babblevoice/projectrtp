@@ -166,6 +166,13 @@ class proxy {
     return server.addnode( node )
   }
 
+  /**
+   * Clear current list of nodes (nodes configured for listening)
+   */
+  clearnodes() {
+    server.clearnodes()
+  }
+
   get () {
     return server.get()
   }
