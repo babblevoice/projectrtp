@@ -15,8 +15,6 @@ module.exports = class {
     this.socks = []
   }
 
-
-
   async connect( port = 9002, address = "127.0.0.1" ) {
 
     let connectpromise = new Promise( r => this._newconnectresolve = r )
