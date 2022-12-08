@@ -42,7 +42,7 @@ module.exports = async ( mstimeout ) => {
   // Mix channel[0] with every other channel
   for ( var i = 1; i < max_channels; i++ )
   {
-    expect( channels[0].mix( channels[i] ) ).to.be.true
+    expect( await channels[0].mix( channels[i] ) ).to.be.true
   }
 
   for ( var i = 0; i < max_channels; i++ )
