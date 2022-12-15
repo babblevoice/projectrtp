@@ -47,7 +47,7 @@ module.exports = async ( mstimeout ) => {
   utils.lognewchannel()
 
   expect( clientb.echo() ).to.be.true
-  expect( channela.mix( channelb ) ).to.be.true
+  expect( await channela.mix( channelb ) ).to.be.true
   expect( clienta.play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
 
   await new Promise( ( r ) => { setTimeout( () => r(), mstimeout / 2 ) } )

@@ -3,6 +3,7 @@ const fs = require( "fs" )
 
 const projectrtp = require( "../index.js" ).projectrtp
 const utils = require( "./utils.js" )
+const node = require( "../lib/node.js" )
 
 let scenarios = []
 scenarios.push( require( "./mix3.scenario.js" ) )
@@ -38,6 +39,12 @@ const run = async () => {
   await fs.promises.unlink( "/tmp/powerdetectprofile.wav" ).catch( ()=>{} )
   projectrtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000", "/tmp/ukringing.wav" )
   projectrtp.tone.generate( "0/800*0.5:700/2000", "/tmp/powerdetectprofile.wav" )
+
+  if ( process.argv.slice(2)[0] === "node" ) {
+    console.log( "Mode: node as listener" )
+    projectrtp.proxy.addnode( { host: "127.0.0.1", port: 9002 } )
+    await node.listen( projectrtp, "127.0.0.1", 9002 )
+  } else console.log( "Mode: server as listener" )
 
   while ( rununtil > Math.floor( Date.now() / 1000 ) ) {
     if( utils.currentchannelcount() < maxnumberofsessions ) {

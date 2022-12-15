@@ -156,6 +156,26 @@ class proxy {
   connect( port = 9002, host = "127.0.0.1" ) {
     return node.connect( module.exports.projectrtp, port, host )
   }
+
+  /**
+   * @param { object } node - object contain port and host
+   * @param { string } node.host - host name
+   * @param { number } node.port - port to connect to
+   */
+  addnode( node ) {
+    return server.addnode( node )
+  }
+
+  /**
+   * Clear current list of nodes (nodes configured for listening)
+   */
+  clearnodes() {
+    server.clearnodes()
+  }
+
+  get () {
+    return server.get()
+  }
 }
 
 /**
@@ -277,7 +297,7 @@ let actualprojectrtp = false
 
     if( undefined === params.forcelocal &&
         server.get() ) {
-      return server.get().openchannel( params, cb )
+      return await server.get().openchannel( params, cb )
     } else {
       /* use local */
       let chan = actualprojectrtp.openchannel( params, ( d ) => {
