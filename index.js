@@ -1,6 +1,6 @@
 
 const { v4: uuidv4 } = require( "uuid" )
-const EventEmitter = require( "node:events" )
+const EventEmitter = require( "events" )
 
 const server = require( "./lib/server.js" )
 const node = require( "./lib/node.js" )
@@ -12,59 +12,11 @@ let localaddress = "127.0.0.1"
 let privateaddress = "127.0.0.1"
 const bin = "./src/build/Release/projectrtp"
 
-/*
-We are using our test files to doc the interface as well as test it as
-I can't find any decent toolset to extract this information from c++ comments.
-*/
 
 /**
-@description
-Addon module for an RTP server for audio mixing/recording and playback etc.
-*/
-
-/**
-@function run
-@summary Starts our RTP server
-*/
-
-/**
-@function shutdown
-@summary Shuts down the server, returning a promise which resolves once all tasks are complete.
-@returns {Promise}
-*/
-
-/**
-@function stats
-@summary Return an object with the current stats of our server
-@returns {stats}
-*/
-
-/**
-@member soundfile
-@type {soundfile}
-*/
-
-/**
-@member codecx
-@type {codecx}
-*/
-
-/**
-@member tone
-@type {tone}
-*/
-
-/**
-@member wavinfo
-@type {wavinfo}
-*/
-
-/**
-@member proxy
-@type {proxy}
-*/
-
-/* Generate a self signed if none present */
+ * Generate a self signed if none present
+ * @return { void }
+ */
 function gencerts() {
 
   const keypath = require( "os" ).homedir() + "/.projectrtp/certs/"
@@ -88,7 +40,7 @@ function gencerts() {
 
     let serverkeydata = fs.readFileSync( serverkey )
     let servercertdata = fs.readFileSync( servercert )
-    fs.writeFileSync( combined, serverkeydata + servercertdata )
+    fs.writeFileSync( combined, Buffer.concat( [ serverkeydata, servercertdata ] ) )
     fs.unlinkSync( serverkey )
     fs.unlinkSync( servercsr )
     fs.unlinkSync( servercert )
@@ -97,11 +49,23 @@ function gencerts() {
 }
 
 /**
-@summary Proxy for other RTP nodes
-@memberof projectrtp
-@hideconstructor
+@summary Proxy for other RTP nodes - to be retired as it is ambiguous of direction (i.e. server/node)
 */
 class proxy {
+
+  /**
+   * 
+   * @param { node.interface } ournode 
+   * @param { server.interface } ourserver 
+   */
+  constructor( ournode, ourserver ) {
+
+    /** @private */
+    this._node = ournode
+    /** @private  */
+    this._server = ourserver
+  }
+
   /**
    * @summary Listen for connections from RTP nodes which can offer their services
    * to us. When we listen for other nodes, we can configure them so that it is invisible
@@ -109,22 +73,21 @@ class proxy {
    * @param { Object } port - port to listen on
    * @param { string } address - what address to listen to on
    * @param { object } em - event emitter
-   * @return { Promise< rtpserver > }
+   * @return { Promise< server.rtpserver > }
    */
   async listen( em, address = "127.0.0.1", port = 9002 ) {
-    return await server.listen( port, address, em )
+    return await this._server.listen( port, address, em )
   }
 
   /**
   @summary Listen for connections from RTP nodes which can offer their services
   to us. When we listen for other nodes, we can configure them so that it is invisible
   to the main node as to where the channel is being handled.
-  @param {Object} remote - see channel.create
-  @return {rtpserver}
+  @return { object }
   */
   stats() {
     return {
-      "server": server.stats(),
+      "server": this._server.stats(),
       "node": {}
     }
   }
@@ -134,27 +97,25 @@ class proxy {
   @return { Object }
   */
   nodes() {
-    return server.nodes()
+    return this._server.nodes()
   }
 
   /**
    * We are a node and get the connection object.
-   * @returns { object }
+   * @returns { node.rtpnode }
    */
   node() {
-    return node.get()
+    return this._node.get()
   }
 
   /**
-  @summary Listen for connections from RTP nodes which can offer their services
-  to us. When we listen for other nodes, we can configure them so that it is invisible
-  to the main node as to where the channel is being handled.
+  @summary Connect node to rtp srvers listening.
   @param {number} port
   @param {string} host
-  @return {rtpnode}
+  @return { Promise< node.rtpnode > }
   */
   connect( port = 9002, host = "127.0.0.1" ) {
-    return node.connect( module.exports.projectrtp, port, host )
+    return this._node.connect( port, host )
   }
 
   /**
@@ -163,18 +124,18 @@ class proxy {
    * @param { number } node.port - port to connect to
    */
   addnode( node ) {
-    return server.addnode( node )
+    return this._server.addnode( node )
   }
 
   /**
    * Clear current list of nodes (nodes configured for listening)
    */
   clearnodes() {
-    server.clearnodes()
+    this._server.clearnodes()
   }
 
   get () {
-    return server.get()
+    return server.interface.get()
   }
 }
 
@@ -241,20 +202,32 @@ RFC 2833 telephone-event
 @param {boolean} [properties.direction.send=true]
 @param {boolean} [properties.direction.recv=true]
 @param {channelcallback} [callback] - events are passed back to the caller via this callback
-@returns {Promise<channel>} - the newly created channel
+@return {Promise<channel>} - the newly created channel
 */
 
-let actualprojectrtp = false
+let actualprojectrtp
 /**
  * Mimick the underlying napi interface and decide if we need to load the 
  * underlying napi code.
  */
- class projectrtp {
+class projectrtp {
 
   constructor() {
-    this.proxy = new proxy()
+    /*
+      Expose our node and server interface. node is the rtp node, server is the control server (i.e. sip)
+     */
+    this.node = node.interface.create( this )
+    this.server = server.interface.create()
+
+    /* to be retired - it is now confusing on direction to maintain in one interface */
+    this.proxy = new proxy( this.node, this.server )
   }
 
+  /**
+   * 
+   * @param { object|undefined } params 
+   * @returns { void }
+   */
   run( params ) {
 
     if( process.platform == "win32" && process.arch == "x64" ) {
@@ -287,7 +260,7 @@ let actualprojectrtp = false
    * @param { object } params 
    * @param { channelcallback } cb 
    */
-  async openchannel( params, cb ) {
+  async openchannel( params = undefined, cb = undefined ) {
     if( "function" == typeof params ) {
       cb = params
       params = {}
@@ -295,9 +268,8 @@ let actualprojectrtp = false
 
     if( "undefined" == typeof params ) params = {}
 
-    if( undefined === params.forcelocal &&
-        server.get() ) {
-      return await server.get().openchannel( params, cb )
+    if( undefined === params.forcelocal && server.interface.get() ) {
+      return server.interface.get().openchannel( params, cb )
     } else {
       /* use local */
       let chan = actualprojectrtp.openchannel( params, ( d ) => {
@@ -329,9 +301,20 @@ let actualprojectrtp = false
     }
   }
 
+  /**
+   * 
+   * @param { string } address
+   * @returns { void } 
+   */
   setaddress( address ) {
     localaddress = address
   }
+
+  /**
+   * 
+   * @param { string } address
+   * @returns { void }
+   */
   setprivateaddress( address ) {
     privateaddress = address
   }
