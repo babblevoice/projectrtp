@@ -12,6 +12,7 @@ module.exports = {
   "parserOptions": {
     "ecmaVersion": "latest"
   },
+  "ignorePatterns": [ "out" ],
   "rules": {
     "require-atomic-updates": [
       "error"
@@ -59,6 +60,7 @@ module.exports = {
       "never"
     ],
     "yoda": [
+      "error",
       "always"
     ]
   }

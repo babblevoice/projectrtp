@@ -12,7 +12,7 @@ returns
 Buffer.from( [ 0x80, ... ] )
 */
 function fromstr( str ) {
-  let retval = []
+  const retval = []
   str.split( " " ).forEach( v => retval.push ( parseInt( v, 16 ) ) )
   return Buffer.from( retval )
 }
@@ -27,12 +27,12 @@ function sendpayload( sendtime, pk, dstport, server ) {
 function sendpk( sn, sendtime, dstport, server, pt = 0, ts, ssrc ) {
 
   if( !ssrc ) ssrc = 25
-  let pklength = 172
+  const pklength = 172
 
   return setTimeout( () => {
 
-    let payload = Buffer.alloc( pklength - 12 ).fill( projectrtp.codecx.linear162pcmu( sn ) & 0xff )
-    let subheader = Buffer.alloc( 10 )
+    const payload = Buffer.alloc( pklength - 12 ).fill( projectrtp.codecx.linear162pcmu( sn ) & 0xff )
+    const subheader = Buffer.alloc( 10 )
 
     if( !ts ) ts = sn * 160
 
@@ -41,7 +41,7 @@ function sendpk( sn, sendtime, dstport, server, pt = 0, ts, ssrc ) {
     subheader.writeUInt32BE( ts, 2 )
     subheader.writeUInt32BE( ssrc, 6 )
 
-    let rtppacket = Buffer.concat( [
+    const rtppacket = Buffer.concat( [
       Buffer.from( [ 0x80, 0x00 ] ),
       subheader,
       payload ] )
@@ -56,12 +56,12 @@ function sendpk( sn, sendtime, dstport, server, pt = 0, ts, ssrc ) {
 function senddtmf( sn, ts, sendtime, dstport, server, endofevent, ev ) {
 
   return setTimeout( () => {
-    let ssrc = 25
-    let pklength = 58
+    const ssrc = 25
+    const pklength = 58
 
-    let header = Buffer.alloc( pklength )
+    const header = Buffer.alloc( pklength )
 
-    let pt = 101
+    const pt = 101
 
     header.writeUInt8( 0x80 )
     header.writeUInt8( pt, 1 ) // payload type
@@ -86,14 +86,11 @@ function senddtmf( sn, ts, sendtime, dstport, server, endofevent, ev ) {
 /* Tests */
 describe( "dtmf", function() {
 
-  it( `Send 2833 DTMF and check event`, function( done ) {
+  it( "Send 2833 DTMF and check event", function( done ) {
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    server.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
-    } )
+    server.on( "message", function() {} )
 
     this.timeout( 3000 )
     this.slow( 2500 )
@@ -101,15 +98,15 @@ describe( "dtmf", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
+      const ourport = server.address().port
 
       let expectedmessagecount = 0
       const expectedmessages = [
-        { action: 'telephone-event', event: '4' },
-        { action: 'close' }
+        { action: "telephone-event", event: "4" },
+        { action: "close" }
       ]
 
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
@@ -123,7 +120,7 @@ describe( "dtmf", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      for( let i = 0;  i < 23; i ++ ) {
+      for( let i = 0;  23 > i; i ++ ) {
         sendpk( i, i*20, channel.local.port, server )
       }
 
@@ -131,7 +128,7 @@ describe( "dtmf", function() {
       senddtmf( 24, 22 * 160, 24*20, channel.local.port, server, false, "4" )
       senddtmf( 25, 22 * 160, 25*20, channel.local.port, server, true, "4" )
 
-      for( let i = 26;  i < 40; i ++ ) {
+      for( let i = 26;  40 > i; i ++ ) {
         sendpk( i, (i-3)*20, channel.local.port, server )
       }
 
@@ -140,18 +137,15 @@ describe( "dtmf", function() {
   } )
 
 
-  it( `single channel and request rtp server to send 2833`, function( done ) {
+  it( "single channel and request rtp server to send 2833", function( done ) {
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    var dtmfpkcount = 0
-    server.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
+    let dtmfpkcount = 0
+    server.on( "message", function( msg ) {
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         dtmfpkcount++
       } else {
-        receviedpkcount++
         expect( msg.length ).to.equal( 172 )
         expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
       }
@@ -163,14 +157,14 @@ describe( "dtmf", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
+      const ourport = server.address().port
 
       let expectedmessagecount = 0
       const expectedmessages = [
-        { action: 'close' }
+        { action: "close" }
       ]
 
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
@@ -185,7 +179,7 @@ describe( "dtmf", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      for( let i = 0;  i < 50; i ++ ) {
+      for( let i = 0;  50 > i; i ++ ) {
         sendpk( i, i*20, channel.local.port, server )
       }
 
@@ -195,20 +189,17 @@ describe( "dtmf", function() {
   } )
 
 
-  it( `2 channels mixing and request rtp server to send 2833 to one`, async function() {
+  it( "2 channels mixing and request rtp server to send 2833 to one", async function() {
 
     /* create our RTP/UDP endpoint */
     const clienta = dgram.createSocket( "udp4" )
     const clientb = dgram.createSocket( "udp4" )
 
-    var receviedpkcount = 0
-    var dtmfpkcount = 0
+    let dtmfpkcount = 0
     clienta.on( "message", function( msg ) {
-      receviedpkcount++
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         dtmfpkcount++
       } else {
-        receviedpkcount++
         expect( msg.length ).to.equal( 172 )
         expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
       }
@@ -230,24 +221,24 @@ describe( "dtmf", function() {
     clientb.bind()
     await new Promise( ( resolve ) => { clientb.on( "listening", () => resolve()  ) } )
 
-    let ouraport = clienta.address().port
-    let ourbport = clientb.address().port
+    const ouraport = clienta.address().port
+    const ourbport = clientb.address().port
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
     expect( channela.mix( channelb ) ).to.be.true
 
     /* send a packet every 20mS x 70 */
-    for( let i = 0;  i < 50; i ++ ) {
+    for( let i = 0;  50 > i; i ++ ) {
       sendpk( i, i*20, channela.local.port, clienta )
     }
 
@@ -264,27 +255,24 @@ describe( "dtmf", function() {
     expect( dtmfpkcount ).to.equal( 3*3 )
   } )
 
-  it( `3 channels mixing and request rtp server to send 2833 to one`, async function() {
+  it( "3 channels mixing and request rtp server to send 2833 to one", async function() {
 
     /* create our RTP/UDP endpoint */
     const clienta = dgram.createSocket( "udp4" )
     const clientb = dgram.createSocket( "udp4" )
     const clientc = dgram.createSocket( "udp4" )
 
-    var receviedpkcount = 0
-    var dtmfpkcount = 0
-    clienta.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
+    let dtmfpkcount = 0
+    clienta.on( "message", function( msg ) {
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         dtmfpkcount++
       } else {
-        receviedpkcount++
         expect( msg.length ).to.equal( 172 )
         expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
       }
     } )
 
-    clientb.on( "message", function( msg, rinfo ) {
+    clientb.on( "message", function( msg ) {
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         expect( true ).to.equal( false ) //here = bad
         dtmfpkcount++
@@ -292,7 +280,7 @@ describe( "dtmf", function() {
       clientb.send( msg, channelb.local.port, "localhost" )
     } )
 
-    clientc.on( "message", function( msg, rinfo ) {
+    clientc.on( "message", function( msg ) {
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         expect( true ).to.equal( false ) //here = bad
         dtmfpkcount++
@@ -304,28 +292,28 @@ describe( "dtmf", function() {
     this.slow( 2500 )
 
     clienta.bind()
-    await new Promise( ( resolve, reject ) => { clienta.on( "listening", () => resolve()  ) } )
+    await new Promise( ( resolve ) => { clienta.on( "listening", () => resolve()  ) } )
     clientb.bind()
-    await new Promise( ( resolve, reject ) => { clientb.on( "listening", () => resolve()  ) } )
+    await new Promise( ( resolve ) => { clientb.on( "listening", () => resolve()  ) } )
     clientc.bind()
-    await new Promise( ( resolve, reject ) => { clientc.on( "listening", () => resolve()  ) } )
+    await new Promise( ( resolve ) => { clientc.on( "listening", () => resolve()  ) } )
 
-    let ouraport = clienta.address().port
-    let ourbport = clientb.address().port
-    let ourcport = clientc.address().port
+    const ouraport = clienta.address().port
+    const ourbport = clientb.address().port
+    const ourcport = clientc.address().port
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelc.close()
     } )
 
-    let channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourcport, "codec": 0 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourcport, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -333,13 +321,13 @@ describe( "dtmf", function() {
     expect( channela.mix( channelc ) ).to.be.true
 
     /* send a packet every 20mS x 50 */
-    for( let i = 0;  i < 50; i ++ ) {
+    for( let i = 0;  50 > i; i ++ ) {
       sendpk( i, i*20, channela.local.port, clienta )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 100 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
     channela.dtmf( "*9ABD" )
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 900 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 900 ) } )
     channela.close()
 
     clienta.close()
@@ -352,14 +340,11 @@ describe( "dtmf", function() {
   } )
 
 
-  it( `Send multiple 2833 DTMF and check event`, function( done ) {
+  it( "Send multiple 2833 DTMF and check event", function( done ) {
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    server.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
-    } )
+    server.on( "message", function() {} )
 
     this.timeout( 3000 )
     this.slow( 2500 )
@@ -367,16 +352,16 @@ describe( "dtmf", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
+      const ourport = server.address().port
 
       let expectedmessagecount = 0
       const expectedmessages = [
-        { action: 'telephone-event', event: '4' },
-        { action: 'telephone-event', event: '5' },
-        { action: 'close' }
+        { action: "telephone-event", event: "4" },
+        { action: "telephone-event", event: "5" },
+        { action: "close" }
       ]
 
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
 
@@ -389,7 +374,7 @@ describe( "dtmf", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      for( let i = 0;  i < 13; i ++ ) {
+      for( let i = 0;  13 > i; i ++ ) {
         sendpk( i, i*20, channel.local.port, server )
       }
 
@@ -398,7 +383,7 @@ describe( "dtmf", function() {
       // Packet loss
       // senddtmf( 15, 12 * 160, 15*20, channel.port, server, true, "4" )
 
-      for( let i = 16;  i < 23; i ++ ) {
+      for( let i = 16;  23 > i; i ++ ) {
         sendpk( i, (i-3)*20, channel.local.port, server )
       }
 
@@ -406,7 +391,7 @@ describe( "dtmf", function() {
       senddtmf( 24, 22 * 160, 24*20, channel.local.port, server, false, "5" )
       senddtmf( 25, 22 * 160, 25*20, channel.local.port, server, true, "5" )
 
-      for( let i = 26;  i < 33; i ++ ) {
+      for( let i = 26;  33 > i; i ++ ) {
         sendpk( i, (i-6)*20, channel.local.port, server )
       }
 
@@ -414,19 +399,19 @@ describe( "dtmf", function() {
     } )
   } )
 
-  it( `Lose end packet`, async function() {
+  it( "Lose end packet", async function() {
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
     const receivedmessages = []
 
-    var receviedpkcount = 0
-    server.on( "message", function( msg, rinfo ) {
+    let receviedpkcount = 0
+    server.on( "message", function() {
       receviedpkcount++
     } )
 
     let done
-    let finished = new Promise( r => done = r )
+    const finished = new Promise( r => done = r )
 
     this.timeout( 3000 )
     this.slow( 2500 )
@@ -434,8 +419,8 @@ describe( "dtmf", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const ourport = server.address().port
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
         receivedmessages.push( d )
 
         if( "close" === d.action ) {
@@ -447,7 +432,7 @@ describe( "dtmf", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      for( let i = 0;  i < 13; i ++ ) {
+      for( let i = 0;  13 > i; i ++ ) {
         sendpk( i, i*20, channel.local.port, server )
       }
 
@@ -467,8 +452,8 @@ describe( "dtmf", function() {
     await finished
 
     const expectedmessages = [
-      { action: 'telephone-event', event: '4' },
-      { action: 'close' }
+      { action: "telephone-event", event: "4" },
+      { action: "close" }
     ]
 
     expect( receviedpkcount ).to.be.above( 83 )
@@ -478,7 +463,7 @@ describe( "dtmf", function() {
   } )
 
 
-  it( `mix 2 channels - pcmu <-> pcma and send DTMF`, async function() {
+  it( "mix 2 channels - pcmu <-> pcma and send DTMF", async function() {
 
     /*
       When mixing 2 channels, we expect the second leg to receive the 2833 packets
@@ -496,13 +481,13 @@ describe( "dtmf", function() {
     let endpointbpkcount = 0
     let dtmfpkcount = 0
 
-    endpointa.on( "message", function( msg, rinfo ) {
+    endpointa.on( "message", function( msg ) {
       endpointapkcount++
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
     } )
 
-    endpointb.on( "message", function( msg, rinfo ) {
+    endpointb.on( "message", function( msg ) {
       endpointbpkcount++
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         dtmfpkcount++
@@ -520,15 +505,15 @@ describe( "dtmf", function() {
     await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       receivedmessages.push( d )
 
       if( "close" === d.action ) channelb.close()
     } )
 
-    let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -536,7 +521,7 @@ describe( "dtmf", function() {
     expect( channela.mix( channelb ) ).to.be.true
 
     /* send a packet every 20mS x 50 */
-    for( let i = 0;  i < 13; i ++ ) {
+    for( let i = 0;  13 > i; i ++ ) {
       sendpk( i, i*20, channela.local.port, endpointa )
     }
 
@@ -544,7 +529,7 @@ describe( "dtmf", function() {
     senddtmf( 14, 12 * 160, 14*20, channela.local.port, endpointa, false, "4" )
     senddtmf( 15, 12 * 160, 15*20, channela.local.port, endpointa, true, "4" )
 
-    for( let i = 16;  i < 23; i ++ ) {
+    for( let i = 16;  23 > i; i ++ ) {
       sendpk( i, (i-3)*20, channela.local.port, endpointa )
     }
 
@@ -552,7 +537,7 @@ describe( "dtmf", function() {
     senddtmf( 24, 22 * 160, 24*20, channela.local.port, endpointa, false, "5" )
     senddtmf( 25, 22 * 160, 25*20, channela.local.port, endpointa, true, "5" )
 
-    for( let i = 26;  i < 50; i ++ ) {
+    for( let i = 26;  50 > i; i ++ ) {
       sendpk( i, (i-6)*20, channela.local.port, endpointa )
     }
 
@@ -569,11 +554,11 @@ describe( "dtmf", function() {
     expect( dtmfpkcount ).to.equal( 6 )
 
     const expectedmessages = [
-      { action: 'mix', event: 'start' },
-      { action: 'telephone-event', event: '4' },
-      { action: 'telephone-event', event: '5' },
-      { action: 'mix', event: 'finished' },
-      { action: 'close' }
+      { action: "mix", event: "start" },
+      { action: "telephone-event", event: "4" },
+      { action: "telephone-event", event: "5" },
+      { action: "mix", event: "finished" },
+      { action: "close" }
     ]
 
     expect( receivedmessages.length ).to.equal( 5 )
@@ -586,7 +571,7 @@ describe( "dtmf", function() {
   } )
 
 
-  it( `mix 3 channels - pcmu <-> pcma and ilbc and send DTMF`, async function() {
+  it( "mix 3 channels - pcmu <-> pcma and ilbc and send DTMF", async function() {
 
     this.timeout( 3000 )
     this.slow( 2000 )
@@ -603,7 +588,7 @@ describe( "dtmf", function() {
     let dtmfbpkcount = 0
     let dtmfcpkcount = 0
 
-    endpointa.on( "message", function( msg, rinfo ) {
+    endpointa.on( "message", function( msg ) {
       endpointapkcount++
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         dtmfapkcount++
@@ -614,7 +599,7 @@ describe( "dtmf", function() {
       }
     } )
 
-    endpointb.on( "message", function( msg, rinfo ) {
+    endpointb.on( "message", function( msg ) {
       endpointbpkcount++
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         dtmfbpkcount++
@@ -625,7 +610,7 @@ describe( "dtmf", function() {
       }
     } )
 
-    endpointc.on( "message", function( msg, rinfo ) {
+    endpointc.on( "message", function( msg ) {
       endpointcpkcount++
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         dtmfcpkcount++
@@ -648,20 +633,20 @@ describe( "dtmf", function() {
     const receveiedmessages = []
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       receveiedmessages.push( d )
 
       if( "close" === d.action ) channelb.close()
     } )
 
-    let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
       expect( d.action).to.not.equal( "telephone-event" )
       if( "close" === d.action ) channelc.close()
     } )
 
-    let channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 97 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 97 } }, function( d ) {
       expect( d.action).to.not.equal( "telephone-event" )
       if( "close" === d.action ) done()
     } )
@@ -671,7 +656,7 @@ describe( "dtmf", function() {
     expect( channela.mix( channelc ) ).to.be.true
 
     /* send a packet every 20mS x 50 */
-    for( let i = 0;  i < 13; i ++ ) {
+    for( let i = 0;  13 > i; i ++ ) {
       sendpk( i, i*20, channela.local.port, endpointa )
     }
 
@@ -679,7 +664,7 @@ describe( "dtmf", function() {
     senddtmf( 14, 12 * 160, 14*20, channela.local.port, endpointa, false, "4" )
     senddtmf( 15, 12 * 160, 15*20, channela.local.port, endpointa, true, "4" )
 
-    for( let i = 16;  i < 23; i ++ ) {
+    for( let i = 16;  23 > i; i ++ ) {
       sendpk( i, (i-3)*20, channela.local.port, endpointa )
     }
 
@@ -687,11 +672,11 @@ describe( "dtmf", function() {
     senddtmf( 24, 22 * 160, 24*20, channela.local.port, endpointa, false, "5" )
     senddtmf( 25, 22 * 160, 25*20, channela.local.port, endpointa, true, "5" )
 
-    for( let i = 26;  i < 50; i ++ ) {
+    for( let i = 26;  50 > i; i ++ ) {
       sendpk( i, (i-6)*20, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
     endpointa.close()
@@ -710,49 +695,44 @@ describe( "dtmf", function() {
     expect( dtmfcpkcount ).to.equal( 6 )
 
     const expectedmessages = [
-      { action: 'mix', event: 'start' }, //b
-      { action: 'mix', event: 'start' }, //c
-      { action: 'telephone-event', event: '4' },
-      { action: 'telephone-event', event: '5' },
-      { action: 'mix', event: 'finished' },
-      { action: 'close' }
+      { action: "mix", event: "start" }, //b
+      { action: "mix", event: "start" }, //c
+      { action: "telephone-event", event: "4" },
+      { action: "telephone-event", event: "5" },
+      { action: "mix", event: "finished" },
+      { action: "close" }
     ]
 
     for( let i = 0; i <  expectedmessages.length; i++ ) {
       expect( expectedmessages[ i ].action ).to.equal( receveiedmessages[ i ].action )
       if( expectedmessages[ i ].event ) expect( receveiedmessages[ i ].event ).to.equal( receveiedmessages[ i ].event )
     }
-    
-
   } )
 
-  it( `DTMF captured not working`, async function() {
+  it( "DTMF captured not working", async function() {
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    server.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
-    } )
+    server.on( "message", function() {} )
 
     this.timeout( 3000 )
     this.slow( 2500 )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
+      const ourport = server.address().port
 
       let expectedmessagecount = 0
       const expectedmessages = [
-        { action: 'telephone-event', event: '3' },
-        { action: 'close' }
+        { action: "telephone-event", event: "3" },
+        { action: "close" }
       ]
 
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
@@ -797,28 +777,25 @@ describe( "dtmf", function() {
     await finished
   } )
 
-  it( `DTMF PCAP playback test 1`, async function() {
+  it( "DTMF PCAP playback test 1", async function() {
 
     this.timeout( 21000 )
     this.slow( 20000 )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
     const receivedmessages = []
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    server.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
-    } )
+    server.on( "message", function() {} )
 
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const ourport = server.address().port
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
         receivedmessages.push( d )
 
         if( "close" === d.action ) {
@@ -831,7 +808,7 @@ describe( "dtmf", function() {
 
       channel.play( { "interupt":true, "files": [ { "wav": "test/interface/pcaps/180fa1ac-08e5-11ed-bd4d-02dba5b5aad6.wav" } ] } )
 
-      let ourpcap = await pcap.readpcap( "test/interface/pcaps/dtmfcapture1.pcap" )
+      const ourpcap = await pcap.readpcap( "test/interface/pcaps/dtmfcapture1.pcap" )
 
       const offset = 4700
 
@@ -850,10 +827,10 @@ describe( "dtmf", function() {
     await finished
 
     const expectedmessages = [
-      { action: 'play', event: 'start', reason: 'new' },
-      { action: 'play', event: 'end', reason: 'telephone-event' },
-      { action: 'telephone-event', event: '2' },
-      { action: 'close' }
+      { action: "play", event: "start", reason: "new" },
+      { action: "play", event: "end", reason: "telephone-event" },
+      { action: "telephone-event", event: "2" },
+      { action: "close" }
     ]
 
     expect( receivedmessages.length ).to.equal( 4 )
@@ -864,28 +841,25 @@ describe( "dtmf", function() {
 
   } )
 
-  it( `DTMF PCAP playback test 2`, async function() {
+  it( "DTMF PCAP playback test 2", async function() {
 
     this.timeout( 21000 )
     this.slow( 20000 )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
     const receivedmessages = []
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    server.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
-    } )
+    server.on( "message", function() {} )
 
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const ourport = server.address().port
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
         receivedmessages.push( d )
 
         if( "close" === d.action ) {
@@ -898,7 +872,7 @@ describe( "dtmf", function() {
 
       channel.play( { "interupt":true, "files": [ { "wav": "test/interface/pcaps/180fa1ac-08e5-11ed-bd4d-02dba5b5aad6.wav" } ] } )
 
-      let ourpcap = await pcap.readpcap( "test/interface/pcaps/dtmf3presses.pcap" )
+      const ourpcap = await pcap.readpcap( "test/interface/pcaps/dtmf3presses.pcap" )
 
       const offset = 17 * 1000
 
@@ -910,7 +884,7 @@ describe( "dtmf", function() {
           //const sn = packet.ipv4.udp.data.readUInt16BE( 2 )
 
           const sendat = ( 1000 * packet.ts_sec_offset ) - offset
-          if ( sendat > 0 ) {
+          if ( 0 < sendat ) {
             //console.log(sn, sendat)
             sendpayload( sendat, packet.ipv4.udp.data, dstport, server )
           }
@@ -921,12 +895,12 @@ describe( "dtmf", function() {
     await finished
 
     const expectedmessages = [
-      { action: 'play', event: 'start', reason: 'new' },
-      { action: 'play', event: 'end', reason: 'telephone-event' },
-      { action: 'telephone-event', event: '1' },
-      { action: 'telephone-event', event: '1' },
-      { action: 'telephone-event', event: '1' },
-      { action: 'close' }
+      { action: "play", event: "start", reason: "new" },
+      { action: "play", event: "end", reason: "telephone-event" },
+      { action: "telephone-event", event: "1" },
+      { action: "telephone-event", event: "1" },
+      { action: "telephone-event", event: "1" },
+      { action: "close" }
     ]
 
     expect( receivedmessages.length ).to.equal( 6 )

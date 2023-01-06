@@ -19,8 +19,7 @@ module.exports = async ( mstimeout ) => {
 
   // First create clients/channels and set remote
   // Channels are internal and used for mixing, while as clients are remote nodes
-  for ( var i = 0; i < max_channels; i++ )
-  {
+  for ( let i = 0; i < max_channels; i++ ) {
     clients.push( await projectrtp.openchannel( {}, ( d ) => {
       if( "close" === d.action ) {
         utils.logclosechannel( `Mix ${max_channels} (client) for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
@@ -40,21 +39,18 @@ module.exports = async ( mstimeout ) => {
   }
 
   // Mix channel[0] with every other channel
-  for ( var i = 1; i < max_channels; i++ )
-  {
+  for ( let i = 1; i < max_channels; i++ ) {
     expect( await channels[0].mix( channels[i] ) ).to.be.true
   }
 
-  for ( var i = 0; i < max_channels; i++ )
-  {
+  for ( let i = 0; i < max_channels; i++ ) {
     expect( clients[i].play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
   }
 
   await new Promise( ( r ) => { setTimeout( () => r(), Math.max( mstimeout, 110 ) ) } )
   
   // Clean up
-  for ( var i = 0; i < max_channels; i++ )
-  {
+  for ( let i = 0; i < max_channels; i++ ) {
     channels[i].close()
     clients[i].close()
   }

@@ -10,8 +10,8 @@
   },
   "scripts": {
     "test": "./node_modules/mocha/bin/_mocha --recursive --check-leaks",
-    "check": "tsc --checkJs --noEmit --target es6 --skipLibCheck *.js test/interface/*.js",
-    "docs": "jsdoc -c jsdoc.conf.json",
+    "check": "tsc --checkJs --noEmit --target es6 --skipLibCheck *.js test/**/*.js; ./node_modules/eslint/bin/eslint.js ./",
+    "docs": "jsdoc -c jsdoc.conf.json ./README.md",
     "stress": "node stress/index.js",
     "build:dev": "cd src; node-gyp build --debug",
     "build": "cd src; node-gyp build",

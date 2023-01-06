@@ -1,48 +1,62 @@
 
-const fs = require( "node:fs" )
+const fs = require( "fs" )
 
+/**
+ * Formats number as hex
+ * @ignore
+ * @param { number } d 
+ * @returns { string }
+ */
 function toHex( d ) {
   return ( "0" + ( Number( d ).toString( 16 ) ) ).slice( -2 ).toUpperCase()
 }
 
-
+/**
+ * 
+ * @param { string } file 
+ * @param { number } maxnumberofpackets 
+ * @returns { Promise< Array< object > > }
+ */
+// For now disable - this is only used in test.
+// eslint-disable-next-line complexity
 module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
 
   /* Buffer */
   const data = fs.readFileSync( file )
   if( !data ) return
 
-  var fileposition = 0
+  let fileposition = 0
 
-  var ts_sec = 0
-  var ts_usec = 0
-  var ts_firstether = -1
-  var frame = 0
-  var ipv4hosts = []
-  var etherframes = []
+  let ts_sec = 0
+  let ts_usec = 0
+  let ts_firstether = -1
+  let frame = 0
+  const ipv4hosts = []
+  const etherframes = []
 
 
   // Do we need version info for now?
   //var uint16array = new Uint16Array(data)
   /* Magic number */
-  if(0) //debug
+  /*
   if ( 2712847316 == data.readUInt32LE( 0 ) ) {
-    /* Native byte order */
+    // Native byte order
     console.log( "Native byte order" )
   } else if ( 3569595041 == data.readUInt32LE( 0 ) ) {
-    /* Swapped byte order */
+    // Swapped byte order
     console.log( "Swapped byte order" )
   } else if ( 2712812621 == data.readUInt32LE( 0 ) ) {
-    /* Native byte order nano second timing */
+    // Native byte order nano second timing 
     console.log( "Native byte order nano second timing" )
   } else if ( 1295823521 == data.readUInt32LE( 0 ) ) {
-    /* Swapped byte order nano second timing */
+    // Swapped byte order nano second timing 
     console.log( "Swapped byte order nano second timing" )
   }
+  */
 
   /* http://www.tcpdump.org/linktypes.html */
   if ( 1 != data.readUInt32LE( 5 * 4 ) ) {
-    console.error( "Link layer should be LINKTYPE_ETHERNET", uint32array[ 5 ] )
+    console.error( "Link layer should be LINKTYPE_ETHERNET" )
     return
   }
   //console.log( "LINKTYPE_ETHERNET" )
@@ -54,7 +68,7 @@ module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
     /* read packet header */
     ts_sec = data.readUInt32LE( fileposition )
     ts_usec = data.readUInt32LE( 4 + fileposition )
-    var incl_len = data.readUInt32LE( 12 + fileposition )
+    const incl_len = data.readUInt32LE( 12 + fileposition )
     //var orig_len
     fileposition += 16
 
@@ -62,7 +76,7 @@ module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
       continue
     }
 
-    var etherpacket = {}
+    const etherpacket = {}
     etherpacket.frame = frame
     frame++
     etherpacket.ts_sec = ts_sec + ( ts_usec / 1000000 )
@@ -75,7 +89,9 @@ module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
     etherpacket.src = "" + toHex( data.readUInt8( fileposition ) ) + ":" + toHex( data.readUInt8( fileposition + 1 ) ) + ":" + toHex( data.readUInt8( fileposition + 2 ) ) + ":" + toHex( data.readUInt8( fileposition + 3 ) ) + ":" + toHex( data.readUInt8( fileposition + 4 ) ) + ":" + toHex( data.readUInt8( fileposition + 5 ) )
     etherpacket.dst = "" + toHex( data.readUInt8( fileposition + 6 ) ) + ":" + toHex( data.readUInt8( fileposition + 7 ) ) + ":" + toHex( data.readUInt8( fileposition + 8 ) ) + ":" + toHex( data.readUInt8( fileposition + 9 ) ) + ":" + toHex( data.readUInt8( fileposition + 10 ) ) + ":" + toHex( data.readUInt8( fileposition + 11 ) )
     etherpacket.ethertype = "" + toHex( data.readUInt8( fileposition + 12 ) ) + toHex( data.readUInt8( fileposition + 13 ) )
-    if ( parseInt( etherpacket.ethertype, 16 ) > 1536 ) {
+    if ( 1536 < parseInt( etherpacket.ethertype, 16 ) ) {
+
+      let hostid
       // Ref: https://en.wikipedia.org/wiki/EtherType
       switch ( etherpacket.ethertype ) {
       case "0800":
@@ -95,7 +111,7 @@ module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
         etherpacket.ipv4.checksum = "" + toHex( etherpacket.ipv4.data[ 10 ] ) + toHex( etherpacket.ipv4.data[ 11 ] )
         etherpacket.ipv4.src = "" + etherpacket.ipv4.data[ 12 ] + "." + etherpacket.ipv4.data[ 13 ] + "." + etherpacket.ipv4.data[ 14 ] + "." + etherpacket.ipv4.data[ 15 ]
         etherpacket.ipv4.dst = "" + etherpacket.ipv4.data[ 16 ] + "." + etherpacket.ipv4.data[ 17 ] + "." + etherpacket.ipv4.data[ 18 ] + "." + etherpacket.ipv4.data[ 19 ]
-        var hostid = -1
+        hostid = -1
         if ( -1 == ( hostid = ipv4hosts.indexOf( etherpacket.ipv4.src ) ) ) {
           etherpacket.ipv4.srchostid = ipv4hosts.length
           ipv4hosts.push( etherpacket.ipv4.src )

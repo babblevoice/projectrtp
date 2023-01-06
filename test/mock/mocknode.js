@@ -5,7 +5,8 @@ const message = require( "../../lib/message.js" )
 const prtp = require( "../../index.js" ).projectrtp
 const { v4: uuidv4 } = require( "uuid" )
 
-module.exports = class {
+class mocknode {
+
   constructor() {
     this.mp = message.newstate()
     this.ourstats = prtp.stats()
@@ -15,9 +16,23 @@ module.exports = class {
     this.socks = []
   }
 
+  /**
+   * 
+   * @returns { mocknode }
+   */
+  static create() {
+    return new mocknode()
+  }
+
+  /**
+   * 
+   * @param { number } port 
+   * @param { string } address 
+   * @return { Promise }
+   */
   async connect( port = 9002, address = "127.0.0.1" ) {
 
-    let connectpromise = new Promise( r => this._newconnectresolve = r )
+    const connectpromise = new Promise( r => this._newconnectresolve = r )
     this.connection = net.createConnection( port, address )
     this.connection.on( "connect", this._onsocketconnect.bind( this ) )
     this.connection.on( "data", this._onsocketdata.bind( this ) )
@@ -32,7 +47,7 @@ module.exports = class {
    */
   listen( port = 9002, host = "127.0.0.1" ) {
     let listenresolve
-    let listenpromise = new Promise( ( r ) => listenresolve = r )
+    const listenpromise = new Promise( ( r ) => listenresolve = r )
     this.port = port
     this.host = host
     this.server = net.createServer( ( connection ) => {
@@ -47,20 +62,33 @@ module.exports = class {
     return listenpromise
   }
 
+  /**
+   * 
+   * @param { string } event 
+   * @param { function } cb 
+   * @return { void }
+   */
   setmessagehandler( event, cb ) {
     this.messagehandlers[ event ] = cb
   }
 
+  /**
+   * @return { void }
+   */
   destroy() {
     if( this.connection ) this.connection.destroy()
     if( this.server ) this.server.close()
   }
 
+  /**
+   * @private
+   * @return { void }
+   */
   _onsocketconnect() {
 
     /* Pretend to be a node: our server will pass out new connections only after a
     stats message has been sent and it must have an instance id */
-    let msg = {}
+    const msg = {}
     msg.status = this.ourstats
     msg.status.instance = this.id
     this.connection.write( message.createmessage( msg ) )
@@ -68,6 +96,11 @@ module.exports = class {
     this._newconnectresolve()
   }
 
+  /**
+   * @private
+   * @param { Buffer } data
+   * @return { void }
+   */
   _onsocketdata( data ) {
     message.parsemessage( this.mp, data, ( receivedmsg ) => {
       this.recevievedmessagecount++
@@ -77,9 +110,16 @@ module.exports = class {
     } )
   }
 
+  /**
+   * 
+   * @param { object } obj 
+   * @return { void }
+   */
   sendmessage( obj ) {
     obj.status = this.ourstats
     this.connection.write( message.createmessage( obj ) )
   }
-
 }
+
+
+module.exports = mocknode

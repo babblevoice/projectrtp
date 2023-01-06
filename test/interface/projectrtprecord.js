@@ -4,38 +4,16 @@ const expect = require( "chai" ).expect
 const fs = require( "fs" )
 const fspromises = fs.promises
 const dgram = require( "dgram" )
-const projectrtp = require( "../../index.js" ).projectrtp
+const prtp = require( "../../index.js" )
 
-/* use nodeplotlib to display audio data */
-const showplots = false
-
-if( showplots ) {
-  const plot = require( "nodeplotlib" )
-}
-
-function int16bebuffer2array( inbuffer ) {
-  let r = []
-  for( let i = 0; i < inbuffer.length; i = i + 2 ) {
-    r.push( inbuffer.readInt16BE( i ) )
-  }
-  return r
-}
-
-function pcmubuffer2array( inbuffer ) {
-  let r = []
-  for( let i = 0; i < inbuffer.length; i++ ) {
-    r.push( projectrtp.codecx.pcmu2linear16( inbuffer[ i ] ) )
-  }
-  return r
-}
 
 function genpcmutone( durationseconds = 0.25, tonehz = 100, samplerate = 16000, amp = 15000 ) {
 
-  const tonebuffer = Buffer.alloc( samplerate*durationseconds, projectrtp.codecx.linear162pcmu( 0 ) )
+  const tonebuffer = Buffer.alloc( samplerate*durationseconds, prtp.projectrtp.codecx.linear162pcmu( 0 ) )
 
   for( let i = 0; i < tonebuffer.length; i++ ) {
-    let val = Math.sin( ( i / samplerate ) * Math.PI * tonehz ) * amp
-    tonebuffer[ i ] = projectrtp.codecx.linear162pcmu( val )
+    const val = Math.sin( ( i / samplerate ) * Math.PI * tonehz ) * amp
+    tonebuffer[ i ] = prtp.projectrtp.codecx.linear162pcmu( val )
   }
 
   return tonebuffer
@@ -43,29 +21,29 @@ function genpcmutone( durationseconds = 0.25, tonehz = 100, samplerate = 16000, 
 
 function sendpk( sn, sendtime, dstport, server, data = undefined ) {
 
-  let ssrc = 25
-  let pklength = 172
+  const ssrc = 25
+  const pklength = 172
 
   return setTimeout( () => {
 
     let payload
     if( undefined != data ) {
-      let start = sn * 160
-      let end = start + 160
+      const start = sn * 160
+      const end = start + 160
       payload = data.subarray( start, end )
     } else {
-      payload = Buffer.alloc( pklength - 12 ).fill( projectrtp.codecx.linear162pcmu( sn ) & 0xff )
+      payload = Buffer.alloc( pklength - 12 ).fill( prtp.projectrtp.codecx.linear162pcmu( sn ) & 0xff )
     }
 
-    let subheader = Buffer.alloc( 10 )
+    const subheader = Buffer.alloc( 10 )
 
-    let ts = sn * 160
+    const ts = sn * 160
 
     subheader.writeUInt16BE( ( sn + 100 ) % ( 2**16 ) /* just some offset */ )
     subheader.writeUInt32BE( ts, 2 )
     subheader.writeUInt32BE( ssrc, 6 )
 
-    let rtppacket = Buffer.concat( [
+    const rtppacket = Buffer.concat( [
       Buffer.from( [ 0x80, 0x00 ] ),
       subheader,
       payload ] )
@@ -77,15 +55,14 @@ function sendpk( sn, sendtime, dstport, server, data = undefined ) {
 
 describe( "record", function() {
 
-  it( `record to file`, async function() {
+  it( "record to file", async function() {
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    var channel
 
-    server.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
-    } )
+    /** @type { prtp.channel } */
+    let channel
+
+    server.on( "message", function() {} )
 
     this.timeout( 1500 )
     this.slow( 1200 )
@@ -93,7 +70,7 @@ describe( "record", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) {
           server.close()
         }
@@ -106,7 +83,7 @@ describe( "record", function() {
       /* something to record */
       expect( channel.echo() ).to.be.true
 
-      for( let i = 0;  i < 50; i ++ ) {
+      for( let i = 0;  50 > i; i ++ ) {
         sendpk( i, i, channel.local.port, server )
       }
     } )
@@ -115,7 +92,7 @@ describe( "record", function() {
     channel.close()
 
     /* Now test the file */
-    let wavinfo = projectrtp.soundfile.info( "/tmp/ourrecording.wav" )
+    const wavinfo = prtp.projectrtp.soundfile.info( "/tmp/ourrecording.wav" )
     expect( wavinfo.audioformat ).to.equal( 1 )
     expect( wavinfo.channelcount ).to.equal( 2 )
     expect( wavinfo.samplerate ).to.equal( 8000 )
@@ -125,7 +102,7 @@ describe( "record", function() {
     expect( wavinfo.fmtchunksize ).to.equal( 16 )
     expect( wavinfo.subchunksize ).to.be.within( 28000, 33000 )
 
-    let ourfile = await fspromises.open( "/tmp/ourrecording.wav", "r" )
+    const ourfile = await fspromises.open( "/tmp/ourrecording.wav", "r" )
     const buffer = Buffer.alloc( 28204 )
 
     /* our payload is the sn - but then we pcma decode to store in the file */
@@ -138,21 +115,20 @@ describe( "record", function() {
     sn = 4 it pcmu reduces
     160 * 2 * 2 * sn = 2560
     */
-    for( let sn = 0; sn < 42; sn++ ){
+    for( let sn = 0; 42 > sn; sn++ ){
       expect( buffer.readInt16BE( 160 * 2 * 2 * sn ) )
-        .to.equal( projectrtp.codecx.pcmu2linear16( projectrtp.codecx.linear162pcmu( sn ) ) )
+        .to.equal( prtp.projectrtp.codecx.pcmu2linear16( prtp.projectrtp.codecx.linear162pcmu( sn ) ) )
     }
   } )
 
-  it( `record to file then request finish`, async function() {
+  it( "record to file then request finish", async function() {
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    var channel
 
-    server.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
-    } )
+    /** @type { prtp.channel } */
+    let channel
+
+    server.on( "message", function() {} )
 
     this.timeout( 1500 )
     this.slow( 1200 )
@@ -160,18 +136,18 @@ describe( "record", function() {
     server.bind()
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
     let expectedmessagecount = 0
     const expectedmessages = [
-      { action: 'record', file: '/tmp/ourstoppedrecording.wav', event: 'recording' },
-      { action: 'record', file: '/tmp/ourstoppedrecording.wav', event: 'finished.requested' },
-      { action: 'close' }
+      { action: "record", file: "/tmp/ourstoppedrecording.wav", event: "recording" },
+      { action: "record", file: "/tmp/ourstoppedrecording.wav", event: "finished.requested" },
+      { action: "close" }
     ]
 
     server.on( "listening", async function() {
 
-      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
         if( "close" === d.action ) {
@@ -187,22 +163,22 @@ describe( "record", function() {
       /* something to record */
       expect( channel.echo() ).to.be.true
 
-      for( let i = 0;  i < 50; i ++ ) {
+      for( let i = 0;  50 > i; i ++ ) {
         sendpk( i, i, channel.local.port, server )
       }
     } )
 
     setTimeout( () => channel.record( {
-        "file": "/tmp/ourstoppedrecording.wav",
-        "finish": true
-      } ) , 600 )
+      "file": "/tmp/ourstoppedrecording.wav",
+      "finish": true
+    } ) , 600 )
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
     channel.close()
     await finished
 
     /* Now test the file */
-    let wavinfo = projectrtp.soundfile.info( "/tmp/ourstoppedrecording.wav" )
+    const wavinfo = prtp.projectrtp.soundfile.info( "/tmp/ourstoppedrecording.wav" )
 
     expect( wavinfo.audioformat ).to.equal( 1 )
     expect( wavinfo.channelcount ).to.equal( 2 )
@@ -215,26 +191,25 @@ describe( "record", function() {
 
   } )
 
-  it( `record to file with pause`, async function() {
+  it( "record to file with pause", async function() {
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    var channel
 
-    server.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
-    } )
+    /** @type { prtp.channel } */
+    let channel
+
+    server.on( "message", function() {} )
 
     this.timeout( 1500 )
     this.slow( 1200 )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
     server.bind()
     server.on( "listening", async function() {
 
-      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) {
           server.close()
           done()
@@ -248,7 +223,7 @@ describe( "record", function() {
       /* something to record */
       expect( channel.echo() ).to.be.true
 
-      for( let i = 0;  i < 50; i ++ ) {
+      for( let i = 0;  50 > i; i ++ ) {
         sendpk( i, i, channel.local.port, server )
       }
 
@@ -261,13 +236,13 @@ describe( "record", function() {
       }, 400 )
     } )
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1300 ) } )
+    await new Promise( ( r ) => { setTimeout( () => r(), 1300 ) } )
     channel.close()
 
     await finished
 
     /* Now test the file */
-    let wavinfo = projectrtp.soundfile.info( "/tmp/ourpausedrecording.wav" )
+    const wavinfo = prtp.projectrtp.soundfile.info( "/tmp/ourpausedrecording.wav" )
     expect( wavinfo.audioformat ).to.equal( 1 )
     expect( wavinfo.channelcount ).to.equal( 2 )
     expect( wavinfo.samplerate ).to.equal( 8000 )
@@ -277,20 +252,19 @@ describe( "record", function() {
     expect( wavinfo.fmtchunksize ).to.equal( 16 )
     expect( wavinfo.subchunksize ).to.be.within( 3000, 7000 )
 
-    let stats = fs.statSync( "/tmp/ourpausedrecording.wav" )
+    const stats = fs.statSync( "/tmp/ourpausedrecording.wav" )
     expect( stats.size ).to.be.within( 3000, 7000 )
 
   } )
 
-  it( `record with power detection`, function( done ) {
+  it( "record with power detection", function( done ) {
 
     this.timeout( 9000 )
     this.slow( 8500 )
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    var channel
+    let channel
 
     /* generate our data */
     const startsilenceseconds = 2
@@ -301,38 +275,26 @@ describe( "record", function() {
     const frequescyhz = 50
     const samplingrate = 8000
 
-    let sendbuffer = Buffer.concat( [
-      Buffer.alloc( samplingrate*startsilenceseconds, projectrtp.codecx.linear162pcmu( 0 ) ),
+    const sendbuffer = Buffer.concat( [
+      Buffer.alloc( samplingrate*startsilenceseconds, prtp.projectrtp.codecx.linear162pcmu( 0 ) ),
       genpcmutone( tonedurationseconds, frequescyhz, samplingrate, amplitude ),
-      Buffer.alloc( samplingrate*endsilnceseconds, projectrtp.codecx.linear162pcmu( 0 ) )
+      Buffer.alloc( samplingrate*endsilnceseconds, prtp.projectrtp.codecx.linear162pcmu( 0 ) )
     ] )
 
-    if( showplots ) {
-      let data1 = [ {
-        y: pcmubuffer2array( sendbuffer ),
-        type: "scatter"
-      } ]
-
-      plot.stack( data1 )
-      plot.plot()
-    }
-
-    server.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
-    } )
+    server.on( "message", function() {} )
 
     let expectedmessagecount = 0
     const expectedmessages = [
-      { action: 'record', file: '/tmp/ourpowerrecording.wav', event: 'recording.abovepower' },
-      { action: 'record', file: '/tmp/ourpowerrecording.wav', event: 'finished.belowpower' },
-      { action: 'close' }
+      { action: "record", file: "/tmp/ourpowerrecording.wav", event: "recording.abovepower" },
+      { action: "record", file: "/tmp/ourpowerrecording.wav", event: "finished.belowpower" },
+      { action: "close" }
     ]
 
     server.bind()
-    let delayedjobs = []
+    const delayedjobs = []
     server.on( "listening", async function() {
 
-      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
 
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
@@ -346,7 +308,7 @@ describe( "record", function() {
             return true
           } )
           server.close()
-          let stats = fs.statSync( "/tmp/ourpowerrecording.wav" )
+          const stats = fs.statSync( "/tmp/ourpowerrecording.wav" )
           expect( stats.size ).to.be.within( 70000, 80000 )
           done()
         }
@@ -373,15 +335,14 @@ describe( "record", function() {
   } )
 
 
-  it( `record with timeout after power detection`, function( done ) {
+  it( "record with timeout after power detection", function( done ) {
 
     this.timeout( 9000 )
     this.slow( 8500 )
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    var channel
+    let channel
 
     /* generate our data */
     const startsilenceseconds = 2
@@ -392,21 +353,19 @@ describe( "record", function() {
     const frequescyhz = 50
     const samplingrate = 8000
 
-    let sendbuffer = Buffer.concat( [
-      Buffer.alloc( samplingrate*startsilenceseconds, projectrtp.codecx.linear162pcmu( 0 ) ),
+    const sendbuffer = Buffer.concat( [
+      Buffer.alloc( samplingrate*startsilenceseconds, prtp.projectrtp.codecx.linear162pcmu( 0 ) ),
       genpcmutone( tonedurationseconds, frequescyhz, samplingrate, amplitude ),
-      Buffer.alloc( samplingrate*endsilnceseconds, projectrtp.codecx.linear162pcmu( 0 ) )
+      Buffer.alloc( samplingrate*endsilnceseconds, prtp.projectrtp.codecx.linear162pcmu( 0 ) )
     ] )
 
-    server.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
-    } )
+    server.on( "message", function() {} )
 
     server.bind()
-    let delayedjobs = []
+    const delayedjobs = []
     server.on( "listening", async function() {
 
-      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
 
         if( "record" === d.action && "finished.timeout" == d.event ) {
           channel.close()
@@ -418,7 +377,7 @@ describe( "record", function() {
           } )
           server.close()
 
-          let stats = fs.statSync( "/tmp/ourtimeoutpowerrecording.wav" )
+          const stats = fs.statSync( "/tmp/ourtimeoutpowerrecording.wav" )
           expect( stats.size ).to.be.within( 16000, 18000 )
 
           done()
@@ -446,13 +405,13 @@ describe( "record", function() {
   } )
 
 
-  it( `dual recording one with power detect one ongoing`, async function () {
+  it( "dual recording one with power detect one ongoing", async function () {
 
     this.timeout( 8000 )
     this.slow( 7000 )
 
     let done
-    let finished = new Promise( ( r ) => done = r )
+    const finished = new Promise( ( r ) => done = r )
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
@@ -468,23 +427,20 @@ describe( "record", function() {
     const samplingrate = 8000
     const lowamplitude = 200
 
-    let sendbuffer = Buffer.concat( [
-      Buffer.alloc( samplingrate*startsilenceseconds, projectrtp.codecx.linear162pcmu( 0 ) ),
+    const sendbuffer = Buffer.concat( [
+      Buffer.alloc( samplingrate*startsilenceseconds, prtp.projectrtp.codecx.linear162pcmu( 0 ) ),
       genpcmutone( tonedurationseconds, frequescyhz, samplingrate, amplitude ),
       genpcmutone( endsilnceseconds, frequescyhz, samplingrate, lowamplitude )
     ] )
 
-    let receviedpkcount
-    server.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
-    } )
+    server.on( "message", function() {} )
 
     server.bind()
     const receivedmessages = []
 
     server.on( "listening", async function() {
 
-      channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         receivedmessages.push( d )  
         if( "close" === d.action ) {
           done()
@@ -527,11 +483,11 @@ describe( "record", function() {
       Messages we receive in this order:
     */
     const expectedmessages = [
-      { action: 'record', file: '/tmp/dualrecording.wav', event: 'recording' },
-      { action: 'record', file: '/tmp/dualrecordingpower.wav', event: 'recording.abovepower' },
-      { action: 'record', file: '/tmp/dualrecordingpower.wav', event: 'finished.belowpower' },
-      { action: 'record', file: '/tmp/dualrecording.wav', event: 'finished.channelclosed' },
-      { action: 'close' }
+      { action: "record", file: "/tmp/dualrecording.wav", event: "recording" },
+      { action: "record", file: "/tmp/dualrecordingpower.wav", event: "recording.abovepower" },
+      { action: "record", file: "/tmp/dualrecordingpower.wav", event: "finished.belowpower" },
+      { action: "record", file: "/tmp/dualrecording.wav", event: "finished.channelclosed" },
+      { action: "close" }
     ]
 
     for( let i = 0; i < expectedmessages.length; i ++ ) {
@@ -542,12 +498,12 @@ describe( "record", function() {
   } )
 
   after( async () => {
-    //await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourrecording.wav", ( err ) => { resolve() } ) } )
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourstoppedrecording.wav", ( err ) => { resolve() } ) } )
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourpausedrecording.wav", ( err ) => { resolve() } ) } )
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourpowerrecording.wav", ( err ) => { resolve() } ) } )
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourtimeoutpowerrecording.wav", ( err ) => { resolve() } ) } )
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/dualrecordingpower.wav", ( err ) => { resolve() } ) } )
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/dualrecording.wav", ( err ) => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourrecording.wav", () => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourstoppedrecording.wav", () => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourpausedrecording.wav", () => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourpowerrecording.wav", () => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourtimeoutpowerrecording.wav", () => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/dualrecordingpower.wav", () => { resolve() } ) } )
+    await new Promise( ( resolve ) => { fs.unlink( "/tmp/dualrecording.wav", () => { resolve() } ) } )
   } )
 } )

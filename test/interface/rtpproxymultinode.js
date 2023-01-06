@@ -6,9 +6,9 @@ const mocknode = require( "../mock/mocknode" )
 
 describe( "rtpproxy multi node", function() {
 
-  it( `2 node simple mix`, async function() {
+  it( "2 node simple mix", async function() {
     
-    let actual = { "mix": 0, "open": 0, "unmix": 0, "close": 0, "remote": 0 }
+    const actual = { "mix": 0, "open": 0, "unmix": 0, "close": 0, "remote": 0 }
     /*
       SIP                   rtp 1                          rtp 2
       open ------------------>                                        (1)
@@ -39,27 +39,27 @@ describe( "rtpproxy multi node", function() {
            close channel 3 -->                                        (17)
            close channel 4 ---------------------------------->        (18)
     */
-    let rtp1 = new mocknode()
-    let rtp2 = new mocknode()
+    const rtp1 = new mocknode()
+    const rtp2 = new mocknode()
 
     const listenport = 32443
 
-    let rtpreceveivedmessages = []
+    const rtpreceveivedmessages = []
     let ouruuid = 0
 
     rtp1.setmessagehandler( "open", ( msg ) => {
       msg.node = "rtp1"
       rtpreceveivedmessages.push ( msg )
       rtp1.sendmessage( {
-          "action": "open",
-          "id": msg.id,
-          "uuid": ""+ouruuid++,
-          "local": {
-            "port": 10002,
-            "address": "192.168.0.141"
-            },
-          "status": rtp1.ourstats
-          } )
+        "action": "open",
+        "id": msg.id,
+        "uuid": ""+ouruuid++,
+        "local": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        },
+        "status": rtp1.ourstats
+      } )
     } )
 
     rtp1.setmessagehandler( "mix", ( msg ) => {
@@ -77,9 +77,9 @@ describe( "rtpproxy multi node", function() {
         "local": {
           "port": 10002,
           "address": "192.168.0.141"
-          },
+        },
         "status": rtp1.ourstats
-        } )
+      } )
     } )
 
     rtp1.setmessagehandler( "remote", ( msg ) => {
@@ -94,7 +94,7 @@ describe( "rtpproxy multi node", function() {
         "action": "close",
         "id": msg.id,
         "uuid": msg.uuid,
-        } )
+      } )
     } )
 
     rtp2.setmessagehandler( "open", ( msg ) => {
@@ -107,9 +107,9 @@ describe( "rtpproxy multi node", function() {
         "local": {
           "port": 10004,
           "address": "192.168.0.141"
-          },
+        },
         "status": rtp2.ourstats
-        } )
+      } )
     } )
 
     rtp2.setmessagehandler( "mix", ( msg ) => {
@@ -127,9 +127,9 @@ describe( "rtpproxy multi node", function() {
         "local": {
           "port": 10002,
           "address": "192.168.0.141"
-          },
+        },
         "status": rtp2.ourstats
-        } )
+      } )
     } )
 
     rtp2.setmessagehandler( "remote", ( msg ) => {
@@ -148,12 +148,12 @@ describe( "rtpproxy multi node", function() {
       } )
     } )
 
-    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     await rtp1.connect( listenport )
     await rtp2.connect( listenport )
 
-    let channel1 = await prtp.openchannel( { "nodeinstance": rtp1.ourstats.instance } )
-    let channel2 = await prtp.openchannel( { "nodeinstance": rtp2.ourstats.instance } )
+    const channel1 = await prtp.openchannel( { "nodeinstance": rtp1.ourstats.instance } )
+    const channel2 = await prtp.openchannel( { "nodeinstance": rtp2.ourstats.instance } )
     await channel1.mix( channel2 )
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1000 ) } )
     channel1.unmix()
@@ -164,7 +164,7 @@ describe( "rtpproxy multi node", function() {
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } )
 
-    for ( let msg of rtpreceveivedmessages ) actual[ msg.channel ] += 1
+    for ( const msg of rtpreceveivedmessages ) actual[ msg.channel ] += 1
     expect( actual ).to.deep.equal( { "mix": 2, "open": 4, "unmix": 4, "close": 4, "remote": 2 } )
 
     /* Clean up */
@@ -174,7 +174,7 @@ describe( "rtpproxy multi node", function() {
 
   } )
 
-  it( `2 node 1 channel on one, 2 channels other`, async function() {
+  it( "2 node 1 channel on one, 2 channels other", async function() {
 
     this.timeout( 3000 )
     this.slow( 2500 )
@@ -217,28 +217,28 @@ describe( "rtpproxy multi node", function() {
            close channel 3 ---------------------------------->        (25)
     */
 
-    let actual = { "mix": 0, "open": 0, "unmix": 0, "close": 0, "remote": 0 }
-    let rtp1 = new mocknode()
-    let rtp2 = new mocknode()
+    const actual = { "mix": 0, "open": 0, "unmix": 0, "close": 0, "remote": 0 }
+    const rtp1 = mocknode.create()
+    const rtp2 = mocknode.create()
 
     const listenport = 23455
 
-    let rtpreceveivedmessages = []
+    const rtpreceveivedmessages = []
     let ouruuid = 0
 
     rtp1.setmessagehandler( "open", ( msg ) => {
       msg.node = "rtp1"
       rtpreceveivedmessages.push ( msg )
       rtp1.sendmessage( {
-          "action": "open",
-          "id": msg.id,
-          "uuid": ""+ouruuid++,
-          "local": {
-            "port": 10002,
-            "address": "192.168.0.141"
-            },
-          "status": rtp1.ourstats
-          } )
+        "action": "open",
+        "id": msg.id,
+        "uuid": ""+ouruuid++,
+        "local": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        },
+        "status": rtp1.ourstats
+      } )
     } )
 
     rtp1.setmessagehandler( "mix", ( msg ) => {
@@ -256,9 +256,9 @@ describe( "rtpproxy multi node", function() {
         "local": {
           "port": 10004,
           "address": "192.168.0.141"
-          },
+        },
         "status": rtp1.ourstats
-        } )
+      } )
     } )
 
     rtp1.setmessagehandler( "remote", ( msg ) => {
@@ -273,7 +273,7 @@ describe( "rtpproxy multi node", function() {
         "action": "close",
         "id": msg.id,
         "uuid": msg.uuid,
-        } )
+      } )
     } )
 
     rtp2.setmessagehandler( "open", ( msg ) => {
@@ -286,9 +286,9 @@ describe( "rtpproxy multi node", function() {
         "local": {
           "port": 10004,
           "address": "192.168.0.141"
-          },
+        },
         "status": rtp2.ourstats
-        } )
+      } )
     } )
 
     rtp2.setmessagehandler( "mix", ( msg ) => {
@@ -306,9 +306,9 @@ describe( "rtpproxy multi node", function() {
         "local": {
           "port": 10004,
           "address": "192.168.0.141"
-          },
+        },
         "status": rtp2.ourstats
-        } )
+      } )
     } )
 
     rtp2.setmessagehandler( "remote", ( msg ) => {
@@ -327,13 +327,13 @@ describe( "rtpproxy multi node", function() {
       } )
     } )
 
-    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     await rtp1.connect( listenport )
     await rtp2.connect( listenport )
     
-    let channel1 = await prtp.openchannel( { "nodeinstance": rtp1.id } )
-    let channel2 = await prtp.openchannel( { "nodeinstance": rtp2.id } )
-    let channel3 = await prtp.openchannel( { "nodeinstance": rtp1.id } )
+    const channel1 = await prtp.openchannel( { "nodeinstance": rtp1.id } )
+    const channel2 = await prtp.openchannel( { "nodeinstance": rtp2.id } )
+    const channel3 = await prtp.openchannel( { "nodeinstance": rtp1.id } )
     await channel1.mix( channel3 )
     await channel1.mix( channel2 )
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1000 ) } )
@@ -348,7 +348,7 @@ describe( "rtpproxy multi node", function() {
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } )
 
-    for ( let msg of rtpreceveivedmessages ) actual[ msg.channel ] += 1
+    for ( const msg of rtpreceveivedmessages ) actual[ msg.channel ] += 1
     expect( actual ).to.deep.equal( { "mix": 3, "open": 5, "unmix": 5, "close": 5, "remote": 2 } )
 
     /* Clean up */
@@ -359,7 +359,7 @@ describe( "rtpproxy multi node", function() {
 
   } )
 
-  it( `3 node 1 channel each, close main node`, async function() {
+  it( "3 node 1 channel each, close main node", async function() {
 
     this.timeout( 3000 )
     this.slow( 2500 )
@@ -410,29 +410,29 @@ describe( "rtpproxy multi node", function() {
            close channel 2 ---------------------------------->                      (33)
            close channel 3 ----------------------------------------------->         (34)
     */
-    let actual = { "mix": 0, "open": 0, "unmix": 0, "close": 0, "remote": 0 }
-    let rtp1 = new mocknode()
-    let rtp2 = new mocknode()
-    let rtp3 = new mocknode()
+    const actual = { "mix": 0, "open": 0, "unmix": 0, "close": 0, "remote": 0 }
+    const rtp1 = new mocknode()
+    const rtp2 = new mocknode()
+    const rtp3 = new mocknode()
 
     const listenport = 24553
 
-    let rtpreceveivedmessages = []
+    const rtpreceveivedmessages = []
     let ouruuid = 0
 
     rtp1.setmessagehandler( "open", ( msg ) => {
       msg.node = "rtp1"
       rtpreceveivedmessages.push ( msg )
       rtp1.sendmessage( {
-          "action": "open",
-          "id": msg.id,
-          "uuid": ""+ouruuid++,
-          "local": {
-            "port": 10002,
-            "address": "192.168.0.141"
-            },
-          "status": rtp1.ourstats
-          } )
+        "action": "open",
+        "id": msg.id,
+        "uuid": ""+ouruuid++,
+        "local": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        },
+        "status": rtp1.ourstats
+      } )
     } )
 
     rtp1.setmessagehandler( "mix", ( msg ) => {
@@ -450,9 +450,9 @@ describe( "rtpproxy multi node", function() {
         "local": {
           "port": 10002,
           "address": "192.168.0.141"
-          },
+        },
         "status": rtp1.ourstats
-        } )
+      } )
     } )
 
     rtp1.setmessagehandler( "remote", ( msg ) => {
@@ -467,7 +467,7 @@ describe( "rtpproxy multi node", function() {
         "action": "close",
         "id": msg.id,
         "uuid": msg.uuid,
-        } )
+      } )
     } )
 
     rtp2.setmessagehandler( "open", ( msg ) => {
@@ -480,9 +480,9 @@ describe( "rtpproxy multi node", function() {
         "local": {
           "port": 10004,
           "address": "192.168.0.141"
-          },
+        },
         "status": rtp2.ourstats
-        } )
+      } )
     } )
 
     rtp2.setmessagehandler( "mix", ( msg ) => {
@@ -500,9 +500,9 @@ describe( "rtpproxy multi node", function() {
         "local": {
           "port": 10002,
           "address": "192.168.0.141"
-          },
+        },
         "status": rtp2.ourstats
-        } )
+      } )
     } )
 
     rtp2.setmessagehandler( "remote", ( msg ) => {
@@ -525,15 +525,15 @@ describe( "rtpproxy multi node", function() {
       msg.node = "rtp3"
       rtpreceveivedmessages.push ( msg )
       rtp3.sendmessage( {
-          "action": "open",
-          "id": msg.id,
-          "uuid": ""+ouruuid++,
-          "local": {
-            "port": 10002,
-            "address": "192.168.0.141"
-            },
-          "status": rtp3.ourstats
-          } )
+        "action": "open",
+        "id": msg.id,
+        "uuid": ""+ouruuid++,
+        "local": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        },
+        "status": rtp3.ourstats
+      } )
     } )
 
     rtp3.setmessagehandler( "mix", ( msg ) => {
@@ -551,9 +551,9 @@ describe( "rtpproxy multi node", function() {
         "local": {
           "port": 10002,
           "address": "192.168.0.141"
-          },
+        },
         "status": rtp3.ourstats
-        } )
+      } )
     } )
 
     rtp3.setmessagehandler( "remote", ( msg ) => {
@@ -568,17 +568,17 @@ describe( "rtpproxy multi node", function() {
         "action": "close",
         "id": msg.id,
         "uuid": msg.uuid,
-        } )
+      } )
     } )
 
-    let p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     await rtp1.connect( listenport )
     await rtp2.connect( listenport )
     await rtp3.connect( listenport )
     
-    let channel1 = await prtp.openchannel( { "nodeinstance": rtp1.id } )
-    let channel2 = await prtp.openchannel( { "nodeinstance": rtp2.id } )
-    let channel3 = await prtp.openchannel( { "nodeinstance": rtp3.id } )
+    const channel1 = await prtp.openchannel( { "nodeinstance": rtp1.id } )
+    const channel2 = await prtp.openchannel( { "nodeinstance": rtp2.id } )
+    const channel3 = await prtp.openchannel( { "nodeinstance": rtp3.id } )
     await channel1.mix( channel3 )
     await channel1.mix( channel2 )
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1000 ) } )
@@ -593,7 +593,7 @@ describe( "rtpproxy multi node", function() {
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
 
-    for ( let msg of rtpreceveivedmessages ) actual[ msg.channel ] += 1
+    for ( const msg of rtpreceveivedmessages ) actual[ msg.channel ] += 1
     expect( actual ).to.deep.equal( { "mix": 4, "open": 7, "unmix": 7, "close": 7, "remote": 4 } )
 
 
@@ -603,5 +603,4 @@ describe( "rtpproxy multi node", function() {
     p.destroy()
       
   } )
-       
 } )

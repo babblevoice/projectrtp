@@ -11,8 +11,8 @@ module.exports = async ( mstimeout ) => {
 
   utils.log( `Create 2 channels and mix then unmix for ${mstimeout} mS` )
 
-  let acodec = utils.randcodec()
-  let bcodec = utils.randcodec()
+  const acodec = utils.randcodec()
+  const bcodec = utils.randcodec()
 
   const clienta = await projectrtp.openchannel( {}, ( d ) => {
     if( "close" === d.action ) {
@@ -22,7 +22,7 @@ module.exports = async ( mstimeout ) => {
   } )
   utils.lognewchannel()
 
-  let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clienta.local.port, "codec": acodec } }, ( d ) => {
+  const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clienta.local.port, "codec": acodec } }, ( d ) => {
     if( "close" === d.action ) {
       utils.logclosechannel( `Mix 2 for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
     }
@@ -38,7 +38,7 @@ module.exports = async ( mstimeout ) => {
   } )
   utils.lognewchannel()
 
-  let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clientb.local.port, "codec": bcodec } }, ( d ) => {
+  const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clientb.local.port, "codec": bcodec } }, ( d ) => {
     if( "close" === d.action ) {
       utils.logclosechannel( `Mix 2 for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
     }

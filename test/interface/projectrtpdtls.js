@@ -60,22 +60,20 @@ const expect = require( "chai" ).expect
 const projectrtp = require( "../../index.js" ).projectrtp
 const fs = require( "fs" )
 
-const { exec } = require( "node:child_process" )
-
 /* Tests */
 describe( "dtls", function() {
 
-  it( `Test we have a fingerprint global`, async function() {
+  it( "Test we have a fingerprint global", async function() {
     expect( projectrtp.dtls.fingerprint ).to.be.a( "string" )
     expect( projectrtp.dtls.fingerprint.length ).to.equal( 95 )
   } )
 
-  it( `Test we have a fingerprint in channel`, async function() {
+  it( "Test we have a fingerprint in channel", async function() {
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channel = await projectrtp.openchannel( {}, function( d ) {
+    const channel = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -89,14 +87,14 @@ describe( "dtls", function() {
     await finished
   } )
 
-  it( `Create 2 channels and negotiate dtls`, async function() {
+  it( "Create 2 channels and negotiate dtls", async function() {
 
     this.timeout( 6000 )
     this.slow( 2500 )
 
     projectrtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000", "/tmp/ukringing.wav" )
 
-    let targeta = {
+    const targeta = {
       "address": "localhost",
       "port": 0,
       "codec": 0,
@@ -108,7 +106,7 @@ describe( "dtls", function() {
       }
     }
 
-    let targetb = {
+    const targetb = {
       "address": "localhost",
       "port": 12008,
       "codec": 0,
@@ -121,18 +119,18 @@ describe( "dtls", function() {
     }
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channelaclose
-    let channela = await projectrtp.openchannel( {}, function( d ) {
+    let channelaclose = {}
+    const channela = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
         channelaclose = d
         channelb.close()
       }
     } )
 
-    let channelbclose
-    let channelb = await projectrtp.openchannel( {}, function( d ) {
+    let channelbclose = {}
+    const channelb = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
         channelbclose = d
         done()
@@ -149,7 +147,7 @@ describe( "dtls", function() {
     expect( channelb.remote( targetb ) ).to.be.true
 
     channela.play( { "loop": true, "files": [
-                      { "wav": "/tmp/ukringing.wav" } ] } )
+      { "wav": "/tmp/ukringing.wav" } ] } )
 
     expect( channelb.echo() ).to.be.true
 
@@ -170,7 +168,7 @@ describe( "dtls", function() {
 
   } )
 
-  it( `Create 2 channels and call remote`, async function() {
+  it( "Create 2 channels and call remote", async function() {
 
     /*
                     |     internal projectrtp      |
@@ -194,7 +192,7 @@ describe( "dtls", function() {
 
     projectrtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000", "/tmp/ukringing.wav" )
 
-    let channeltargeta = {
+    const channeltargeta = {
       "address": "localhost",
       "port": 0,
       "codec": 0,
@@ -206,7 +204,7 @@ describe( "dtls", function() {
       }
     }
 
-    let clienttargeta = {
+    const clienttargeta = {
       "address": "localhost",
       "port": 12008,
       "codec": 0,
@@ -218,31 +216,29 @@ describe( "dtls", function() {
       }
     }
 
-    let channeltargetb = {
+    const channeltargetb = {
       "address": "localhost",
       "port": 0,
       "codec": 0
     }
 
-    let clienttargetb = {
+    const clienttargetb = {
       "address": "localhost",
       "port": 12010,
       "codec": 0
     }
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channelaclose
-    let channela = await projectrtp.openchannel( {}, function( d ) {
+    const channela = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
-        channelaclose = d
         channelb.close()
       }
     } )
 
-    let clientaclose
-    let clienta = await projectrtp.openchannel( {}, function( d ) {
+    let clientaclose = {}
+    const clienta = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
         clientaclose = d
         clientb.close()
@@ -257,20 +253,16 @@ describe( "dtls", function() {
     expect( clienta.remote( clienttargeta ) ).to.be.true
 
     clienta.play( { "loop": true, "files": [
-                    { "wav": "/tmp/ukringing.wav" } ] } )
+      { "wav": "/tmp/ukringing.wav" } ] } )
 
-    let channelbclose
-    let channelb = await projectrtp.openchannel( {}, function( d ) {
+    const channelb = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
-        channelbclose = d
         clienta.close()
       }
     } )
 
-    let clientbclose
-    let clientb = await projectrtp.openchannel( {}, function( d ) {
+    const clientb = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
-        clientbclose = d
         done()
       }
     } )
@@ -303,7 +295,7 @@ describe( "dtls", function() {
 
   } )
 
-  it( `Connect then remote to another session`, async function() {
+  it( "Connect then remote to another session", async function() {
 
     /*
                     |     internal projectrtp      |
@@ -323,7 +315,7 @@ describe( "dtls", function() {
 
     projectrtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000", "/tmp/ukringing.wav" )
 
-    let channeltargeta = {
+    const channeltargeta = {
       "address": "localhost",
       "port": 0,
       "codec": 0,
@@ -335,7 +327,7 @@ describe( "dtls", function() {
       }
     }
 
-    let channeltargetc = {
+    const channeltargetc = {
       "address": "localhost",
       "port": 0,
       "codec": 0,
@@ -347,7 +339,7 @@ describe( "dtls", function() {
       }
     }
 
-    let clienttargeta = {
+    const clienttargeta = {
       "address": "localhost",
       "port": 12008,
       "codec": 0,
@@ -359,33 +351,28 @@ describe( "dtls", function() {
       }
     }
 
-    let channeltargetb = {
+    const channeltargetb = {
       "address": "localhost",
       "port": 0,
       "codec": 0
     }
 
-    let clienttargetb = {
+    const clienttargetb = {
       "address": "localhost",
       "port": 12010,
       "codec": 0
     }
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( {}, function( d ) {
+    const channela = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
         channelb.close()
       }
     } )
 
-    let clientaclose
-    let clienta = await projectrtp.openchannel( {}, function( d ) {
-      if( "close" === d.action ) {
-        clientaclose = d
-      }
-    } )
+    const clienta = await projectrtp.openchannel( {}, function() {} )
 
     channeltargeta.dtls.fingerprint.hash = clienta.local.dtls.fingerprint
     channeltargeta.port = clienta.local.port
@@ -395,23 +382,23 @@ describe( "dtls", function() {
     expect( clienta.remote( clienttargeta ) ).to.be.true
 
     clienta.play( { "loop": true, "files": [
-                    { "wav": "/tmp/ukringing.wav" } ] } )
+      { "wav": "/tmp/ukringing.wav" } ] } )
 
 
-    let channelb = await projectrtp.openchannel( {}, function( d ) {
+    const channelb = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
         clientb.close()
       }
     } )
 
-    let clientb = await projectrtp.openchannel( {}, function( d ) {
+    const clientb = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
         clientc.close()
       }
     } )
 
-    let clientcclose
-    let clientc = await projectrtp.openchannel( {}, function( d ) {
+    let clientcclose = {}
+    const clientc = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
         clientcclose = d
         done()
@@ -446,138 +433,6 @@ describe( "dtls", function() {
 
     expect( clientcclose.stats.in.count ).to.be.above( 10 )
     expect( clientcclose.stats.in.skip ).to.equal( 0 )
-
-
-  } )
-
-
-  it( `Create TLS UDP server`, async function() {
-    
-    /* only used to play with */
-    if(1)return
-    /*
-    Use openssl to test our connection.
-    openssl (client)               project (server)
-       |                              |
-       |-------client hello---------->| (use_dtls)
-       |<------server hello-----------|
-       |<------certificate------------|
-       |<------server key exchange----|
-       |<------cert request  (frag)---| (multiple)
-       |<------server hello done------|
-       |---cert client key exchange---|
-       ...
-    */
-
-    this.timeout( 25000 )
-    this.slow( 15000 )
-
-    let channeltarget = {
-      "address": "localhost",
-      "port": 10002,
-      "codec": 0,
-      "dtls": {
-        "fingerprint": {
-          "hash": ""
-        },
-        "mode": "passive" // - is this in the right place and the right way round!
-      }
-    }
-
-    let channel = await projectrtp.openchannel( {}, function( d ) {
-      if( "close" === d.action ) {
-        channelclose = d
-      }
-    } )
-
-    channeltarget.dtls.fingerprint.hash = channel.local.dtls.fingerprint
-    channel.remote( channeltarget )
-
-    await new Promise( ( r ) => { setTimeout( () => r(), 1000 ) } )
-
-    let execcompleted
-    let execwait = new Promise( ( r ) => execcompleted )
-
-    exec( `openssl s_client -connect 127.0.0.1:10000 -cert ~/.projectrtp/certs/dtls-srtp.pem -noservername -brief -dtls -mtu 1452 -bind 127.0.0.1:10002`, ( error, stdout, stderr ) => {
-      if (error) {
-        console.error(`exec error: ${error}`);
-        return;
-      }
-      console.log(`stdout: ${stdout}`);
-      console.error(`stderr: ${stderr}`);
-
-      execcompleted()
-    } )
-
-    console.log("hi")
-
-    await execwait
-
-    
-  } )
-
-  it( `Create TLS UDP client`, async function() {
-    /* only used to play with */
-    if(1)return
-    /*
-    Use openssl to test our connection.
-    project (client)                                   openssl (server)
-       |                                                  |
-       |--------------client hello----------------------->|
-       |<-------------hello verify request----------------|
-       |--------------client hello----------------------->|
-       |<--server hello, certificate, server key exchange-|
-       |<--server key exchange(reas) server hello done----|
-       |<-------------client key exchange-----------------| (one)
-       |<-------------change cypher spec------------------|
-       |<---------encryped handshake message--------------|
-       |--------new session ticket----------------------->|
-       ...
-    */
-
-    this.timeout( 25000 )
-    this.slow( 15000 )
-
-    let channeltarget = {
-      "address": "localhost",
-      "port": 10002,
-      "codec": 0,
-      "dtls": {
-        "fingerprint": {
-          "hash": ""
-        },
-        "mode": "active" // - is this in the right place and the right way round!
-      }
-    }
-
-    let channel = await projectrtp.openchannel( {}, function( d ) {
-      if( "close" === d.action ) {
-        channelclose = d
-      }
-    } )
-
-    channeltarget.dtls.fingerprint.hash = channel.local.dtls.fingerprint
-    channel.remote( channeltarget )
-
-    await new Promise( ( r ) => { setTimeout( () => r(), 1000 ) } )
-
-    let execcompleted
-    let execwait = new Promise( ( r ) => execcompleted )
-
-    exec( `openssl s_server -cert ~/.projectrtp/certs/dtls-srtp.pem -brief -dtls1_2 -use_srtp SRTP_AES128_CM_SHA1_80 -mtu 1452 -port 10002`, ( error, stdout, stderr ) => {
-      if (error) {
-        console.error(`exec error: ${error}`);
-        return;
-      }
-      console.log(`stdout: ${stdout}`);
-      console.error(`stderr: ${stderr}`);
-
-      execcompleted()
-    } )
-
-    console.log("hi")
-
-    await execwait
 
   } )
 } )

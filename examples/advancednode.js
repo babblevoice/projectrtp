@@ -1,5 +1,4 @@
 
-
 const prtp = require( "@babblevoice/projectrtp" )
 const https = require( "https" )
 
@@ -34,7 +33,7 @@ async function connect() {
 
   prtp.projectrtp.setaddress( pa )
 
-  let ournode = await prtp.projectrtp.proxy.connect( port, host )
+  const ournode = await prtp.projectrtp.proxy.connect( port, host )
   prtp.projectrtp.run()
 
   ournode.onpre( ( msg, done ) => {

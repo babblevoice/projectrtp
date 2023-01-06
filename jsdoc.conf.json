@@ -1,5 +1,5 @@
 {
-    "plugins": ["plugins/markdown"],
+    "plugins": [ "plugins/markdown" ],
     "recurseDepth": 10,
     "source": {
         "include": [ "index.js", "test", "test/interface", "lib" ],

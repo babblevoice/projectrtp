@@ -2,40 +2,47 @@
 const expect = require( "chai" ).expect
 const projectrtp = require( "../../index.js" ).projectrtp
 const dgram = require( "dgram" )
-const { channel } = require("diagnostics_channel")
 
-/* helper functions */
+/**
+ * @ignore
+ * @param { number } sn 
+ * @param { number } sendtime 
+ * @param { number } dstport 
+ * @param { object } server 
+ * @param { number } ssrc 
+ * @param { number } pklength 
+ */
 function sendpk( sn, sendtime, dstport, server, ssrc = 25, pklength = 172 ) {
 
   setTimeout( () => {
-    let payload = Buffer.alloc( pklength - 12 ).fill( sn & 0xff )
-    let ts = sn * 160
-    let tsparts = []
+    const payload = Buffer.alloc( pklength - 12 ).fill( sn & 0xff )
+    const ts = sn * 160
+    const tsparts = []
     /* portability? */
     tsparts[ 3 ] = ( ts & 0xff000000 ) >> 24
     tsparts[ 2 ] = ( ts & 0xff0000 ) >> 16
     tsparts[ 1 ] = ( ts & 0xff00 ) >> 8
     tsparts[ 0 ] = ( ts & 0xff )
 
-    let snparts = []
+    const snparts = []
     sn = ( sn + 100 ) % ( 2**16 ) /* just some offset */
     snparts[ 0 ] = sn & 0xff
     snparts[ 1 ] = sn >> 8
 
-    let ssrcparts = []
+    const ssrcparts = []
     ssrcparts[ 3 ] = ( ssrc & 0xff000000 ) >> 24
     ssrcparts[ 2 ] = ( ssrc & 0xff0000 ) >> 16
     ssrcparts[ 1 ] = ( ssrc & 0xff00 ) >> 8
     ssrcparts[ 0 ] = ( ssrc & 0xff )
 
 
-    let rtppacket = Buffer.concat( [
+    const rtppacket = Buffer.concat( [
       Buffer.from( [
         0x80, 0x00,
         snparts[ 1 ], snparts[ 0 ],
         tsparts[ 3 ], tsparts[ 2 ], tsparts[ 1 ], tsparts[ 0 ],
         ssrcparts[ 3 ], ssrcparts[ 2 ], ssrcparts[ 1 ], ssrcparts[ 0 ]
-       ] ),
+      ] ),
       payload ] )
 
     server.send( rtppacket, dstport, "localhost" )
@@ -45,15 +52,15 @@ function sendpk( sn, sendtime, dstport, server, ssrc = 25, pklength = 172 ) {
 /* Tests */
 describe( "rtpchannel", function() {
 
-  it( `call create channel and check the structure of the returned object`, async function() {
+  it( "call create channel and check the structure of the returned object", async function() {
 
     this.timeout( 2000 )
     this.slow( 1500 )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": 20000, "codec": 0 } }, function( d ) {
+    const channel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": 20000, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -79,12 +86,12 @@ describe( "rtpchannel", function() {
     await finished
   } )
 
-  it( `call create channel echo`, function( done ) {
+  it( "call create channel echo", function( done ) {
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    server.on( "message", function( msg, rinfo ) {
+    let receviedpkcount = 0
+    server.on( "message", function() {
       receviedpkcount++
     } )
 
@@ -94,9 +101,9 @@ describe( "rtpchannel", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
+      const ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
           expect( d.reason ).to.equal( "requested" )
@@ -119,7 +126,7 @@ describe( "rtpchannel", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      for( let i = 0;  i < 50; i ++ ) {
+      for( let i = 0;  50 > i; i ++ ) {
         sendpk( i, i, channel.local.port, server )
       }
 
@@ -127,11 +134,11 @@ describe( "rtpchannel", function() {
     } )
   } )
 
-  it( `create channel echo and skip some packets`, function( done ) {
+  it( "create channel echo and skip some packets", function( done ) {
 
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    server.on( "message", function( msg, rinfo ) {
+    let receviedpkcount = 0
+    server.on( "message", function() {
       receviedpkcount++
     } )
 
@@ -141,9 +148,9 @@ describe( "rtpchannel", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
+      const ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
           expect( receviedpkcount ).to.equal( 50 - 6 )
@@ -157,7 +164,7 @@ describe( "rtpchannel", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      for( let i = 0;  i < 50; i ++ ) {
+      for( let i = 0;  50 > i; i ++ ) {
         if( i in { 3:0, 13:0, 23:0, 24:0, 30:0, 49:0 } ) continue
         sendpk( i, i, channel.local.port, server )
       }
@@ -166,15 +173,15 @@ describe( "rtpchannel", function() {
     } )
   } )
 
-  it( `create channel echo and send out of order packets`, function( done ) {
+  it( "create channel echo and send out of order packets", function( done ) {
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
+    let receviedpkcount = 0
 
-    var lastsn = -1
-    var lastts = -1
-    var totalsndiff = 0
-    var totaltsdiff = 0
-    server.on( "message", function( msg, rinfo ) {
+    let lastsn = -1
+    let lastts = -1
+    let totalsndiff = 0
+    let totaltsdiff = 0
+    server.on( "message", function( msg ) {
       let sn = 0
       sn = msg[ 2 ] << 8
       sn = sn | msg[ 3 ]
@@ -202,9 +209,9 @@ describe( "rtpchannel", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
+      const ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -222,24 +229,24 @@ describe( "rtpchannel", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      let sns = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+      const sns = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
         11, 13, 14, 12, 15, 16, 17, 18, 19, 20,
         21, 22, 23, 25, 24, 26, 27, 28, 29, 30,
         31, 37, 33, 34, 36, 35, 32, 38, 39, 40,
         41, 42, 43, 44, 45, 46, 47, 48, 49 ]
 
       sns.forEach( function( e, i ) {
-          sendpk( e, i, channel.local.port, server )
+        sendpk( e, i, channel.local.port, server )
       } )
 
       setTimeout( () => channel.close(), 2000 )
     } )
   } )
 
-  it( `create channel echo and send packets outside of window`, function( done ) {
+  it( "create channel echo and send packets outside of window", function( done ) {
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    server.on( "message", function( msg, rinfo ) {
+    let receviedpkcount = 0
+    server.on( "message", function() {
       receviedpkcount++
     } )
 
@@ -249,9 +256,9 @@ describe( "rtpchannel", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
+      const ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -268,32 +275,32 @@ describe( "rtpchannel", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      let sns = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+      const sns = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
         11, 13, 14, 12, 15, 16, 17, 18, 19, 20,
         21, 22, 23, 25, 24, 26, 27, 28, 29, 100,
         31, 37, 33, 34, 36, 35, 32, 38, 39, 400,
         41, 42, 43, 44, 45, 46, 47, 48, 2 ]
 
       sns.forEach( function( e, i ) {
-          sendpk( e, i, channel.local.port, server )
+        sendpk( e, i, channel.local.port, server )
       } )
 
       setTimeout( () => channel.close(), 2000 )
     } )
   } )
 
-  it( `create channel echo and simulate a stalled connection`, async function() {
+  it( "create channel echo and simulate a stalled connection", async function() {
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
+    let receviedpkcount = 0
 
     let channel
 
-    var firstsn = 0
-    var lastsn = -1
-    var lastts = -1
-    var totalsndiff = 0
-    var totaltsdiff = 0
-    server.on( "message", function( msg, rinfo ) {
+    let firstsn = 0
+    let lastsn = -1
+    let lastts = -1
+    let totalsndiff = 0
+    let totaltsdiff = 0
+    server.on( "message", function( msg ) {
       let sn = 0
       sn = msg[ 2 ] << 8
       sn = sn | msg[ 3 ]
@@ -325,11 +332,11 @@ describe( "rtpchannel", function() {
     server.bind()
 
     let done
-    let finished = new Promise( ( r ) => done = r )
-    let closedstats
+    const finished = new Promise( ( r ) => done = r )
+    let closedstats = {}
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
+      const ourport = server.address().port
 
       channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
@@ -343,17 +350,18 @@ describe( "rtpchannel", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      for( var i = 0; i < 50; i++ ) {
+      let i
+      for( i = 0; 50 > i; i++ ) {
         sendpk( i, i, channel.local.port, server )
       }
 
       /* pause then catchup */
-      for( ; i < 150; i++ ) {
+      for( ; 150 > i; i++ ) {
         sendpk( i, 150, channel.local.port, server )
       }
 
       /* resume */
-      for( ; i < 300; i++ ) {
+      for( ; 300 > i; i++ ) {
         sendpk( i, i, channel.local.port, server )
       }
     } )
@@ -374,11 +382,11 @@ describe( "rtpchannel", function() {
     expect( lastsn - firstsn ).to.be.within( 180, 192 )
   } )
 
-  it( `create channel echo whilst wrapping the sn `, function( done ) {
+  it( "create channel echo whilst wrapping the sn", function( done ) {
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    server.on( "message", function( msg, rinfo ) {
+    let receviedpkcount = 0
+    server.on( "message", function() {
       receviedpkcount++
     } )
 
@@ -388,9 +396,9 @@ describe( "rtpchannel", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
+      const ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -406,8 +414,8 @@ describe( "rtpchannel", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      for( let i = 0 ;  i < 50; i ++ ) {
-        let sn = i + ( 2**16 ) - 25
+      for( let i = 0 ;  50 > i; i ++ ) {
+        const sn = i + ( 2**16 ) - 25
         sendpk( sn, i, channel.local.port, server )
       }
 
@@ -416,12 +424,12 @@ describe( "rtpchannel", function() {
   } )
 
 
-  it( `create channel echo and incorrectly change the ssrc`, function( done ) {
+  it( "create channel echo and incorrectly change the ssrc", function( done ) {
     /* This needs further work so make work for now. Remove tests which check for ignored packets. */
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    server.on( "message", function( msg, rinfo ) {
+    let receviedpkcount = 0
+    server.on( "message", function() {
       receviedpkcount++
     } )
 
@@ -431,9 +439,9 @@ describe( "rtpchannel", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
+      const ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
 
@@ -448,11 +456,12 @@ describe( "rtpchannel", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      for( var i = 0 ;  i < 50; i ++ ) {
+      let i
+      for( i = 0 ;  50 > i; i ++ ) {
         sendpk( i, i, channel.local.port, server, 25 )
       }
 
-      for( ;  i < 100; i ++ ) {
+      for( ;  100 > i; i ++ ) {
         sendpk( i, i, channel.local.port, server, 77 )
       }
 
@@ -460,14 +469,11 @@ describe( "rtpchannel", function() {
     } )
   } )
 
-  it( `send oversized rtp packet`, function( done ) {
+  it( "send oversized rtp packet", function( done ) {
     /* This test has been adjusted as we now handle large packets - but we should crash! */
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    var receviedpkcount = 0
-    server.on( "message", function( msg, rinfo ) {
-      receviedpkcount++
-    } )
+    server.on( "message", function() {} )
 
     this.timeout( 3000 )
     this.slow( 2500 )
@@ -475,9 +481,9 @@ describe( "rtpchannel", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      let ourport = server.address().port
+      const ourport = server.address().port
 
-      let channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
           expect( d.stats.in.count ).to.equal( 50 )
@@ -491,7 +497,7 @@ describe( "rtpchannel", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      for( var i = 0 ;  i < 50; i ++ ) {
+      for( let i = 0 ;  50 > i; i ++ ) {
         if( 40 == i ) {
           /* an oversized packet */
           sendpk( i, i, channel.local.port, server, 25, 1200 )
@@ -504,7 +510,7 @@ describe( "rtpchannel", function() {
     } )
   } )
 
-  it( `create channel echo and close on timeout`, function( done ) {
+  it( "create channel echo and close on timeout", function( done ) {
 
     this.timeout( 21000 )
     this.slow( 20000 )
@@ -522,15 +528,15 @@ describe( "rtpchannel", function() {
     } )
   } )
 
-  it( `create channel and check event emitter`, async () => {
+  it( "create channel and check event emitter", async () => {
 
     this.timeout( 2000 )
     this.slow( 2000 )
 
     let done
-    let waituntildone = new Promise( ( r ) => done = r )
+    const waituntildone = new Promise( ( r ) => done = r )
 
-    let chan = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": 20765, "codec": 0 } } )
+    const chan = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": 20765, "codec": 0 } } )
     chan.em.on( "all", ( d ) => {
       if( "close" === d.action ) {
 

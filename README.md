@@ -60,15 +60,13 @@ All tests are run from node. From the root directory run `npm test`. These test 
 
 The folder is separated out into interface, unit and mock. The mock folder contains mock objects/functions required for testing. Unit tests are to help test internal functions. Interface tests are used to guarantee a stable interface for a specific version number. If these tests require changing (other than bug fixing i.e. a material API change) then a major version update will happen.
 
-### node stress/index.js
+### `npm run stress`
 
 These are designed to create real world scenarios - opening and closing multiple channels and random times and at load. This is designed to test for unexpected behaviour. These test do not provide a pass/fail - but might crash or produce unexpected output on bad behaviour. These have concurrency/race condition tests in mind.
 
-### C++
+### `npm run check`
 
-Some tests are provided in C++. They are built with the compiler flags `-fsanitize=address -fsanitize=leak` to catch buffer overruns and leaks.
-
-To build the test executable run `make` from the src directory.
+Use tsc for type checking and eslint.
 
 ## Dependencies
 

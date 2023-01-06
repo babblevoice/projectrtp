@@ -7,10 +7,10 @@ const fs = require( "fs" )
 
 
 // Get startport and endport from command line arguments
-var ports = process.argv.slice(2)
-var start = 10000
-var end = 20000
-if ( ports.length === 2 )
+const ports = process.argv.slice(2)
+let start = 10000
+let end = 20000
+if ( 2 === ports.length )
 {
   start = parseInt(ports[0])
   end = parseInt(ports[1])
@@ -43,7 +43,7 @@ function createuktones( dir = "/tmp/" ) {
     440/0:400/350/225/525 Congestion (13.75S-15.25S)
     440/0:125/125 Pay (15.25S-15.5S)
   */
-  let filename = dir + "uksounds.wav"
+  const filename = dir + "uksounds.wav"
 
   if( !fs.existsSync( filename ) ) {
     prtp.projectrtp.tone.generate( "350+440*0.5:1000", filename )

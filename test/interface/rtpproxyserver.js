@@ -2,9 +2,7 @@
 const expect = require( "chai" ).expect
 const prtp = require( "../../index.js" ).projectrtp
 const mocknode = require( "../mock/mocknode.js" )
-const mockserver = require( "../mock/mockproxyserver.js" )
-const node = require( "../../lib/node.js" )
-const message = require( "../../lib/message.js" )
+const node = require( "../../lib/node.js" ).interface
 
 /*
 The tests in this file are to ensure what we send out over
@@ -19,9 +17,9 @@ describe( "rtpproxy server", function() {
     return listenport++
   }
 
-  it( `start and stop and start listener`, async function() {
+  it( "start and stop and start listener", async function() {
 
-    let ourport = getnextport()
+    const ourport = getnextport()
 
     let p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
     let n = new mocknode()
@@ -38,32 +36,32 @@ describe( "rtpproxy server", function() {
     await p.destroy()
   } )
 
-  it( `check open json`, async function() {
+  it( "check open json", async function() {
     /* set up our mock node object */
-    let n = new mocknode()
+    const n = new mocknode()
     n.setmessagehandler( "open", ( onmsg ) => {
       n.sendmessage( {
-          "action": "open",
-          "id": onmsg.id,
-          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
-          "local": {
-            "port": 10002,
-            "address": "192.168.0.141"
-            }
-          } )
+        "action": "open",
+        "id": onmsg.id,
+        "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+        "local": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        }
+      } )
     } )
 
     let closereceived = false
-    n.setmessagehandler( "close", ( onmsg ) => {
+    n.setmessagehandler( "close", () => {
       closereceived = true
       n.destroy()
       p.destroy()
     } )
 
-    let ourport = getnextport()
-    let p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    const ourport = getnextport()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
     await n.connect( ourport )
-    let channel = await prtp.openchannel()
+    const channel = await prtp.openchannel()
 
     expect( channel ).to.be.an( "object" )
     expect( channel.close ).to.be.an( "function" )
@@ -89,39 +87,39 @@ describe( "rtpproxy server", function() {
     expect( closereceived ).to.be.true
   } )
 
-  it( `check echo`, async function() {
+  it( "check echo", async function() {
 
     /* set up our mock node object */
-    let n = new mocknode()
+    const n = new mocknode()
     n.setmessagehandler( "open", ( onmsg ) => {
       n.sendmessage( {
-          "action": "open",
-          "id": onmsg.id,
-          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
-          "channel": {
-            "port": 10002,
-            "address": "192.168.0.141"
-            }
-          } )
+        "action": "open",
+        "id": onmsg.id,
+        "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+        "channel": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        }
+      } )
     } )
 
     let receivedecho = false
-    n.setmessagehandler( "echo", ( onmsg ) => {
+    n.setmessagehandler( "echo", () => {
       receivedecho = true
     } )
 
     let closeresolve
-    let closereceived = new Promise( resolve => closeresolve = resolve )
-    n.setmessagehandler( "close", ( onmsg ) => {
+    const closereceived = new Promise( resolve => closeresolve = resolve )
+    n.setmessagehandler( "close", () => {
       n.destroy()
       p.destroy()
       closeresolve()
     } )
 
-    let ourport = getnextport()
-    let p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    const ourport = getnextport()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
     await n.connect( ourport )
-    let channel = await prtp.openchannel()
+    const channel = await prtp.openchannel()
     channel.echo()
     channel.close()
 
@@ -131,20 +129,20 @@ describe( "rtpproxy server", function() {
     expect( receivedecho ).to.be.true
   } )
 
-  it( `check dtmf`, async function() {
+  it( "check dtmf", async function() {
 
     /* set up our mock node object */
-    let n = new mocknode()
+    const n = new mocknode()
     n.setmessagehandler( "open", ( onmsg ) => {
       n.sendmessage( {
-          "action": "open",
-          "id": onmsg.id,
-          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
-          "channel": {
-            "port": 10002,
-            "address": "192.168.0.141"
-            }
-          } )
+        "action": "open",
+        "id": onmsg.id,
+        "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+        "channel": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        }
+      } )
     } )
 
     let reveiveddtmf = false
@@ -157,17 +155,17 @@ describe( "rtpproxy server", function() {
     } )
 
     let closeresolve
-    let closereceived = new Promise( resolve => closeresolve = resolve )
-    n.setmessagehandler( "close", ( onmsg ) => {
+    const closereceived = new Promise( resolve => closeresolve = resolve )
+    n.setmessagehandler( "close", () => {
       n.destroy()
       p.destroy()
       closeresolve()
     } )
 
-    let ourport = getnextport()
-    let p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    const ourport = getnextport()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
     await n.connect( ourport )
-    let channel = await prtp.openchannel()
+    const channel = await prtp.openchannel()
     channel.dtmf( "#123" )
     channel.close()
 
@@ -176,42 +174,42 @@ describe( "rtpproxy server", function() {
     expect( reveiveddtmf ).to.be.true
   } )
 
-  it( `check mix/unmix`, async function() {
+  it( "check mix/unmix", async function() {
 
     /* set up our mock node object */
-    let n = new mocknode()
+    const n = new mocknode()
     let uuidcount = 1
     n.setmessagehandler( "open", ( msg ) => {
       n.sendmessage( {
-          "action": "open",
-          "id": msg.id,
-          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec15" + uuidcount++,
-          "channel": {
-            "port": 10002,
-            "address": "192.168.0.141"
-            }
-          } )
+        "action": "open",
+        "id": msg.id,
+        "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec15" + uuidcount++,
+        "channel": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        }
+      } )
     } )
 
-    let mxmsg
+    let mxmsg = {}
     n.setmessagehandler( "mix", ( msg ) => mxmsg = msg )
 
-    let unmxmsg
+    let unmxmsg = {}
     n.setmessagehandler( "unmix", ( msg ) => unmxmsg = msg )
 
     let closeresolve
-    let closereceived = new Promise( resolve => closeresolve = resolve )
-    n.setmessagehandler( "close", ( msg ) => {
+    const closereceived = new Promise( resolve => closeresolve = resolve )
+    n.setmessagehandler( "close", () => {
       n.destroy()
       p.destroy()
       closeresolve()
     } )
 
-    let ourport = getnextport()
-    let p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    const ourport = getnextport()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
     await n.connect( ourport )
-    let channela = await prtp.openchannel()
-    let channelb = await prtp.openchannel()
+    const channela = await prtp.openchannel()
+    const channelb = await prtp.openchannel()
     channela.mix( channelb )
     channela.unmix()
 
@@ -233,51 +231,50 @@ describe( "rtpproxy server", function() {
 
   } )
 
-  it( `check node selection`, async function() {
+  it( "check node selection", async function() {
 
-    let n = new mocknode()
-    let n2 = new mocknode()
+    const n = new mocknode()
+    const n2 = new mocknode()
     let openedcount = 0
 
     n.setmessagehandler( "open", ( msg ) => {
       n.sendmessage( {
-          "action": "open",
-          "id": msg.id,
-          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec15" +  openedcount++,
-          "local": {
-            "port": 10002,
-            "address": "192.168.0.141"
-            },
-          "status": n.ourstats
-          } )
+        "action": "open",
+        "id": msg.id,
+        "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec15" +  openedcount++,
+        "local": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        },
+        "status": n.ourstats
+      } )
     } )
     
     n.setmessagehandler( "close", () => {} )
 
     n2.setmessagehandler( "open", ( msg ) => {
       n2.sendmessage( {
-          "action": "open",
-          "id": msg.id,
-          "uuid": "9dfc35d9-eafe-4d8b-8880-c48f528ec15" + openedcount++,
-          "local": {
-            "port": 10004,
-            "address": "192.168.0.141"
-            },
-          "status": n2.ourstats
-          } )
+        "action": "open",
+        "id": msg.id,
+        "uuid": "9dfc35d9-eafe-4d8b-8880-c48f528ec15" + openedcount++,
+        "local": {
+          "port": 10004,
+          "address": "192.168.0.141"
+        },
+        "status": n2.ourstats
+      } )
 
     } )
 
     n2.setmessagehandler( "close", () => {} )
 
-    let ourport = getnextport()
-    let p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    const ourport = getnextport()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
     await n.connect( ourport )
     await n2.connect( ourport )
     
-    n.ourstats.channel.current = 1
-    let channel1 = await prtp.openchannel()
-    let channel2 = await prtp.openchannel()
+    const channel1 = await prtp.openchannel()
+    const channel2 = await prtp.openchannel()
 
     channel1.close()
     channel2.close()
@@ -291,20 +288,20 @@ describe( "rtpproxy server", function() {
     expect( openedcount ).to.equal( 2 )
   } )
 
-  it( `check remote`, async function() {
+  it( "check remote", async function() {
 
     /* set up our mock node object */
-    let n = new mocknode()
+    const n = new mocknode()
     n.setmessagehandler( "open", ( msg ) => {
       n.sendmessage( {
-          "action": "open",
-          "id": msg.id,
-          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
-          "channel": {
-            "port": 10002,
-            "address": "192.168.0.141"
-            }
-          } )
+        "action": "open",
+        "id": msg.id,
+        "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+        "channel": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        }
+      } )
     } )
 
     let remotereceived = false
@@ -318,17 +315,17 @@ describe( "rtpproxy server", function() {
     } )
 
     let closeresolve
-    let closereceived = new Promise( resolve => closeresolve = resolve )
-    n.setmessagehandler( "close", ( msg ) => {
+    const closereceived = new Promise( resolve => closeresolve = resolve )
+    n.setmessagehandler( "close", () => {
       n.destroy()
       p.destroy()
       closeresolve()
     } )
 
-    let ourport = getnextport()
-    let p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    const ourport = getnextport()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
     await n.connect( ourport )
-    let channel = await prtp.openchannel()
+    const channel = await prtp.openchannel()
     channel.remote( "wouldbearemoteobject" )
 
     channel.close()
@@ -338,23 +335,23 @@ describe( "rtpproxy server", function() {
   } )
 
 
-  it( `check play/record`, async function() {
+  it( "check play/record", async function() {
 
     let done
     const completed = new Promise( ( r ) => { done = r } )
 
     /* set up our mock node object */
-    let n = new mocknode()
+    const n = new mocknode()
     n.setmessagehandler( "open", ( msg ) => {
       n.sendmessage( {
-          "action": "open",
-          "id": msg.id,
-          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
-          "channel": {
-            "port": 10002,
-            "address": "192.168.0.141"
-            }
-          } )
+        "action": "open",
+        "id": msg.id,
+        "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+        "channel": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        }
+      } )
     } )
 
     let playmsg
@@ -365,7 +362,7 @@ describe( "rtpproxy server", function() {
         "action": "play",
         "id": msg.id,
         "uuid": msg.uuid
-        } )
+      } )
 
       setTimeout( () => channel.record( "wouldbearecordobject" ), 10 )
     } )
@@ -380,10 +377,10 @@ describe( "rtpproxy server", function() {
       done()
     } )
 
-    let ourport = getnextport()
-    let p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    const ourport = getnextport()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
     await n.connect( ourport )
-    let channel = await prtp.openchannel()
+    const channel = await prtp.openchannel()
     channel.play( "wouldbeaplayobject" )
 
     await completed
@@ -407,26 +404,30 @@ describe( "rtpproxy server", function() {
 
   } )
 
-  it( `check direction( { send, recv } )`, async function() {
+  it( "check direction( { send, recv } )", async function() {
 
     let done
     const completed = new Promise( ( r ) => { done = r } )
 
     /* set up our mock node object */
-    let n = new mocknode()
+    const n = new mocknode()
     n.setmessagehandler( "open", ( msg ) => {
       n.sendmessage( {
-          "action": "open",
-          "id": msg.id,
-          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
-          "channel": {
-            "port": 10002,
-            "address": "192.168.0.141"
-            }
-          } )
+        "action": "open",
+        "id": msg.id,
+        "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+        "channel": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        }
+      } )
     } )
 
-    let directionmsg
+    let directionmsg = {
+      send: true,
+      recv: true
+    }
+
     n.setmessagehandler( "direction", ( msg ) => {
       directionmsg = msg.options
 
@@ -434,18 +435,18 @@ describe( "rtpproxy server", function() {
         "action": "direction",
         "id": msg.id,
         "uuid": msg.uuid
-        } )
+      } )
 
-        setTimeout( () => channel.close(), 10 )
+      setTimeout( () => channel.close(), 10 )
     } )
     n.setmessagehandler( "close", () => {
       done()
     } )
 
-    let ourport = getnextport()
-    let p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    const ourport = getnextport()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
     await n.connect( ourport )
-    let channel = await prtp.openchannel()
+    const channel = await prtp.openchannel()
     channel.direction( { send: false, recv: false } )
 
     await completed
@@ -457,28 +458,28 @@ describe( "rtpproxy server", function() {
     expect( directionmsg.recv ).to.be.false
   } )
 
-  it( `Mocknode as listener server to test`, async () => {
+  it( "Mocknode as listener server to test", async () => {
 
     let openreceived = false
 
-    let ourport = getnextport()
+    const ourport = getnextport()
     prtp.proxy.clearnodes()
     prtp.proxy.addnode( { host: "127.0.0.1", port: ourport } )
-    let n = new mocknode()
+    const n = new mocknode()
 
     await n.listen( ourport )
 
     n.setmessagehandler( "open", ( msg ) => {
       openreceived = true
       n.sendmessage( {
-          "action": "open",
-          "id": msg.id,
-          "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
-          "channel": {
-            "port": 10000,
-            "address": "192.168.0.141"
-            }
-          } )
+        "action": "open",
+        "id": msg.id,
+        "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
+        "channel": {
+          "port": 10000,
+          "address": "192.168.0.141"
+        }
+      } )
     } )
 
     let closeresolv
@@ -493,7 +494,7 @@ describe( "rtpproxy server", function() {
       closeresolv()
     } )
     
-    let chnl = await prtp.openchannel()
+    const chnl = await prtp.openchannel()
     expect( chnl ).to.have.property( "id" ).that.is.a( "string" )
     expect( chnl ).to.have.property( "uuid" ).that.is.a( "string" )
     expect( chnl ).to.have.property( "channel" ).that.is.a( "object" )
@@ -509,20 +510,20 @@ describe( "rtpproxy server", function() {
 
   } )
 
-  it( `Two mock nodes listening, 2 openchannels on the same node close each in turn to ensure connection is maintained`, async () => {
+  it( "Two mock nodes listening, 2 openchannels on the same node close each in turn to ensure connection is maintained", async () => {
     
     let openreceived = false
 
     let ouruuid = 1
-    let n1port = getnextport()
-    let n2port = getnextport()
+    const n1port = getnextport()
+    const n2port = getnextport()
 
     prtp.proxy.clearnodes()
     prtp.proxy.addnode( { host: "127.0.0.1", port: n1port } )
     prtp.proxy.addnode( { host: "127.0.0.1", port: n2port } )
 
-    let n = new mocknode()
-    let n2 = new mocknode()
+    const n = new mocknode()
+    const n2 = new mocknode()
 
     await n.listen( n1port )
     await n2.listen( n2port )
@@ -530,27 +531,27 @@ describe( "rtpproxy server", function() {
     n.setmessagehandler( "open", ( msg ) => {
       openreceived = true
       n.sendmessage( {
-          "action": "open",
-          "id": msg.id,
-          "uuid": ""+ouruuid++,
-          "channel": {
-            "port": 10000,
-            "address": "127.0.0.1"
-            }
-          } )
+        "action": "open",
+        "id": msg.id,
+        "uuid": ""+ouruuid++,
+        "channel": {
+          "port": 10000,
+          "address": "127.0.0.1"
+        }
+      } )
     } )
 
     n2.setmessagehandler( "open", ( msg ) => {
       openreceived = true
       n2.sendmessage( {
-          "action": "open",
-          "id": msg.id,
-          "uuid": ""+ouruuid++,
-          "channel": {
-            "port": 10002,
-            "address": "127.0.0.1"
-            }
-          } )
+        "action": "open",
+        "id": msg.id,
+        "uuid": ""+ouruuid++,
+        "channel": {
+          "port": 10002,
+          "address": "127.0.0.1"
+        }
+      } )
     } )
 
     let closeresolv
@@ -573,11 +574,10 @@ describe( "rtpproxy server", function() {
       closeresolv()
     } )
 
-    let chnl = await prtp.openchannel()
-    let chnl2 = await chnl.openchannel()
+    const chnl = await prtp.openchannel()
+    const chnl2 = await chnl.openchannel()
 
-    expect( chnl.connectednode.host ).to.be.equal( chnl2.connectednode.host )
-    expect( chnl.connectednode.port ).to.be.equal( chnl2.connectednode.port )
+    expect( chnl.connection ).to.be.equal( chnl2.connection )
 
     chnl.close()
     chnl2.close()
@@ -589,50 +589,18 @@ describe( "rtpproxy server", function() {
     expect( openreceived ).to.be.true
   } )
 
-  it( `Node as listener server to test`, async () => {
+  it( "Node as listener server to test", async () => {
 
-    let ourport = getnextport()
+    const ourport = getnextport()
     prtp.proxy.clearnodes()
     prtp.proxy.addnode( { host: "127.0.0.1", port: ourport } )
-    let n = await node.listen( prtp, "127.0.0.1", ourport )
-    let chnl = await prtp.openchannel()
+
+    const ournode = node.create( prtp )
+
+    const n = await ournode.listen( "127.0.0.1", ourport )
+    const chnl = await prtp.openchannel()
     await chnl.close()
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
     n.destroy()
-  } )
-
-  it( `Node as listener mockserver to test`, async () => {
-    return
-    /*
-      Test node as listener running a mock server to connect to the node.
-      1. Open channel on node
-      2. Close channel on node
-    */
-    let openreceived = false
-    let closereceived = false
-    let p = new mockserver()
-    let ourport = getnextport()
-    let n = await node.listen( prtp, "127.0.0.1", ourport )
-    p.setmessagehandler( "open", ( msg ) => {
-      openreceived = true
-
-      p.connection.write(
-        message.createmessage( {
-          "id": "54",
-          "channel": "close",
-          "uuid": msg.uuid
-        } ) )
-    } )
-
-    p.setmessagehandler( "close", ( msg ) => {
-      closereceived = true
-    } )
-    await p.openchannel( ourport, "127.0.0.1" )
-    
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
-    p.connection.destroy()
-    n.destroy()
-    expect( openreceived ).to.be.true
-    expect( closereceived ).to.be.true
   } )
 } )

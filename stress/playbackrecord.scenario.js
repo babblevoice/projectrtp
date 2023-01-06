@@ -14,7 +14,7 @@ module.exports = async ( mstimeout ) => {
   const acodec = utils.randcodec()
 
   utils.log( `Starting playback with record for ${mstimeout} mS` )
-  let recording = utils.mktempwav()
+  const recording = utils.mktempwav()
 
   const clienta = await projectrtp.openchannel( {}, ( d ) => {
     if( "close" === d.action ) {

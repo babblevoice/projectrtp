@@ -2,15 +2,13 @@
 
 
 const expect = require( "chai" ).expect
-const fs = require( "fs" )
-const fspromises = fs.promises
 const dgram = require( "dgram" )
 const projectrtp = require( "../../index.js" ).projectrtp
 
 function sendpk( sn, sendtime, dstport, server, data = undefined ) {
 
-  let ssrc = 25
-  let pklength = 172
+  const ssrc = 25
+  const pklength = 172
 
   return setTimeout( () => {
 
@@ -21,15 +19,15 @@ function sendpk( sn, sendtime, dstport, server, data = undefined ) {
       payload = Buffer.alloc( pklength - 12 ).fill( projectrtp.codecx.linear162pcmu( sn ) & 0xff )
     }
 
-    let subheader = Buffer.alloc( 10 )
+    const subheader = Buffer.alloc( 10 )
 
-    let ts = sn * 160
+    const ts = sn * 160
 
     subheader.writeUInt16BE( ( sn + 100 ) % ( 2**16 ) /* just some offset */ )
     subheader.writeUInt32BE( ts, 2 )
     subheader.writeUInt32BE( ssrc, 6 )
 
-    let rtppacket = Buffer.concat( [
+    const rtppacket = Buffer.concat( [
       Buffer.from( [ 0x80, 0x00 ] ),
       subheader,
       payload ] )
@@ -41,7 +39,7 @@ function sendpk( sn, sendtime, dstport, server, data = undefined ) {
 
 describe( "channel mix", function() {
 
-  it( `basic mix 2 channels`, async function() {
+  it( "basic mix 2 channels", async function() {
 
     this.timeout( 3000 )
     this.slow( 2000 )
@@ -52,13 +50,13 @@ describe( "channel mix", function() {
     let endpointapkcount = 0
     let endpointbpkcount = 0
 
-    endpointa.on( "message", function( msg, rinfo ) {
+    endpointa.on( "message", function( msg ) {
       endpointapkcount++
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
     } )
 
-    endpointb.on( "message", function( msg, rinfo ) {
+    endpointb.on( "message", function( msg ) {
       endpointbpkcount++
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
@@ -72,13 +70,13 @@ describe( "channel mix", function() {
     await new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -86,11 +84,11 @@ describe( "channel mix", function() {
     expect( channela.mix( channelb ) ).to.be.true
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
-    for( let i = 0;  i < 50; i ++ ) {
+    for( let i = 0;  50 > i; i ++ ) {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1300 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
 
     channela.close()
     endpointa.close()
@@ -104,7 +102,7 @@ describe( "channel mix", function() {
   } )
 
 
-  it( `mix 2 channels then unmix`, async function() {
+  it( "mix 2 channels then unmix", async function() {
 
     this.timeout( 3000 )
     this.slow( 2000 )
@@ -115,13 +113,13 @@ describe( "channel mix", function() {
     let endpointapkcount = 0
     let endpointbpkcount = 0
 
-    endpointa.on( "message", function( msg, rinfo ) {
+    endpointa.on( "message", function( msg ) {
       endpointapkcount++
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
     } )
 
-    endpointb.on( "message", function( msg, rinfo ) {
+    endpointb.on( "message", function( msg ) {
       endpointbpkcount++
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
@@ -134,30 +132,28 @@ describe( "channel mix", function() {
     endpointb.bind()
     await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
-    let channela, channelb, promiseb
-    let promisea = new Promise( async ( resolve ) => { 
-      channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
-        if( "close" === d.action ) {
-          resolve()
-        }
-      } )
-
-      promiseb = new Promise( async ( resolve ) => {
-        channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
-          if( "close" === d.action ) {
-            resolve()
-          }
-        } )
-
-        /* mix */
-        expect( channela.mix( channelb ) ).to.be.true
-        /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
-        for( let i = 0;  i < 50; i ++ ) {
-          sendpk( i, i, channela.local.port, endpointa )
-        }
-
-      } )
+    let promisearesolve, promisebresolve
+    const promisea = new Promise( r => promisearesolve = r )
+    const promiseb = new Promise( r => promisebresolve = r )
+    
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+        promisearesolve()
+      }
     } )
+
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+        promisebresolve()
+      }
+    } )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+    /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
+    for( let i = 0;  50 > i; i ++ ) {
+      sendpk( i, i, channela.local.port, endpointa )
+    }
 
     /* 1S for 50 packets to get through, 0.5 seconds to allow all through jitter buffers */
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } )
@@ -169,15 +165,14 @@ describe( "channel mix", function() {
     endpointb.close()
 
     /* have we cleaned up? */
-    await promisea
-    await promiseb
+    await Promise.all( [ promisea, promiseb ] )
 
     expect( endpointapkcount ).to.be.within( 49, 51 )
     expect( endpointbpkcount ).to.be.within( 49, 51 )
 
   } )
 
-  it( `mix 2 channels then close b`, async function() {
+  it( "mix 2 channels then close b", async function() {
 
     this.timeout( 3000 )
     this.slow( 2000 )
@@ -188,13 +183,13 @@ describe( "channel mix", function() {
     let endpointapkcount = 0
     let endpointbpkcount = 0
 
-    endpointa.on( "message", function( msg, rinfo ) {
+    endpointa.on( "message", function( msg ) {
       endpointapkcount++
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
     } )
 
-    endpointb.on( "message", function( msg, rinfo ) {
+    endpointb.on( "message", function( msg ) {
       endpointbpkcount++
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
@@ -207,30 +202,29 @@ describe( "channel mix", function() {
     endpointb.bind()
     await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
-    let promiseb, channela, channelb
-    let promisea = new Promise( async ( resolve ) => {
-      channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
-        if( "close" === d.action ) {
-          resolve()
-        }
-      } )
+    let promisearesolve, promisebresolve
+    const promisea = new Promise( r => promisearesolve = r )
+    const promiseb = new Promise( r => promisebresolve = r )
 
-      promiseb = new Promise( async ( resolve ) => {
-        channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
-          if( "close" === d.action ) {
-            resolve()
-          }
-        } )
-
-        /* mix */
-        expect( channela.mix( channelb ) ).to.be.true
-
-        /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
-        for( let i = 0;  i < 50; i ++ ) {
-          sendpk( i, i, channela.local.port, endpointa )
-        }
-      } )
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+        promisearesolve()
+      }
     } )
+
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+        promisebresolve()
+      }
+    } )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+
+    /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
+    for( let i = 0;  50 > i; i ++ ) {
+      sendpk( i, i, channela.local.port, endpointa )
+    }
 
     /* 1S for 50 packets @ 20mS 0.5 seconds to allow through jitter buffers */
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } )
@@ -241,15 +235,14 @@ describe( "channel mix", function() {
     endpointb.close()
 
     /* have we closed? */
-    await promisea
-    await promiseb
+    await Promise.all( [ promisea, promiseb ] )
 
     expect( endpointapkcount ).to.be.within( 49, 51 )
     expect( endpointbpkcount ).to.be.within( 49, 51 )
 
   } )
 
-  it( `mix 2 channels - pcmu <-> pcma`, async function() {
+  it( "mix 2 channels - pcmu <-> pcma", async function() {
 
     this.timeout( 3000 )
     this.slow( 2000 )
@@ -260,13 +253,13 @@ describe( "channel mix", function() {
     let endpointapkcount = 0
     let endpointbpkcount = 0
 
-    endpointa.on( "message", function( msg, rinfo ) {
+    endpointa.on( "message", function( msg ) {
       endpointapkcount++
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
     } )
 
-    endpointb.on( "message", function( msg, rinfo ) {
+    endpointb.on( "message", function( msg ) {
       endpointbpkcount++
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 8 )
@@ -280,13 +273,13 @@ describe( "channel mix", function() {
     await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -294,11 +287,11 @@ describe( "channel mix", function() {
     expect( channela.mix( channelb ) ).to.be.true
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
-    for( let i = 0;  i < 50; i ++ ) {
+    for( let i = 0;  50 > i; i ++ ) {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1500 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
 
     channela.close()
     endpointa.close()
@@ -311,12 +304,12 @@ describe( "channel mix", function() {
 
   } )
 
-  it( `mix 2 channels - pcmu <-> ilbc`, async function() {
+  it( "mix 2 channels - pcmu <-> ilbc", async function() {
 
     this.timeout( 3000 )
     this.slow( 2500 )
 
-    let bssrc = 1
+    const bssrc = 1
 
     const endpointa = dgram.createSocket( "udp4" )
     const endpointb = dgram.createSocket( "udp4" )
@@ -324,14 +317,14 @@ describe( "channel mix", function() {
     let endpointapkcount = 0
     let endpointbpkcount = 0
 
-    endpointa.on( "message", function( msg, rinfo ) {
+    endpointa.on( "message", function( msg ) {
       endpointapkcount++
 
       expect( msg.length ).to.equal( 172 )
       expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
     } )
 
-    endpointb.on( "message", function( msg, rinfo ) {
+    endpointb.on( "message", function( msg ) {
       endpointbpkcount++
 
       expect( msg.length ).to.equal( 50 )
@@ -342,19 +335,19 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
 
     endpointb.bind()
-    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 97 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 97 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -362,11 +355,11 @@ describe( "channel mix", function() {
     expect( channela.mix( channelb ) ).to.be.true
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
-    for( let i = 0;  i < 50; i ++ ) {
+    for( let i = 0;  50 > i; i ++ ) {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1400 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1400 ) } )
 
     channela.close()
     endpointa.close()
@@ -378,7 +371,7 @@ describe( "channel mix", function() {
     await finished
   } )
 
-  it( `mix 2 channels - pcmu <-> g722`, async function() {
+  it( "mix 2 channels - pcmu <-> g722", async function() {
 
     this.timeout( 3000 )
     this.slow( 2000 )
@@ -389,12 +382,12 @@ describe( "channel mix", function() {
     let endpointapkcount = 0
     let endpointbpkcount = 0
 
-    endpointa.on( "message", function( msg, rinfo ) {
+    endpointa.on( "message", function( msg ) {
       endpointapkcount++
       expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
     } )
 
-    endpointb.on( "message", function( msg, rinfo ) {
+    endpointb.on( "message", function( msg ) {
 
       endpointbpkcount++
       expect( 0x7f & msg [ 1 ] ).to.equal( 9 )
@@ -402,19 +395,19 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
 
     endpointb.bind()
-    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 9 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 9 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -422,11 +415,11 @@ describe( "channel mix", function() {
     expect( channela.mix( channelb ) ).to.be.true
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
-    for( let i = 0;  i < 50; i ++ ) {
+    for( let i = 0;  50 > i; i ++ ) {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1500 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
 
     channela.close()
     endpointa.close()
@@ -439,7 +432,7 @@ describe( "channel mix", function() {
 
   } )
 
-  it( `mix 3 channels - 1 writer 3 readers`, async function() {
+  it( "mix 3 channels - 1 writer 3 readers", async function() {
 
     this.timeout( 3000 )
     this.slow( 2000 )
@@ -451,17 +444,17 @@ describe( "channel mix", function() {
     let endpointapkcount = 0
     let endpointbpkcount = 0
 
-    endpointa.on( "message", function( msg, rinfo ) {
+    endpointa.on( "message", function( msg ) {
       endpointapkcount++
       expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.be.oneOf([0 , 8 ] )
     } )
 
-    endpointb.on( "message", function( msg, rinfo ) {
+    endpointb.on( "message", function( msg ) {
       endpointbpkcount++
       expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.be.oneOf([0 , 8 ] )
     } )
 
-    endpointc.on( "message", function( msg, rinfo ) {
+    endpointc.on( "message", function( msg ) {
       expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.be.oneOf([0 , 8 ] )
     } )
 
@@ -475,17 +468,17 @@ describe( "channel mix", function() {
     await new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelc.close()
     } )
 
-    let channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -494,11 +487,11 @@ describe( "channel mix", function() {
     expect( channela.mix( channelc ) ).to.be.true
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
-    for( let i = 0;  i < 50; i ++ ) {
+    for( let i = 0;  50 > i; i ++ ) {
       sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
     endpointa.close()
@@ -513,7 +506,7 @@ describe( "channel mix", function() {
 
   } )
 
-  it( `mix 3 channels - 1 writer 1 readers (2 silenced)`, async function() {
+  it( "mix 3 channels - 1 writer 1 readers (2 silenced)", async function() {
 
     this.timeout( 3000 )
     this.slow( 2000 )
@@ -526,42 +519,42 @@ describe( "channel mix", function() {
     let endpointbpkcount = 0
     let endpointcpkcount = 0
 
-    endpointa.on( "message", function( msg, rinfo ) {
+    endpointa.on( "message", function( msg ) {
       endpointapkcount++
       expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.be.oneOf([0 , 8 ] )
     } )
 
-    endpointb.on( "message", function( msg, rinfo ) {
+    endpointb.on( "message", function( msg ) {
       endpointbpkcount++
       expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.be.oneOf([0 , 8 ] )
     } )
 
-    endpointc.on( "message", function( msg, rinfo ) {
+    endpointc.on( "message", function( msg ) {
       endpointcpkcount++
       expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.be.oneOf([0 , 8 ] )
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve, reject ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
 
     endpointb.bind()
-    await new Promise( ( resolve, reject ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
     endpointc.bind()
-    await new Promise( ( resolve, reject ) => { endpointc.on( "listening", function() { resolve() } ) } )
+    await new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( { "direction": { "send": false }, "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "direction": { "send": false }, "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    let channelb = await projectrtp.openchannel( { "direction": { "send": false }, "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "direction": { "send": false }, "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelc.close()
     } )
 
-    let channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -570,11 +563,11 @@ describe( "channel mix", function() {
     expect( channela.mix( channelc ) ).to.be.true
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
-    for( let i = 0;  i < 50; i ++ ) {
+    for( let i = 0;  50 > i; i ++ ) {
       sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1200 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
     endpointa.close()
@@ -589,7 +582,7 @@ describe( "channel mix", function() {
 
   } )
 
-  it( `mix 3 channels - 1 writer 3 recevers but writer recv=false`, async function() {
+  it( "mix 3 channels - 1 writer 3 recevers but writer recv=false", async function() {
 
     this.timeout( 3000 )
     this.slow( 2000 )
@@ -602,17 +595,17 @@ describe( "channel mix", function() {
     let endpointbpkcount = 0
     let endpointcpkcount = 0
 
-    endpointa.on( "message", function( msg, rinfo ) {
+    endpointa.on( "message", function( msg ) {
       endpointapkcount++
       expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.equal( 0 )
     } )
 
-    endpointb.on( "message", function( msg, rinfo ) {
+    endpointb.on( "message", function( msg ) {
       endpointbpkcount++
       expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.equal( 0 )
     } )
 
-    endpointc.on( "message", function( msg, rinfo ) {
+    endpointc.on( "message", function( msg ) {
       endpointcpkcount++
       expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.equal( 0 )
     } )
@@ -627,17 +620,17 @@ describe( "channel mix", function() {
     await new Promise( ( r ) => { endpointc.on( "listening", function() { r() } ) } )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelc.close()
     } )
 
-    let channelc = await projectrtp.openchannel( { "direction": { "recv": false }, "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "direction": { "recv": false }, "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -646,7 +639,7 @@ describe( "channel mix", function() {
     expect( channela.mix( channelc ) ).to.be.true
 
     /* Send data - which should be ignored but receviers should recevie silence (in payload) */
-    for( let i = 0;  i < 50; i ++ ) {
+    for( let i = 0;  50 > i; i ++ ) {
       sendpk( i, i, channelc.local.port, endpointc )
     }
 
@@ -666,7 +659,7 @@ describe( "channel mix", function() {
   } )
 
 
-  it( `mix 3 channels - 1 writer 3 recevers but writer delayed recv=false`, async function() {
+  it( "mix 3 channels - 1 writer 3 recevers but writer delayed recv=false", async function() {
 
     this.timeout( 3000 )
     this.slow( 2000 )
@@ -683,7 +676,7 @@ describe( "channel mix", function() {
     let endpointbpkcountnotzero = 0
     let endpointcpkcountnotzero = 0
 
-    endpointa.on( "message", function( msg, rinfo ) {
+    endpointa.on( "message", function( msg ) {
       if( 0 == projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ) {
         endpointapkcountzero++
       } else {
@@ -691,7 +684,7 @@ describe( "channel mix", function() {
       }
     } )
 
-    endpointb.on( "message", function( msg, rinfo ) {
+    endpointb.on( "message", function( msg ) {
       if( 0 == projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ) {
         endpointbpkcountzero++
       } else {
@@ -699,7 +692,7 @@ describe( "channel mix", function() {
       }
     } )
 
-    endpointc.on( "message", function( msg, rinfo ) {
+    endpointc.on( "message", function( msg ) {
       if( 0 == projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ) {
         endpointcpkcountzero++
       } else {
@@ -717,17 +710,17 @@ describe( "channel mix", function() {
     await new Promise( ( r ) => { endpointc.on( "listening", function() { r() } ) } )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelc.close()
     } )
 
-    let channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -738,7 +731,7 @@ describe( "channel mix", function() {
     expect( channela.mix( channelc ) ).to.be.true
 
     /* Send data - which should be ignored but receviers should recevie silence (in payload) */
-    for( let i = 0;  i < 50; i ++ ) {
+    for( let i = 0;  50 > i; i ++ ) {
       sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
@@ -761,7 +754,7 @@ describe( "channel mix", function() {
 
   } )
 
-  it( `mix 3 channels - 1 writer 1 readers (2 silenced but delayed)`, async function() {
+  it( "mix 3 channels - 1 writer 1 readers (2 silenced but delayed)", async function() {
 
     this.timeout( 3000 )
     this.slow( 2000 )
@@ -774,17 +767,17 @@ describe( "channel mix", function() {
     let endpointbpkcount = 0
     let endpointcpkcount = 0
 
-    endpointa.on( "message", function( msg, rinfo ) {
+    endpointa.on( "message", function( msg ) {
       endpointapkcount++
       expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.be.oneOf([0 , 8 ] )
     } )
 
-    endpointb.on( "message", function( msg, rinfo ) {
+    endpointb.on( "message", function( msg ) {
       endpointbpkcount++
       expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.be.oneOf([0 , 8 ] )
     } )
 
-    endpointc.on( "message", function( msg, rinfo ) {
+    endpointc.on( "message", function( msg ) {
       endpointcpkcount++
       expect( projectrtp.codecx.pcmu2linear16( msg[ 30 ] ) ).to.be.oneOf([0 , 8 ] )
     } )
@@ -799,17 +792,17 @@ describe( "channel mix", function() {
     await new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } )
 
     let done
-    let finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( r ) => { done = r } )
 
-    let channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    let channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelc.close()
     } )
 
-    let channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -821,11 +814,11 @@ describe( "channel mix", function() {
     expect( channela.mix( channelc ) ).to.be.true
 
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
-    for( let i = 0;  i < 50; i ++ ) {
+    for( let i = 0;  50 > i; i ++ ) {
       sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
-    await new Promise( ( resolve, reject ) => { setTimeout( () => resolve(), 1500 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
 
     channela.close()
     endpointa.close()

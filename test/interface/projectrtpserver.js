@@ -21,7 +21,7 @@ afterEach( async () => {
 
 
 describe( "server", function() {
-  it( `shutdown and run to exist`, async function() {
+  it( "shutdown and run to exist", async function() {
 
     expect( projectrtp.shutdown ).to.be.an( "function" )
     expect( projectrtp.run ).to.be.an( "function" )

@@ -20,7 +20,7 @@ module.exports = async ( mstimeout ) => {
   } )
   utils.lognewchannel()
 
-  let targeta = {
+  const targeta = {
     "address": "localhost",
     "port": clienta.local.port,
     "codec": acodec,
@@ -38,7 +38,7 @@ module.exports = async ( mstimeout ) => {
     }
   } )
 
-  let targeta2 = {
+  const targeta2 = {
     "address": "localhost",
     "port": channela.local.port,
     "codec": acodec,
