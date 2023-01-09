@@ -2,9 +2,9 @@
 
 An RTP node addon which offers functionality to process RTP data streams and mix it. All performance tasks are implemented in C++ and use boost::asio for IO completion ports for high concurrency.
 
-ProjectRTP is designed to scale to multiple servers serving other signalling servers. RTP and signalling should be kept separate and this architecture allows that. It is provided with a proxy server and client to allow for remote nodes.
+ProjectRTP is designed to scale to multiple servers serving other signalling servers. RTP and signalling should be kept separate, and this architecture allows that. It is provided with a proxy server and client to allow for remote nodes.
 
-ProjectRTP is designed to provide all the functions required for a PBX, including channel bridging, recording, playback and all the functions required for IVR.
+ProjectRTP is designed to provide all the functions required for a PBX, including channel bridging, recording, playback and all the necessary functions for IVR.
 
 Features
 
@@ -56,9 +56,9 @@ We now have 3 different sets of tests.
 
 ### `npm test`
 
-All tests are run from node. From the root directory run `npm test`. These test all our interfaces and should test expected outputs. These tests use mocha.
+All tests are run from NodeJS. From the root directory, run the `npm test`. These test all our interfaces and should test expected outputs. These tests use mocha.
 
-The folder is separated out into interface, unit and mock. The mock folder contains mock objects/functions required for testing. Unit tests are to help test internal functions. Interface tests are used to guarantee a stable interface for a specific version number. If these tests require changing (other than bug fixing i.e. a material API change) then a major version update will happen.
+The folder is separated out into interface, unit and mock. The mock folder contains mock objects/functions required for testing. Unit tests are to help test internal functions. Interface tests are used to guarantee a stable interface for a specific version number. If these tests require changing (other than bug fixing i.e. a material API change), then a major version update will happen.
 
 ### `npm run stress`
 
@@ -75,7 +75,7 @@ Use tsc for type checking and eslint.
 * boost
 * gnutls
 * libsrtp
-* openssl (for now the node scripts use openssl to generate a self signed cert for DTLS)
+* openssl (for now the NodeJS scripts use openssl to generate a self signed cert for DTLS)
 
 libilbc is included as a git submodule and requires building. This needs pulling which also
 has a submodule so (although this is handled inteh Dockerfile if you are building an image): 
@@ -139,19 +139,23 @@ docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:
 
 NB: updating version, Docker file, this readme and package.json all need updating - is there a way of automating this?
 
-### Runing
+### Local build
 
-The enviroment variable HOST should contain the host address of the control server - its default is 127.0.0.1. The variable PORT contains the port number to communicate over - with a default of 9002.
-
-The enviroment variable PA is takes the below form- where the address is passed back to the control server so it can be published in SDP - i.e. this allows for multiple RTP nodes all on different IP addresses. If you do not pass this in, then the default script will determin your public IP address by calling https://checkip.amazonaws.com to obtain your IP.
-
-docker run --restart=always --net=host -d -it --env PA=127.0.0.1 --name=prtp projectrtp:latest
+If you wish to build outsode of a Docker image, there are npm target scripts for build and rebuild.
 
 ## Example scripts
 
-The examples folder contains 2 scripts. The simplenode can be used where no special funtionality is required. The standard projectrtp docker image points to this - so starting a docker instance will run up as a node and attempt to connect to a central control server.
+The examples folder contains two scripts which use this library. The simplenode can be used where no special functionality is required. The standard projectrtp docker image points to this - so starting a docker instance will run up as a node and attempt to connect to a central control server.
 
-The advancednode.js is an example which contains pre and post processing - which can be used, for example, downloading recordings, performing text to speech or uploading recordings when it has completed.
+The advancednode.js is an example which contains pre and post-processing - which can be used, for example, downloading recordings, performing text to speech or uploading recordings when it has been completed.
+
+### Running
+
+The environment variable HOST should contain the host address of the control server - its default is 127.0.0.1. The variable PORT has the port number to communicate over - with a default of 9002.
+
+The environment variable PA takes the below form- where the address is passed back to the control server so it can be published in SDP - i.e. this allows for multiple RTP nodes on different IP addresses. If you do not pass this in, the default script will determine your public IP address by calling https://checkip.amazonaws.com to obtain your IP.
+
+docker run --restart=always --net=host -d -it --env PA=127.0.0.1 --name=prtp projectrtp:latest
 
 ## Codecs
 
@@ -189,21 +193,23 @@ const prtp = require( "@babblevoice/projectrtp" ).projectrtp
 /* This switches this server to a central 
 server and requires nodes to connect to us
 to provide worker nodes */
-prtp.listen()
+await prtp.server.listen()
 
 const codec = 9 /* G722 */
 
-/* 
-Now just open our channel 
+/*
+When you have a node configured and connected to this server...
+
+Now open our channel:
 The remote comes from your client (web browser?)
 including options for WebRTC if it is a web browser.
 */
-let channela = prtp.openchannel( {
+let channela = await prtp.openchannel( {
       "remote": { address, port, codec }
       } )
 
 
-let channelb = prtp.openchannel( {
+let channelb = await prtp.openchannel( {
       "remote": { "address": otheraddress, "port": otherport, codec }
       } )
 
@@ -217,6 +223,26 @@ channela.mix( channelb )
 /* Keep calling the mix function with other channels to create a conference */
 ```
 
+
+We could do it the other way round - i.e. instruct our control server to connect to nodes. We can either add multiple nodes or we can use a docker swarm to publish multiple nodes as one.
+```js
+
+const prtp = require( "@babblevoice/projectrtp" ).projectrtp
+
+const port = 9002
+const host = "192.168.0.100"
+
+prtp.server.addnode( { host, port } )
+
+/*
+When we need a channel now, the library will
+make that request to one of our nodes.
+*/
+let channela = await prtp.openchannel( {
+      "remote": { address, port, codec }
+      } )
+
+```
 
 ## Stats
 
