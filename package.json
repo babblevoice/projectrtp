@@ -10,7 +10,7 @@
   },
   "scripts": {
     "test": "./node_modules/mocha/bin/_mocha --recursive --check-leaks",
-    "check": "tsc --checkJs --noEmit --target es6 --skipLibCheck *.js test/**/*.js; ./node_modules/eslint/bin/eslint.js ./",
+    "check": "tsc --checkJs --noEmit --target es6 --module commonjs --skipLibCheck *.js test/**/*.js; ./node_modules/eslint/bin/eslint.js ./",
     "docs": "jsdoc -c jsdoc.conf.json ./README.md",
     "stress": "node stress/index.js",
     "build:dev": "cd src; node-gyp build --debug",
@@ -33,7 +33,6 @@
   },
   "homepage": "https://github.com/tinpotnick/projectrtp#readme",
   "dependencies": {
-    "@types/node": "^12.20.55",
     "eslint": "^8.29.0",
     "jsdoc": "^4.0.0",
     "uuid": "^8.3.2"
@@ -45,6 +44,7 @@
     "WebRTC"
   ],
   "devDependencies": {
+    "@types/node": "^12.20.55",
     "@types/chai": "^4.3.4",
     "@types/mocha": "^10.0.1",
     "@types/uuid": "^9.0.0",

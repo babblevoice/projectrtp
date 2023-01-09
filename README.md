@@ -68,6 +68,24 @@ These are designed to create real world scenarios - opening and closing multiple
 
 Use tsc for type checking and eslint.
 
+NB: tsc should be installed as a global module:
+
+```bash
+npm install -G typescript
+```
+
+Eslint should be installed as a module
+
+```bash
+npm install eslint
+```
+
+Other types modules need installing:
+
+```bash
+npm i --save-dev @types/node @types/mocha @types/chai @types/uuid
+```
+
 ## Dependencies
 
 * spandsp-devel
