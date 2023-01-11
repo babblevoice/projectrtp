@@ -7,14 +7,14 @@ const fs = require( "fs" )
 
 
 // Get startport and endport from command line arguments
-const ports = process.argv.slice(2)
+const ports = process.argv.slice( 2 )
 let start = 10000
 let end = 20000
-if ( 2 === ports.length )
-{
-  start = parseInt(ports[0])
-  end = parseInt(ports[1])
+if ( 2 === ports.length  ) {
+  start = parseInt( ports[ 0 ] )
+  end = parseInt( ports[ 1 ] )
 }
+
 prtp.projectrtp.run( { "ports": { "start": start, "end": end }} )
 
 function wgets( url ) {

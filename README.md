@@ -202,7 +202,9 @@ This project contains all the functionality to use it as a local resource or as 
 
 Each active node connects to the main server to offer its services to the main server. The main server then opens RTP channels (WebRTC or normal RTP) on any available. The protocol used can be viewed in the files in /lib.
 
-Example:
+### Server example
+
+A server would typically run application logic before then opening media ports.
 
 ```js
 
@@ -259,6 +261,29 @@ make that request to one of our nodes.
 let channela = await prtp.openchannel( {
       "remote": { address, port, codec }
       } )
+
+```
+
+### Node examples
+
+Nodes are the work-horses of the network. The connect to a server and wait for instructions. See the examples folder for more examples, such as how to hook into events to perform functions such as downloading from storage such S3.
+
+```js
+
+const prtp = require( "@babblevoice/projectrtp" ).projectrtp
+
+async function go() {
+
+  prtp.run()
+
+  prtp.node.listen( "0.0.0.0", 9002 )
+  const pa = await wgets( "https://checkip.amazonaws.com" )
+
+  prtp.setaddress( pa )
+  
+}
+
+listen()
 
 ```
 

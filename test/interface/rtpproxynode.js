@@ -6,9 +6,10 @@ tests.
 */
 
 const expect = require( "chai" ).expect
-const mockserver = require( "../mock/mockproxyserver.js" )
-const prtp = require( "../../index.js" ).projectrtp
-const message = require( "../../lib/message.js" )
+const mockserver = require( "../mock/mockproxyserver" )
+const prtp = require( "../../index" ).projectrtp
+const message = require( "../../lib/message" )
+const node = require( "../../lib/node" ).interface
 
 describe( "rtpproxy node", function() {
 
@@ -164,6 +165,39 @@ describe( "rtpproxy node", function() {
     const ournode = await prtp.proxy.connect( mock.port )
   
     await done
+  } )
+
+  it( "connect and open channel and look for middle messages", async function() {
+
+    const ourport = 45332
+
+    const ourserver = await prtp.server.listen( ourport, "127.0.0.1" )
+
+    const ournode = node.create( prtp )
+    const n = await ournode.connect( ourport, "127.0.0.1" )
+
+    const recvedmsgs = []
+    const chnl = await prtp.openchannel( ( e ) => {
+      recvedmsgs.push( e )
+    } )
+
+    chnl.play( { "interupt":true, "files": [ { "wav": "test/interface/pcaps/180fa1ac-08e5-11ed-bd4d-02dba5b5aad6.wav" } ] } )
+
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+
+    await chnl.close()
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+
+    n.destroy()
+    await ourserver.destroy()
+
+    expect( recvedmsgs[ 0 ].action ).to.equal( "play" )
+    expect( recvedmsgs[ 0 ].event ).to.equal( "start" )
+    expect( recvedmsgs[ 1 ].action ).to.equal( "play" )
+    expect( recvedmsgs[ 1 ].event ).to.equal( "end" )
+    expect( recvedmsgs[ 2 ].action ).to.equal( "close" )
+    
+
   } )
 
   it( "bad method on node", async function() {

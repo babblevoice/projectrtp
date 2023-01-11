@@ -33,4 +33,4 @@ ENV NODE_PATH=/usr/local/lib/node_modules
 EXPOSE 10000-50000/udp
 
 WORKDIR /usr/local/lib/node_modules/@babblevoice/projectrtp/
-CMD [ "node", "examples/remoteserver.js" ]
+CMD [ "node", "examples/simplenode.js" ]

@@ -592,8 +592,8 @@ describe( "rtpproxy server", function() {
   it( "Node as listener server to test", async () => {
 
     const ourport = getnextport()
-    prtp.proxy.clearnodes()
-    prtp.proxy.addnode( { host: "127.0.0.1", port: ourport } )
+    prtp.server.clearnodes()
+    prtp.server.addnode( { host: "127.0.0.1", port: ourport } )
 
     const ournode = node.create( prtp )
 
@@ -602,5 +602,40 @@ describe( "rtpproxy server", function() {
     await chnl.close()
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
     n.destroy()
+  } )
+
+  it( "Ensure we receive middle messages", async() => {
+    /*
+      i.e. messages we receive inbetween an open and close
+    */
+
+    const ourport = getnextport()
+    prtp.server.clearnodes()
+    prtp.server.addnode( { host: "127.0.0.1", port: ourport } )
+
+    const ournode = node.create( prtp )
+    const n = await ournode.listen( "127.0.0.1", ourport )
+
+    const recvedmsgs = []
+    const chnl = await prtp.openchannel( ( e ) => {
+      recvedmsgs.push( e )
+    } )
+
+    chnl.play( { "interupt":true, "files": [ { "wav": "test/interface/pcaps/180fa1ac-08e5-11ed-bd4d-02dba5b5aad6.wav" } ] } )
+
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+
+    await chnl.close()
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+
+    n.destroy()
+
+    expect( recvedmsgs[ 0 ].action ).to.equal( "play" )
+    expect( recvedmsgs[ 0 ].event ).to.equal( "start" )
+    expect( recvedmsgs[ 1 ].action ).to.equal( "play" )
+    expect( recvedmsgs[ 1 ].event ).to.equal( "end" )
+    expect( recvedmsgs[ 2 ].action ).to.equal( "close" )
+    
+
   } )
 } )
