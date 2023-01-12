@@ -416,7 +416,7 @@ describe( "rtpproxy server", function() {
         "action": "open",
         "id": msg.id,
         "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
-        "channel": {
+        "local": {
           "port": 10002,
           "address": "192.168.0.141"
         }
@@ -475,7 +475,7 @@ describe( "rtpproxy server", function() {
         "action": "open",
         "id": msg.id,
         "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
-        "channel": {
+        "local": {
           "port": 10000,
           "address": "192.168.0.141"
         }
@@ -497,9 +497,9 @@ describe( "rtpproxy server", function() {
     const chnl = await prtp.openchannel()
     expect( chnl ).to.have.property( "id" ).that.is.a( "string" )
     expect( chnl ).to.have.property( "uuid" ).that.is.a( "string" )
-    expect( chnl ).to.have.property( "channel" ).that.is.a( "object" )
-    expect( chnl.channel ).to.have.property( "port" ).that.is.a( "number" )
-    expect( chnl.channel ).to.have.property( "address" ).that.is.a( "string" )
+    expect( chnl ).to.have.property( "local" ).that.is.a( "object" )
+    expect( chnl.local ).to.have.property( "port" ).that.is.a( "number" )
+    expect( chnl.local ).to.have.property( "address" ).that.is.a( "string" )
     chnl.close()
     
     await closepromise
@@ -534,7 +534,7 @@ describe( "rtpproxy server", function() {
         "action": "open",
         "id": msg.id,
         "uuid": ""+ouruuid++,
-        "channel": {
+        "local": {
           "port": 10000,
           "address": "127.0.0.1"
         }
@@ -547,7 +547,7 @@ describe( "rtpproxy server", function() {
         "action": "open",
         "id": msg.id,
         "uuid": ""+ouruuid++,
-        "channel": {
+        "local": {
           "port": 10002,
           "address": "127.0.0.1"
         }

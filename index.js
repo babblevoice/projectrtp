@@ -464,11 +464,8 @@ class projectrtp {
       chan.em = new EventEmitter()
       if( cb ) chan.em.on( "all", cb )
 
-      if( undefined === params.id ) {
-        chan.id = uuidv4()
-      } else {
-        chan.id = params.id
-      }
+      if( params.id ) chan.id = params.id
+      else chan.id = uuidv4()
 
       chan.uuid = uuidv4()
       return chan

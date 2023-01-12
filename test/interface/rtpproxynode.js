@@ -41,7 +41,7 @@ describe( "rtpproxy node", function() {
       } )
     } )
 
-    const ournode = await prtp.proxy.connect( mock.port )
+    const ournode = await prtp.node.connect( mock.port, "127.0.0.1" )
     await done
   } )
 

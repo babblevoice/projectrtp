@@ -1,7 +1,35 @@
 
 const expect = require( "chai" ).expect
-const projectrtp = require( "../../index.js" ).projectrtp
 const dgram = require( "dgram" )
+
+const projectrtp = require( "../../index" ).projectrtp
+const node = require( "../../lib/node" ).interface
+const server = require( "../../lib/server" ).interface
+
+/**
+ * Common channel tester
+ * @param { object } channel 
+ * @param { string } id 
+ */
+function exepectchannel( channel, id ) {
+
+  expect( channel ).to.be.an( "object" )
+  expect( channel.close ).to.be.an( "function" )
+  expect( channel.mix ).to.be.an( "function" )
+  expect( channel.unmix ).to.be.an( "function" )
+  expect( channel.echo ).to.be.an( "function" )
+  expect( channel.play ).to.be.an( "function" )
+  expect( channel.record ).to.be.an( "function" )
+  expect( channel.direction ).to.be.an( "function" )
+  expect( channel.dtmf ).to.be.an( "function" )
+  expect( channel.remote ).to.be.an( "function" )
+  expect( channel.local ).to.have.property( "port" ).that.is.a( "number" )
+  expect( channel.local ).to.have.property( "address" ).that.is.a( "string" )
+  expect( channel.local ).to.have.property( "icepwd" ).that.is.a( "string" ).to.have.lengthOf.above( 20 )
+  expect( channel.uuid ).that.is.a( "string" )
+  expect( channel.id ).that.is.a( "string" )
+  expect( channel.id ).to.equal( id )
+}
 
 /**
  * @ignore
@@ -54,8 +82,25 @@ describe( "rtpchannel", function() {
 
   it( "call create channel and check the structure of the returned object", async function() {
 
-    this.timeout( 2000 )
-    this.slow( 1500 )
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const channel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": 20000, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) done()
+    } )
+
+    exepectchannel( channel, "4" )
+
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    channel.close()
+    await finished
+  } )
+
+  it( "call create channel and check the structure of the returned object ( server as listener )", async function() {
+
+    const ourport = 45433
+    await projectrtp.server.listen( ourport, "127.0.0.1" )
+    const ournode = await projectrtp.node.connect( ourport, "127.0.0.1" )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -64,26 +109,40 @@ describe( "rtpchannel", function() {
       if( "close" === d.action ) done()
     } )
 
-    expect( channel ).to.be.an( "object" )
-    expect( channel.close ).to.be.an( "function" )
-    expect( channel.mix ).to.be.an( "function" )
-    expect( channel.unmix ).to.be.an( "function" )
-    expect( channel.echo ).to.be.an( "function" )
-    expect( channel.play ).to.be.an( "function" )
-    expect( channel.record ).to.be.an( "function" )
-    expect( channel.direction ).to.be.an( "function" )
-    expect( channel.dtmf ).to.be.an( "function" )
-    expect( channel.remote ).to.be.an( "function" )
-    expect( channel.local ).to.have.property( "port" ).that.is.a( "number" )
-    expect( channel.local ).to.have.property( "address" ).that.is.a( "string" )
-    expect( channel.local ).to.have.property( "icepwd" ).that.is.a( "string" ).to.have.lengthOf.above( 20 )
-    expect( channel.uuid ).that.is.a( "string" )
-    expect( channel.id ).that.is.a( "string" )
-    expect( channel.id ).to.equal( "4" )
+    exepectchannel( channel, "4" )
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
     channel.close()
     await finished
+
+    ournode.destroy()
+    await server.destroy()
+  } )
+
+  it( "call create channel and check the structure of the returned object ( node as listener )", async function() {
+
+    const ourport = 45432
+    projectrtp.server.clearnodes()
+    projectrtp.server.addnode( { host: "127.0.0.1", port: ourport } )
+
+    const ournode = node.create( projectrtp )
+    const n = await ournode.listen( "127.0.0.1", ourport )
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const channel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": 20000, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) done()
+    } )
+
+    exepectchannel( channel, "4" )
+
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    channel.close()
+    await finished
+
+    projectrtp.server.clearnodes()
+    n.destroy()
   } )
 
   it( "call create channel echo", function( done ) {
