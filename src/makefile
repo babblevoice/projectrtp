@@ -1,7 +1,7 @@
 # -O3 includes -fopt-info-vec -fopt-info-vec-missed
 DEBUG:= -DDEBUG -g
 RELEASE:=-O3
-CCOPTS:=-Wall -fstack-protector-all -std=c++17 -fconcepts -fsanitize=address,leak -DTESTSUITE
+CCOPTS:=-Wall -fstack-protector-all -std=c++20 -fconcepts -fsanitize=address,leak -DTESTSUITE
 LL:=-lboost_system -lpthread -lrt -L./build/Debug/test/ -lspandsp -lilbc -lgnutls -lsrtp2 -lm -fsanitize=address,leak
 
 COMPILER:=g++
