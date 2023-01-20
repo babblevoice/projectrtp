@@ -1,0 +1,19 @@
+name: Run Linters 
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v1
+    - name: update
+      run: sudo apt update
+    - name: submodules
+      run: sudo apt install cppcheck 
+    - name: Run cppcheck
+      run: |
+            cppcheck ./src
+            
