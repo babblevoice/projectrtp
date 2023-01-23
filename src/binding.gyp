@@ -3,6 +3,7 @@
     {
       "target_name": "projectrtp",
       "defines": [ "NODE_MODULE", "BOOST_NO_EXCEPTIONS", "BOOST_EXCEPTION_DISABLE" ],
+      "cflags_cc!": [ "-fno-rtti" ],
       "cflags_cc": [
         "-O3",
         "-g",
