@@ -116,9 +116,9 @@ Build ilbc from the sub module plus install other dependancies.
 
 ```bash
 
-apt install libboost-dev libspandsp-dev gnutls-dev libsrtp2-dev cmake 
+apt install libboost-dev libboost-system-dev libspandsp-dev gnutls-dev libsrtp2-dev cmake ccache
 
-cd ilbc
+cd libilbc
 cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; cmake --build .; cmake --install .
 cd ..
 ```
