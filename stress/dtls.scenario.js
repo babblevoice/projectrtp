@@ -56,4 +56,8 @@ module.exports = async ( mstimeout ) => {
   expect( clienta.play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
   expect( channela.echo() ).to.be.true
 
+  setTimeout( () => {
+    clienta.close()
+  }, mstimeout )
+
 }
