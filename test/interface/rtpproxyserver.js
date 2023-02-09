@@ -589,7 +589,7 @@ describe( "rtpproxy server", function() {
     expect( openreceived ).to.be.true
   } )
 
-  it( "Node as listener server to test", async () => {
+  it( "1 channel, node as listener server to test", async () => {
 
     const ourport = getnextport()
     prtp.server.clearnodes()
@@ -600,6 +600,23 @@ describe( "rtpproxy server", function() {
     const n = await ournode.listen( "127.0.0.1", ourport )
     const chnl = await prtp.openchannel()
     await chnl.close()
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    n.destroy()
+  } )
+
+  it( "2 channels, node as listener server to test", async () => {
+
+    const ourport = getnextport()
+    prtp.server.clearnodes()
+    prtp.server.addnode( { host: "127.0.0.1", port: ourport } )
+
+    const ournode = node.create( prtp )
+
+    const n = await ournode.listen( "127.0.0.1", ourport )
+    const chnl = await prtp.openchannel()
+    const chnl2 = await prtp.openchannel()
+    await chnl.close()
+    await chnl2.close()
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
     n.destroy()
   } )
