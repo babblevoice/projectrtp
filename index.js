@@ -468,6 +468,10 @@ class projectrtp {
       else chan.id = uuidv4()
 
       chan.uuid = uuidv4()
+
+      /* ensure we are identicle to the node version of this object */
+      chan.openchannel = this.openchannel.bind( this )
+      
       return chan
     }
   }
