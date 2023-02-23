@@ -20,9 +20,18 @@ module.exports.logclosechannel = ( message, d, mstimeout ) => {
   channelcount--
   totalcount++
   module.exports.log( message )
-  module.exports.log( ` Expected number of packets: ${Math.round(mstimeout / 20)}, Received: ${d.stats.in["count"]},` +
-  ` Score: ${(d.stats.in["count"] / mstimeout * 20).toFixed(2)}` )
-  module.exports.log( `Channel closed - current count now ${channelcount} total channels this session ${totalcount}` )
+
+  const score = ( d.stats.in["count"] / mstimeout * 20 ).toFixed( 2 )
+  let scoremsg = ` Score: ${ ( d.stats.in[ "count" ] / mstimeout * 20 ).toFixed( 2 ) }`
+
+  // Colour based on score: red, yellow, green
+  if( 0.25 >= score ) scoremsg = "\x1B[31m" + scoremsg
+  else if( 0.7 >= score ) scoremsg = "\x1B[33m" + scoremsg
+  else scoremsg = "\x1B[32m" + scoremsg
+  scoremsg += "\x1B[37m"
+
+  module.exports.log( `Expected number of packets: ${ Math.round( mstimeout / 20 ) }, Received: ${ d.stats.in[ "count" ] },` + scoremsg )
+  module.exports.log( `Channel closed - current count now ${ channelcount } total channels this session ${ totalcount }` )
 }
 
 module.exports.totalchannelcount = () => {
