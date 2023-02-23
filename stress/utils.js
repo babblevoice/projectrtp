@@ -22,7 +22,7 @@ module.exports.logclosechannel = ( message, d, mstimeout ) => {
   module.exports.log( message )
 
   const score = ( d.stats.in["count"] / mstimeout * 20 ).toFixed( 2 )
-  let scoremsg = ` Score: ${ ( d.stats.in[ "count" ] / mstimeout * 20 ).toFixed( 2 ) }`
+  let scoremsg = ` Score: ${ score }`
 
   // Colour based on score: red, yellow, green
   if( 0.25 >= score ) scoremsg = "\x1B[31m" + scoremsg
