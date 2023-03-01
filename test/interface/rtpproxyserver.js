@@ -673,4 +673,21 @@ describe( "rtpproxy server", function() {
     
 
   } )
+  it( "Ensure connection stays open with 0 channel in listen mode", async () => {
+
+    const ourport = getnextport()
+    prtp.server.clearnodes()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    const ournode = await prtp.node.connect( ourport, "127.0.0.1" )
+
+
+    const chnl = await prtp.openchannel()
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await chnl.close()
+    const chnl2 = await prtp.openchannel()
+    await chnl2.close()
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    ournode.destroy()
+    p.destroy()
+  } )
 } )
