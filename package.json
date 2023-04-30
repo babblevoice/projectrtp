@@ -33,9 +33,7 @@
   },
   "homepage": "https://github.com/tinpotnick/projectrtp#readme",
   "dependencies": {
-    "eslint": "^8.29.0",
-    "jsdoc": "^4.0.0",
-    "uuid": "^8.3.2"
+    "uuid": "^9.0.0"
   },
   "keywords": [
     "RTP",
@@ -49,6 +47,8 @@
     "@types/mocha": "^10.0.1",
     "@types/uuid": "^9.0.0",
     "chai": "^4.3.7",
-    "mocha": "^10.2.0"
+    "mocha": "^10.2.0",
+    "eslint": "^8.29.0",
+    "jsdoc": "^4.0.0"
   }
 }
