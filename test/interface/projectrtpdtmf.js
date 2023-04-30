@@ -656,25 +656,70 @@ describe( "dtmf", function() {
     expect( channela.mix( channelc ) ).to.be.true
 
     /* send a packet every 20mS x 50 */
-    for( let i = 0;  13 > i; i ++ ) {
-      sendpk( i, i*20, channela.local.port, endpointa )
-    }
+    /* NO FOR LOOPS for explicit readablity of the test */
+    sendpk( 0, 0, channela.local.port, endpointa )
+    sendpk( 1, 20, channela.local.port, endpointa )
+    sendpk( 2, 2*20, channela.local.port, endpointa )
+    sendpk( 3, 3*20, channela.local.port, endpointa )
+    sendpk( 4, 4*20, channela.local.port, endpointa )
+    sendpk( 5, 5*20, channela.local.port, endpointa )
+    sendpk( 6, 6*20, channela.local.port, endpointa )
+    sendpk( 7, 7*20, channela.local.port, endpointa )
+    sendpk( 8, 8*20, channela.local.port, endpointa )
+    sendpk( 9, 9*20, channela.local.port, endpointa )
+    sendpk( 10, 10*20, channela.local.port, endpointa )
+    sendpk( 11, 11*20, channela.local.port, endpointa )
+    sendpk( 12, 12*20, channela.local.port, endpointa )
 
+    /* rfc2833 - 3.6: An audio source SHOULD start transmitting event packets as soon as it
+       recognizes an event and every 50 ms thereafter or the packet interval
+       for the audio codec used for this session, if known. 
+        This means our ts will not stay in sync with our sequence number - which increments 
+        with every packet.
+        senddtmf( sn, ts, sendtime, port, socket, endofevent, event )
+        sendpk( sn, sendtime, port, socket, pt, ts, ssrc ) */
     senddtmf( 13, 12 * 160, 13*20, channela.local.port, endpointa, false, "4" )
-    senddtmf( 14, 12 * 160, 14*20, channela.local.port, endpointa, false, "4" )
-    senddtmf( 15, 12 * 160, 15*20, channela.local.port, endpointa, true, "4" )
+    sendpk( 14, 13*20, channela.local.port, endpointa, 0, 13*160 )
+    senddtmf( 15, 15 * 160, 15*20, channela.local.port, endpointa, false, "4" )
+    sendpk( 16, 14*20, channela.local.port, endpointa, 0, 14*160 )
+    senddtmf( 17, 17 * 160, 17*20, channela.local.port, endpointa, true, "4" )
 
-    for( let i = 16;  23 > i; i ++ ) {
-      sendpk( i, (i-3)*20, channela.local.port, endpointa )
-    }
+    sendpk( 18, 15*20, channela.local.port, endpointa, 0, 15*160 )
+    sendpk( 19, 16*20, channela.local.port, endpointa, 0, 16*160 )
+    sendpk( 20, 17*20, channela.local.port, endpointa, 0, 17*160 )
+    sendpk( 21, 18*20, channela.local.port, endpointa, 0, 18*160 )
+    sendpk( 22, 19*20, channela.local.port, endpointa, 0, 19*160 )
 
-    senddtmf( 23, 22 * 160, 23*20, channela.local.port, endpointa, false, "5" )
-    senddtmf( 24, 22 * 160, 24*20, channela.local.port, endpointa, false, "5" )
-    senddtmf( 25, 22 * 160, 25*20, channela.local.port, endpointa, true, "5" )
+    senddtmf( 23, 20*160, 20*20, channela.local.port, endpointa, false, "5" )
+    sendpk( 24, 20*20, channela.local.port, endpointa, 0, 20*160 )
+    senddtmf( 25, 22*160, 21*20, channela.local.port, endpointa, false, "5" )
+    sendpk( 26, 21*20, channela.local.port, endpointa, 0, 21*160 )
+    senddtmf( 27, 24*160, 22*20, channela.local.port, endpointa, true, "5" )
 
-    for( let i = 26;  50 > i; i ++ ) {
-      sendpk( i, (i-6)*20, channela.local.port, endpointa )
-    }
+    sendpk( 27, 22*20, channela.local.port, endpointa, 0, 22*160 )
+    sendpk( 28, 23*20, channela.local.port, endpointa, 0, 23*160 )
+    sendpk( 29, 24*20, channela.local.port, endpointa, 0, 24*160 )
+    sendpk( 30, 25*20, channela.local.port, endpointa, 0, 25*160 )
+    sendpk( 31, 26*20, channela.local.port, endpointa, 0, 26*160 )
+    sendpk( 32, 27*20, channela.local.port, endpointa, 0, 27*160 )
+    sendpk( 33, 28*20, channela.local.port, endpointa, 0, 28*160 )
+    sendpk( 34, 29*20, channela.local.port, endpointa, 0, 29*160 )
+    sendpk( 35, 30*20, channela.local.port, endpointa, 0, 30*160 )
+    sendpk( 36, 31*20, channela.local.port, endpointa, 0, 31*160 )
+    sendpk( 37, 32*20, channela.local.port, endpointa, 0, 32*160 )
+    sendpk( 38, 33*20, channela.local.port, endpointa, 0, 33*160 )
+    sendpk( 39, 34*20, channela.local.port, endpointa, 0, 34*160 )
+    sendpk( 40, 35*20, channela.local.port, endpointa, 0, 35*160 )
+    sendpk( 41, 36*20, channela.local.port, endpointa, 0, 36*160 )
+    sendpk( 42, 37*20, channela.local.port, endpointa, 0, 37*160 )
+    sendpk( 43, 38*20, channela.local.port, endpointa, 0, 38*160 )
+    sendpk( 44, 39*20, channela.local.port, endpointa, 0, 39*160 )
+    sendpk( 45, 40*20, channela.local.port, endpointa, 0, 40*160 )
+    sendpk( 46, 41*20, channela.local.port, endpointa, 0, 41*160 )
+    sendpk( 47, 42*20, channela.local.port, endpointa, 0, 42*160 )
+    sendpk( 48, 43*20, channela.local.port, endpointa, 0, 43*160 )
+    sendpk( 49, 44*20, channela.local.port, endpointa, 0, 44*160 )
+    sendpk( 50, 45*20, channela.local.port, endpointa, 0, 45*160 )
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1200 ) } )
 
@@ -694,19 +739,19 @@ describe( "dtmf", function() {
     expect( dtmfbpkcount ).to.equal( 6 )
     expect( dtmfcpkcount ).to.equal( 6 )
 
-    const expectedmessages = [
-      { action: "mix", event: "start" }, //b
-      { action: "mix", event: "start" }, //c
-      { action: "telephone-event", event: "4" },
-      { action: "telephone-event", event: "5" },
-      { action: "mix", event: "finished" },
-      { action: "close" }
-    ]
+    expect( receveiedmessages[ 0 ].action ).to.equal( "mix" )
+    expect( receveiedmessages[ 1 ].action ).to.equal( "mix" )
+    expect( receveiedmessages[ 2 ].action ).to.equal( "telephone-event" )
+    expect( receveiedmessages[ 3 ].action ).to.equal( "telephone-event" )
+    expect( receveiedmessages[ 4 ].action ).to.equal( "mix" )
+    expect( receveiedmessages[ 5 ].action ).to.equal( "close" )
 
-    for( let i = 0; i <  expectedmessages.length; i++ ) {
-      expect( expectedmessages[ i ].action ).to.equal( receveiedmessages[ i ].action )
-      if( expectedmessages[ i ].event ) expect( receveiedmessages[ i ].event ).to.equal( receveiedmessages[ i ].event )
-    }
+    expect( receveiedmessages[ 0 ].event ).to.equal( "start" )
+    expect( receveiedmessages[ 1 ].event ).to.equal( "start" )
+    expect( receveiedmessages[ 2 ].event ).to.equal( "4" )
+    expect( receveiedmessages[ 3 ].event ).to.equal( "5" )
+    expect( receveiedmessages[ 4 ].event ).to.equal( "finished" )
+
   } )
 
   it( "DTMF captured not working", async function() {
