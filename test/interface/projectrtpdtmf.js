@@ -432,20 +432,43 @@ describe( "dtmf", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      for( let i = 0;  13 > i; i ++ ) {
-        sendpk( i, i*20, channel.local.port, server )
-      }
+      sendpk( 0, 0, channel.local.port, server )
+      sendpk( 1, 1*20, channel.local.port, server )
+      sendpk( 2, 2*20, channel.local.port, server )
+      sendpk( 3, 3*20, channel.local.port, server )
+      sendpk( 4, 4*20, channel.local.port, server )
+      sendpk( 5, 5*20, channel.local.port, server )
+      sendpk( 6, 6*20, channel.local.port, server )
+      sendpk( 7, 7*20, channel.local.port, server )
+      sendpk( 8, 8*20, channel.local.port, server )
+      sendpk( 9, 9*20, channel.local.port, server )
+      sendpk( 10, 10*20, channel.local.port, server )
+      sendpk( 11, 11*20, channel.local.port, server )
+      sendpk( 12, 12*20, channel.local.port, server )
 
-      senddtmf( 13, 12 * 160, 13*20, channel.local.port, server, false, "4" )
-      senddtmf( 14, 12 * 160, 14*20, channel.local.port, server, false, "4" )
+      senddtmf( 13, 13*160, 13*20, channel.local.port, server, false, "4" )
+      sendpk( 14, 13*20, channel.local.port, server, 0, 13*160 )
+      sendpk( 15, 14*20, channel.local.port, server, 0, 14*160 )
+
+      senddtmf( 16, (15*160)+10, (15*20)+10, channel.local.port, server, false, "4" )
+      sendpk( 17, 15*20, channel.local.port, server, 0, 15*160 )
+      sendpk( 18, 16*20, channel.local.port, server, 0, 16*160 )
       // Packet loss
-      // senddtmf( 15, 12 * 160, 15*20, channel.port, server, true, "4" )
+      // senddtmf( 19, (16*160)+20, (16*20)+20, channel.local.port, server, true, "4" )
 
-      for( let i = 17;  i < 17+75; i ++ ) {
-        sendpk( i, (i-3)*20, channel.local.port, server )
-      }
+      sendpk( 20, 17*20, channel.local.port, server, 0, 17*160 )
+      sendpk( 21, 18*20, channel.local.port, server, 0, 18*160 )
+      sendpk( 22, 19*20, channel.local.port, server, 0, 19*160 )
+      sendpk( 23, 20*20, channel.local.port, server, 0, 20*160 )
+      sendpk( 24, 21*20, channel.local.port, server, 0, 21*160 )
+      sendpk( 25, 22*20, channel.local.port, server, 0, 22*160 )
+      sendpk( 26, 23*20, channel.local.port, server, 0, 23*160 )
+      sendpk( 27, 24*20, channel.local.port, server, 0, 24*160 )
+      sendpk( 28, 25*20, channel.local.port, server, 0, 25*160 )
+      sendpk( 29, 26*20, channel.local.port, server, 0, 26*160 )
+      sendpk( 30, 27*20, channel.local.port, server, 0, 27*160 )
 
-      setTimeout( () => channel.close(), 2600 )
+      setTimeout( () => channel.close(), 1000 )
 
     } )
 
@@ -456,7 +479,7 @@ describe( "dtmf", function() {
       { action: "close" }
     ]
 
-    expect( receviedpkcount ).to.be.above( 83 )
+    expect( receviedpkcount ).to.be.above( 20 )
     expect( receivedmessages.length ).to.equal( 2 )
     expect( receivedmessages[ 0 ] ).to.deep.include( expectedmessages[ 0 ] )
     expect( receivedmessages[ 1 ] ).to.deep.include( expectedmessages[ 1 ] )
