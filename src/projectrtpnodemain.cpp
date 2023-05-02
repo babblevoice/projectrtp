@@ -30,7 +30,7 @@ int32_t endport = 20000;
 
 void boost::throw_exception( std::exception const & e ) {
   std::string err = boost::diagnostic_information( e );
-  fprintf( stderr, err.c_str() );
+  fprintf( stderr, "%s", err.c_str() );
   exit( EXIT_FAILURE );
 }
 
