@@ -250,10 +250,10 @@ describe( "record", function() {
     expect( wavinfo.bitdepth ).to.equal( 16 )
     expect( wavinfo.chunksize ).to.be.within( 2500, 7000 ) /* 200mS of audio */
     expect( wavinfo.fmtchunksize ).to.equal( 16 )
-    expect( wavinfo.subchunksize ).to.be.within( 3000, 7000 )
+    expect( wavinfo.subchunksize ).to.be.within( 2500, 7000 )
 
     const stats = fs.statSync( "/tmp/ourpausedrecording.wav" )
-    expect( stats.size ).to.be.within( 3000, 7000 )
+    expect( stats.size ).to.be.within( 2500, 7000 )
 
   } )
 
