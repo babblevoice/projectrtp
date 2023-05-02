@@ -652,40 +652,20 @@ bool projectrtpchannel::checkfordtmf( rtppacket *src ) {
       uint8_t event = pl[ 0 ] & 0x7f;
 
       if( event <= 16 ) {
-        bool sendteleevent = false;
-        bool start = false;
-
         /* Test for start */
-        if( 0 == endbit &&
-            0 == this->lasttelephoneeventsn ) {
-          start = true;
-        }
-
-        if( 0 == endbit &&
-            0 != this->lasttelephoneeventsn && 
-              event != this->lasttelephoneevent
-             ) {
-          /* Did we lose the last end of event */
-          this->lasttelephoneeventsn = 0;
-          sendteleevent = true;
-        } else if( 1 == endbit &&
-                   0 != this->lasttelephoneeventsn ) {
-          sendteleevent = true;
-        }
-
-        if( sendteleevent ) this->sendtelevent();
-
-        if( start ) {
+        if( 0 == endbit ) {
           this->lasttelephoneeventsn = sn;
           this->lasttelephoneevent = event;
-        } else if( 1 == endbit ) {
+        } else if( 1 == endbit &&
+                   0 != this->lasttelephoneeventsn ) {
           this->lasttelephoneeventsn = 0;
+          this->sendtelevent();
         }
       }
     }
     return true;
   } else if( 0 != this->lasttelephoneeventsn &&
-             abs( static_cast< long long int >( sn - this->lasttelephoneeventsn ) ) > MAXDTMFSNDIFFERENCE ) {
+             abs( static_cast< long long int > ( sn - this->lasttelephoneeventsn ) ) > MAXDTMFSNDIFFERENCE ) {
     /* timeout on waiting for end packet */
     this->sendtelevent();
     this->lasttelephoneeventsn = 0;
