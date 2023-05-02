@@ -40,10 +40,16 @@ class projectchannelmux;
 #define OUTBUFFERPACKETCOUNT 16
 
 /* 
-   The SN difference between receiving the first DTMF EV and when we consider we have lost all end events.
-   Delay = MAXDTMFSNDIFFERENCE * 20mS
+  The SN difference between receiving the first DTMF EV and when we consider we have lost all end events.
+  Delay = MAXDTMFSNDIFFERENCE * 20mS
+
+  rfc2833 - 3.6: An audio source SHOULD start transmitting event packets as soon as it
+       recognizes an event and every 50 ms thereafter or the packet interval
+       for the audio codec used for this session, if known. 
+        This means our ts will not stay in sync with our sequence number - which increments 
+        with every packet.
 */
-#define MAXDTMFSNDIFFERENCE 75
+#define MAXDTMFSNDIFFERENCE 4
 
 
 /*
