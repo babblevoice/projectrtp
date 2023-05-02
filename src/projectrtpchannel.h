@@ -49,7 +49,7 @@ class projectchannelmux;
         This means our ts will not stay in sync with our sequence number - which increments 
         with every packet.
 */
-#define MAXDTMFSNDIFFERENCE 4
+#define MAXDTMFSNDIFFERENCE 6
 
 
 /*
