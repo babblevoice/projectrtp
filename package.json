@@ -9,7 +9,8 @@
     "test": "test"
   },
   "scripts": {
-    "test": "./node_modules/mocha/bin/_mocha --recursive --check-leaks",
+    "test": "./node_modules/mocha/bin/_mocha test/**/*.js --check-leaks",
+    "github:check": "node test/basictests.js; npm update; ./node_modules/mocha/bin/_mocha --recursive --check-leaks --exit",
     "check": "tsc --checkJs --noEmit --target es6 --module commonjs --skipLibCheck *.js test/**/*.js; ./node_modules/eslint/bin/eslint.js ./",
     "docs": "jsdoc -c jsdoc.conf.json ./README.md",
     "stress": "node stress/index.js",
