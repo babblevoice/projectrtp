@@ -525,23 +525,60 @@ describe( "dtmf", function() {
       sendpk( i, i*20, channela.local.port, endpointa )
     }
 
-    senddtmf( 13, 12 * 160, 13*20, channela.local.port, endpointa, false, "4" )
-    senddtmf( 14, 12 * 160, 14*20, channela.local.port, endpointa, false, "4" )
-    senddtmf( 15, 12 * 160, 15*20, channela.local.port, endpointa, true, "4" )
+    sendpk( 0, 0, channela.local.port, endpointa )
+    sendpk( 1, 1*20, channela.local.port, endpointa )
+    sendpk( 2, 2*20, channela.local.port, endpointa )
+    sendpk( 3, 3*20, channela.local.port, endpointa )
+    sendpk( 4, 4*20, channela.local.port, endpointa )
+    sendpk( 5, 5*20, channela.local.port, endpointa )
+    sendpk( 6, 6*20, channela.local.port, endpointa )
+    sendpk( 7, 7*20, channela.local.port, endpointa )
+    sendpk( 8, 8*20, channela.local.port, endpointa )
+    sendpk( 9, 9*20, channela.local.port, endpointa )
+    sendpk( 10, 10*20, channela.local.port, endpointa )
+    sendpk( 11, 11*20, channela.local.port, endpointa )
+    sendpk( 12, 12*20, channela.local.port, endpointa )
 
-    for( let i = 16;  23 > i; i ++ ) {
-      sendpk( i, (i-3)*20, channela.local.port, endpointa )
-    }
+    senddtmf( 13, 13*160, 13*20, channela.local.port, endpointa, false, "4" )
+    sendpk( 14, 13*20, channela.local.port, endpointa, 0, 13*160 )
+    sendpk( 15, 14*20, channela.local.port, endpointa, 0, 14*160 )
+    senddtmf( 16, (15*160)+10, (15*20)+10, channela.local.port, endpointa, false, "4" )
+    sendpk( 17, 15*20, channela.local.port, endpointa, 0, 15*160 )
+    sendpk( 18, 16*20, channela.local.port, endpointa, 0, 16*160 )
+    senddtmf( 19, (17*160)+20, (17*20)+20, channela.local.port, endpointa, true, "4" )
+    sendpk( 20, 17*20, channela.local.port, endpointa, 0, 17*160 )
+    sendpk( 21, 18*20, channela.local.port, endpointa, 0, 18*160 )
 
-    senddtmf( 23, 22 * 160, 23*20, channela.local.port, endpointa, false, "5" )
-    senddtmf( 24, 22 * 160, 24*20, channela.local.port, endpointa, false, "5" )
-    senddtmf( 25, 22 * 160, 25*20, channela.local.port, endpointa, true, "5" )
+    sendpk( 22, 19*20, channela.local.port, endpointa, 0, 19*160 )
+    sendpk( 23, 20*20, channela.local.port, endpointa, 0, 20*160 )
+    sendpk( 24, 21*20, channela.local.port, endpointa, 0, 21*160 )
+    sendpk( 25, 22*20, channela.local.port, endpointa, 0, 22*160 )
+    sendpk( 26, 23*20, channela.local.port, endpointa, 0, 23*160 )
+    sendpk( 27, 24*20, channela.local.port, endpointa, 0, 24*160 )
+    sendpk( 28, 25*20, channela.local.port, endpointa, 0, 25*160 )
 
-    for( let i = 26;  50 > i; i ++ ) {
-      sendpk( i, (i-6)*20, channela.local.port, endpointa )
-    }
+    senddtmf( 29, 26*160, 26*20, channela.local.port, endpointa, false, "5" )
+    sendpk( 30, 26*20, channela.local.port, endpointa, 0, 26*160 )
+    sendpk( 31, 27*20, channela.local.port, endpointa, 0, 27*160 )
+    senddtmf( 32, (27*160)+10, (27*20)+10, channela.local.port, endpointa, false, "5" )
+    sendpk( 33, 28*20, channela.local.port, endpointa, 0, 28*160 )
+    sendpk( 34, 28*20, channela.local.port, endpointa, 0, 28*160 )
+    senddtmf( 35, (28*160)+20, (28*20)+20, channela.local.port, endpointa, true, "5" )
+    sendpk( 36, 29*20, channela.local.port, endpointa, 0, 29*160 )
+    sendpk( 37, 30*20, channela.local.port, endpointa, 0, 30*160 )
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 1500 ) } )
+    sendpk( 37, 31*20, channela.local.port, endpointa, 0, 31*160 )
+    sendpk( 38, 32*20, channela.local.port, endpointa, 0, 32*160 )
+    sendpk( 39, 33*20, channela.local.port, endpointa, 0, 33*160 )
+    sendpk( 40, 34*20, channela.local.port, endpointa, 0, 34*160 )
+    sendpk( 41, 35*20, channela.local.port, endpointa, 0, 35*160 )
+    sendpk( 42, 36*20, channela.local.port, endpointa, 0, 36*160 )
+    sendpk( 43, 37*20, channela.local.port, endpointa, 0, 37*160 )
+    sendpk( 44, 38*20, channela.local.port, endpointa, 0, 38*160 )
+    sendpk( 45, 39*20, channela.local.port, endpointa, 0, 39*160 )
+    sendpk( 46, 40*20, channela.local.port, endpointa, 0, 40*160 )
+
+    await new Promise( ( r ) => { setTimeout( () => r(), 1400 ) } )
 
     channela.close()
     endpointa.close()
@@ -553,20 +590,18 @@ describe( "dtmf", function() {
     expect( endpointbpkcount ).to.be.within( 30, 51 )
     expect( dtmfpkcount ).to.equal( 6 )
 
-    const expectedmessages = [
-      { action: "mix", event: "start" },
-      { action: "telephone-event", event: "4" },
-      { action: "telephone-event", event: "5" },
-      { action: "mix", event: "finished" },
-      { action: "close" }
-    ]
-
     expect( receivedmessages.length ).to.equal( 5 )
-    expect( receivedmessages[ 0 ] ).to.deep.include( expectedmessages[ 0 ] )
-    expect( receivedmessages[ 1 ] ).to.deep.include( expectedmessages[ 1 ] )
-    expect( receivedmessages[ 2 ] ).to.deep.include( expectedmessages[ 2 ] )
-    expect( receivedmessages[ 3 ] ).to.deep.include( expectedmessages[ 3 ] )
-    expect( receivedmessages[ 4 ] ).to.deep.include( expectedmessages[ 4 ] )
+
+    expect( receivedmessages[ 0 ].action ).to.equal( "mix" )
+    expect( receivedmessages[ 1 ].action ).to.equal( "telephone-event" )
+    expect( receivedmessages[ 2 ].action ).to.equal( "telephone-event" )
+    expect( receivedmessages[ 3 ].action ).to.equal( "mix" )
+    expect( receivedmessages[ 4 ].action ).to.equal( "close" )
+
+    expect( receivedmessages[ 0 ].event ).to.equal( "start" )
+    expect( receivedmessages[ 1 ].event ).to.equal( "4" )
+    expect( receivedmessages[ 2 ].event ).to.equal( "5" )
+    expect( receivedmessages[ 3 ].event ).to.equal( "finished" )
 
   } )
 
