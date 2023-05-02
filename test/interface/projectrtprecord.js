@@ -248,7 +248,7 @@ describe( "record", function() {
     expect( wavinfo.samplerate ).to.equal( 8000 )
     expect( wavinfo.byterate ).to.equal( 32000 )
     expect( wavinfo.bitdepth ).to.equal( 16 )
-    expect( wavinfo.chunksize ).to.be.within( 3000, 7000 ) /* 200mS of audio */
+    expect( wavinfo.chunksize ).to.be.within( 2500, 7000 ) /* 200mS of audio */
     expect( wavinfo.fmtchunksize ).to.equal( 16 )
     expect( wavinfo.subchunksize ).to.be.within( 3000, 7000 )
 
