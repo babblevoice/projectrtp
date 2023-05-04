@@ -30,21 +30,9 @@ Given a version number MAJOR.MINOR.PATCH, increment the:
 
 As part of this, we maintain jsdoc documentation to document our public interface to this programme.
 
-Only when we release version 1.0.0 will the public API be settled.
-
 ## Release process
 
-1. Update package.json to the new version number (see Version numbers above)
-2. Update Dockerfile with the new version number
-3. npm test && stress testing
-4. git commit && push
-5. npm publish
-6. docker buildx prune
-7. docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:<version> . --push
-8. Git release
-9. Github tag <version> 
-
-<version> should simply the semantic version number. For late stage test builds this could be <version>betax.
+Releases are managed on GitHub actions. It builds and tests any version.
 
 ## Docker
 
@@ -100,27 +88,6 @@ has a submodule so (although this is handled inteh Dockerfile if you are buildin
 
 ```
 git submodule update --init --recursive
-```
-
-### Fedora
-
-After installing standard build tools - including g++.
-
-```
-dnf install ilbc-devel spandsp-devel boost gnutls libsrtp libsrtp-devel g++
-```
-
-### Ubuntu
-
-Build ilbc from the sub module plus install other dependancies.
-
-```bash
-
-apt install libboost-dev libboost-system-dev libspandsp-dev gnutls-dev libsrtp2-dev cmake ccache
-
-cd libilbc
-cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; cmake --build .; cmake --install .
-cd ..
 ```
 
 ## Docker/Podman
