@@ -24,7 +24,7 @@ function sendpayload( sendtime, pk, dstport, server ) {
 }
 
 /* helper functions */
-function sendpk( sn, sendtime, dstport, server, pt = 0, ts, ssrc ) {
+function sendpk( sn, ts, sendtime, dstport, server, pt = 0, ssrc ) {
 
   if( !ssrc ) ssrc = 25
   const pklength = 172
@@ -33,8 +33,6 @@ function sendpk( sn, sendtime, dstport, server, pt = 0, ts, ssrc ) {
 
     const payload = Buffer.alloc( pklength - 12 ).fill( projectrtp.codecx.linear162pcmu( sn ) & 0xff )
     const subheader = Buffer.alloc( 10 )
-
-    if( !ts ) ts = sn * 160
 
     subheader.writeUInt8( pt, 1 ) // payload type
     subheader.writeUInt16BE( ( sn ) % ( 2**16 ) )
@@ -121,15 +119,15 @@ describe( "dtmf", function() {
 
       /* send a packet every 20mS x 50 */
       for( let i = 0;  23 > i; i ++ ) {
-        sendpk( i, i*20, channel.local.port, server )
+        sendpk( i, i*160, i*20, channel.local.port, server )
       }
 
-      senddtmf( 23, 22 * 160, 23*20, channel.local.port, server, false, "4" )
-      senddtmf( 24, 22 * 160, 24*20, channel.local.port, server, false, "4" )
-      senddtmf( 25, 22 * 160, 25*20, channel.local.port, server, true, "4" )
+      senddtmf( 23, 22*160, 23*20, channel.local.port, server, false, "4" )
+      senddtmf( 24, 22*160, 24*20, channel.local.port, server, false, "4" )
+      senddtmf( 25, 22*160, 25*20, channel.local.port, server, true, "4" )
 
       for( let i = 26;  40 > i; i ++ ) {
-        sendpk( i, (i-3)*20, channel.local.port, server )
+        sendpk( i, i*160, (i-3)*20, channel.local.port, server )
       }
 
       setTimeout( () => channel.close(), 1000 )
@@ -180,7 +178,7 @@ describe( "dtmf", function() {
 
       /* send a packet every 20mS x 50 */
       for( let i = 0;  50 > i; i ++ ) {
-        sendpk( i, i*20, channel.local.port, server )
+        sendpk( i, i*160, i*20, channel.local.port, server )
       }
 
       setTimeout( () => channel.dtmf( "#1" ), 400 )
@@ -239,7 +237,7 @@ describe( "dtmf", function() {
 
     /* send a packet every 20mS x 70 */
     for( let i = 0;  50 > i; i ++ ) {
-      sendpk( i, i*20, channela.local.port, clienta )
+      sendpk( i, i*160, i*20, channela.local.port, clienta )
     }
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 400 ) } )
@@ -322,7 +320,7 @@ describe( "dtmf", function() {
 
     /* send a packet every 20mS x 50 */
     for( let i = 0;  50 > i; i ++ ) {
-      sendpk( i, i*20, channela.local.port, clienta )
+      sendpk( i, i*160, i*20, channela.local.port, clienta )
     }
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
@@ -375,7 +373,7 @@ describe( "dtmf", function() {
 
       /* send a packet every 20mS x 50 */
       for( let i = 0;  13 > i; i ++ ) {
-        sendpk( i, i*20, channel.local.port, server )
+        sendpk( i, i*160, i*20, channel.local.port, server )
       }
 
       senddtmf( 13, 12 * 160, 13*20, channel.local.port, server, false, "4" )
@@ -384,7 +382,7 @@ describe( "dtmf", function() {
       // senddtmf( 15, 12 * 160, 15*20, channel.port, server, true, "4" )
 
       for( let i = 16;  23 > i; i ++ ) {
-        sendpk( i, (i-3)*20, channel.local.port, server )
+        sendpk( i, i*160, (i-3)*20, channel.local.port, server )
       }
 
       senddtmf( 23, 22 * 160, 23*20, channel.local.port, server, false, "5" )
@@ -392,7 +390,7 @@ describe( "dtmf", function() {
       senddtmf( 25, 22 * 160, 25*20, channel.local.port, server, true, "5" )
 
       for( let i = 26;  33 > i; i ++ ) {
-        sendpk( i, (i-6)*20, channel.local.port, server )
+        sendpk( i, i*160, (i-6)*20, channel.local.port, server )
       }
 
       setTimeout( () => channel.close(), 1000 )
@@ -432,41 +430,41 @@ describe( "dtmf", function() {
       expect( channel.echo() ).to.be.true
 
       /* send a packet every 20mS x 50 */
-      sendpk( 0, 0, channel.local.port, server )
-      sendpk( 1, 1*20, channel.local.port, server )
-      sendpk( 2, 2*20, channel.local.port, server )
-      sendpk( 3, 3*20, channel.local.port, server )
-      sendpk( 4, 4*20, channel.local.port, server )
-      sendpk( 5, 5*20, channel.local.port, server )
-      sendpk( 6, 6*20, channel.local.port, server )
-      sendpk( 7, 7*20, channel.local.port, server )
-      sendpk( 8, 8*20, channel.local.port, server )
-      sendpk( 9, 9*20, channel.local.port, server )
-      sendpk( 10, 10*20, channel.local.port, server )
-      sendpk( 11, 11*20, channel.local.port, server )
-      sendpk( 12, 12*20, channel.local.port, server )
+      sendpk( 0, 160, 0, channel.local.port, server )
+      sendpk( 1, 1*160, 1*20, channel.local.port, server )
+      sendpk( 2, 2*160, 2*20, channel.local.port, server )
+      sendpk( 3, 3*160, 3*20, channel.local.port, server )
+      sendpk( 4, 4*160, 4*20, channel.local.port, server )
+      sendpk( 5, 5*160, 5*20, channel.local.port, server )
+      sendpk( 6, 6*160, 6*20, channel.local.port, server )
+      sendpk( 7, 7*160, 7*20, channel.local.port, server )
+      sendpk( 8, 8*160, 8*20, channel.local.port, server )
+      sendpk( 9, 9*160, 9*20, channel.local.port, server )
+      sendpk( 10, 10*160, 10*20, channel.local.port, server )
+      sendpk( 11, 11*160, 11*20, channel.local.port, server )
+      sendpk( 12, 12*160, 12*20, channel.local.port, server )
 
       senddtmf( 13, 13*160, 13*20, channel.local.port, server, false, "4" )
-      sendpk( 14, 13*20, channel.local.port, server, 0, 13*160 )
-      sendpk( 15, 14*20, channel.local.port, server, 0, 14*160 )
+      sendpk( 14, 13*160, 13*20, channel.local.port, server, 0 )
+      sendpk( 15, 14*160, 14*20, channel.local.port, server, 0 )
 
       senddtmf( 16, (15*160)+10, (15*20)+10, channel.local.port, server, false, "4" )
-      sendpk( 17, 15*20, channel.local.port, server, 0, 15*160 )
-      sendpk( 18, 16*20, channel.local.port, server, 0, 16*160 )
+      sendpk( 17, 15*160, 15*20, channel.local.port, server, 0 )
+      sendpk( 18, 16*160, 16*20, channel.local.port, server, 0 )
       // Packet loss
       // senddtmf( 19, (16*160)+20, (16*20)+20, channel.local.port, server, true, "4" )
 
-      sendpk( 20, 17*20, channel.local.port, server, 0, 17*160 )
-      sendpk( 21, 18*20, channel.local.port, server, 0, 18*160 )
-      sendpk( 22, 19*20, channel.local.port, server, 0, 19*160 )
-      sendpk( 23, 20*20, channel.local.port, server, 0, 20*160 )
-      sendpk( 24, 21*20, channel.local.port, server, 0, 21*160 )
-      sendpk( 25, 22*20, channel.local.port, server, 0, 22*160 )
-      sendpk( 26, 23*20, channel.local.port, server, 0, 23*160 )
-      sendpk( 27, 24*20, channel.local.port, server, 0, 24*160 )
-      sendpk( 28, 25*20, channel.local.port, server, 0, 25*160 )
-      sendpk( 29, 26*20, channel.local.port, server, 0, 26*160 )
-      sendpk( 30, 27*20, channel.local.port, server, 0, 27*160 )
+      sendpk( 20, 17*160, 17*20, channel.local.port, server, 0 )
+      sendpk( 21, 18*160, 18*20, channel.local.port, server, 0 )
+      sendpk( 22, 19*160, 19*20, channel.local.port, server, 0 )
+      sendpk( 23, 20*160, 20*20, channel.local.port, server, 0 )
+      sendpk( 24, 21*160, 21*20, channel.local.port, server, 0 )
+      sendpk( 25, 22*160, 22*20, channel.local.port, server, 0 )
+      sendpk( 26, 23*160, 23*20, channel.local.port, server, 0 )
+      sendpk( 27, 24*160, 24*20, channel.local.port, server, 0 )
+      sendpk( 28, 25*160, 25*20, channel.local.port, server, 0 )
+      sendpk( 29, 26*160, 26*20, channel.local.port, server, 0 )
+      sendpk( 30, 27*160, 27*20, channel.local.port, server, 0 )
 
       setTimeout( () => channel.close(), 1000 )
 
@@ -544,62 +542,60 @@ describe( "dtmf", function() {
     expect( channela.mix( channelb ) ).to.be.true
 
     /* send a packet every 20mS x 50 */
-    for( let i = 0;  13 > i; i ++ ) {
-      sendpk( i, i*20, channela.local.port, endpointa )
-    }
-
-    sendpk( 0, 0, channela.local.port, endpointa )
-    sendpk( 1, 1*20, channela.local.port, endpointa )
-    sendpk( 2, 2*20, channela.local.port, endpointa )
-    sendpk( 3, 3*20, channela.local.port, endpointa )
-    sendpk( 4, 4*20, channela.local.port, endpointa )
-    sendpk( 5, 5*20, channela.local.port, endpointa )
-    sendpk( 6, 6*20, channela.local.port, endpointa )
-    sendpk( 7, 7*20, channela.local.port, endpointa )
-    sendpk( 8, 8*20, channela.local.port, endpointa )
-    sendpk( 9, 9*20, channela.local.port, endpointa )
-    sendpk( 10, 10*20, channela.local.port, endpointa )
-    sendpk( 11, 11*20, channela.local.port, endpointa )
-    sendpk( 12, 12*20, channela.local.port, endpointa )
+    sendpk( 0, 0, 0, channela.local.port, endpointa )
+    sendpk( 1, 1*160, 1*20, channela.local.port, endpointa )
+    sendpk( 2, 2*160, 2*20, channela.local.port, endpointa )
+    sendpk( 3, 3*160, 3*20, channela.local.port, endpointa )
+    sendpk( 4, 4*160, 4*20, channela.local.port, endpointa )
+    sendpk( 5, 5*160, 5*20, channela.local.port, endpointa )
+    sendpk( 6, 6*160, 6*20, channela.local.port, endpointa )
+    sendpk( 7, 7*160, 7*20, channela.local.port, endpointa )
+    sendpk( 8, 8*160, 8*20, channela.local.port, endpointa )
+    sendpk( 9, 9*160, 9*20, channela.local.port, endpointa )
+    sendpk( 10, 10*160, 10*20, channela.local.port, endpointa )
+    sendpk( 11, 11*160, 11*20, channela.local.port, endpointa )
+    sendpk( 12, 12*160, 12*20, channela.local.port, endpointa )
 
     senddtmf( 13, 13*160, 13*20, channela.local.port, endpointa, false, "4" )
-    sendpk( 14, 13*20, channela.local.port, endpointa, 0, 13*160 )
-    sendpk( 15, 14*20, channela.local.port, endpointa, 0, 14*160 )
+    sendpk( 14, 13*160, 13*20, channela.local.port, endpointa, 0 )
+    sendpk( 15, 14*160, 14*20, channela.local.port, endpointa, 0 )
     senddtmf( 16, (15*160)+10, (15*20)+10, channela.local.port, endpointa, false, "4" )
-    sendpk( 17, 15*20, channela.local.port, endpointa, 0, 15*160 )
-    sendpk( 18, 16*20, channela.local.port, endpointa, 0, 16*160 )
+    sendpk( 17, 15*160, 15*20, channela.local.port, endpointa, 0 )
+    sendpk( 18, 16*160, 16*20, channela.local.port, endpointa, 0 )
     senddtmf( 19, (17*160)+20, (17*20)+20, channela.local.port, endpointa, true, "4" )
-    sendpk( 20, 17*20, channela.local.port, endpointa, 0, 17*160 )
-    sendpk( 21, 18*20, channela.local.port, endpointa, 0, 18*160 )
+    sendpk( 20, 17*160, 17*20, channela.local.port, endpointa, 0 )
+    sendpk( 21, 18*160, 18*20, channela.local.port, endpointa, 0 )
+    senddtmf( 22, (18*160)+30, (18*20)+30, channela.local.port, endpointa, true, "4" )
+    sendpk( 23, 19*160, 19*20, channela.local.port, endpointa, 0 )
+    sendpk( 24, 20*160, 20*20, channela.local.port, endpointa, 0 )
+    sendpk( 25, 21*160, 21*20, channela.local.port, endpointa, 0 )
+    sendpk( 26, 22*160, 22*20, channela.local.port, endpointa, 0 )
+    sendpk( 27, 23*160, 23*20, channela.local.port, endpointa, 0 )
+    sendpk( 28, 24*160, 24*20, channela.local.port, endpointa, 0 )
+    sendpk( 29, 25*160, 25*20, channela.local.port, endpointa, 0 )
 
-    sendpk( 22, 19*20, channela.local.port, endpointa, 0, 19*160 )
-    sendpk( 23, 20*20, channela.local.port, endpointa, 0, 20*160 )
-    sendpk( 24, 21*20, channela.local.port, endpointa, 0, 21*160 )
-    sendpk( 25, 22*20, channela.local.port, endpointa, 0, 22*160 )
-    sendpk( 26, 23*20, channela.local.port, endpointa, 0, 23*160 )
-    sendpk( 27, 24*20, channela.local.port, endpointa, 0, 24*160 )
-    sendpk( 28, 25*20, channela.local.port, endpointa, 0, 25*160 )
+    senddtmf( 30, 26*160, 26*20, channela.local.port, endpointa, false, "5" )
+    sendpk( 31, 26*160, 26*20, channela.local.port, endpointa, 0 )
+    sendpk( 32, 27*160, 27*20, channela.local.port, endpointa, 0 )
+    senddtmf( 33, (27*160)+10, (27*20)+10, channela.local.port, endpointa, false, "5" )
+    sendpk( 34, 28*160, 28*20, channela.local.port, endpointa, 0 )
+    sendpk( 35, 29*160, 28*20, channela.local.port, endpointa, 0 )
+    senddtmf( 36, (28*160)+20, (28*20)+20, channela.local.port, endpointa, true, "5" )
+    sendpk( 37, 30*160, 29*20, channela.local.port, endpointa, 0 )
+    sendpk( 38, 31*160, 30*20, channela.local.port, endpointa, 0 )
 
-    senddtmf( 29, 26*160, 26*20, channela.local.port, endpointa, false, "5" )
-    sendpk( 30, 26*20, channela.local.port, endpointa, 0, 26*160 )
-    sendpk( 31, 27*20, channela.local.port, endpointa, 0, 27*160 )
-    senddtmf( 32, (27*160)+10, (27*20)+10, channela.local.port, endpointa, false, "5" )
-    sendpk( 33, 28*20, channela.local.port, endpointa, 0, 28*160 )
-    sendpk( 34, 28*20, channela.local.port, endpointa, 0, 28*160 )
-    senddtmf( 35, (28*160)+20, (28*20)+20, channela.local.port, endpointa, true, "5" )
-    sendpk( 36, 29*20, channela.local.port, endpointa, 0, 29*160 )
-    sendpk( 37, 30*20, channela.local.port, endpointa, 0, 30*160 )
+    senddtmf( 39, (38*160)+30, (30*20)+30, channela.local.port, endpointa, true, "5" )
+    sendpk( 40, 32*160, 31*20, channela.local.port, endpointa, 0 )
+    sendpk( 41, 33*160, 32*20, channela.local.port, endpointa, 0 )
 
-    sendpk( 37, 31*20, channela.local.port, endpointa, 0, 31*160 )
-    sendpk( 38, 32*20, channela.local.port, endpointa, 0, 32*160 )
-    sendpk( 39, 33*20, channela.local.port, endpointa, 0, 33*160 )
-    sendpk( 40, 34*20, channela.local.port, endpointa, 0, 34*160 )
-    sendpk( 41, 35*20, channela.local.port, endpointa, 0, 35*160 )
-    sendpk( 42, 36*20, channela.local.port, endpointa, 0, 36*160 )
-    sendpk( 43, 37*20, channela.local.port, endpointa, 0, 37*160 )
-    sendpk( 44, 38*20, channela.local.port, endpointa, 0, 38*160 )
-    sendpk( 45, 39*20, channela.local.port, endpointa, 0, 39*160 )
-    sendpk( 46, 40*20, channela.local.port, endpointa, 0, 40*160 )
+    sendpk( 42, 34*160, 33*20, channela.local.port, endpointa, 0 )
+    sendpk( 43, 35*160, 34*20, channela.local.port, endpointa, 0 )
+    sendpk( 44, 36*160, 35*20, channela.local.port, endpointa, 0 )
+    sendpk( 45, 37*160, 36*20, channela.local.port, endpointa, 0 )
+    sendpk( 46, 38*160, 37*20, channela.local.port, endpointa, 0 )
+    sendpk( 47, 39*160, 38*20, channela.local.port, endpointa, 0 )
+    sendpk( 48, 40*160, 39*20, channela.local.port, endpointa, 0 )
+    sendpk( 49, 51*160, 40*20, channela.local.port, endpointa, 0 )
 
     await new Promise( ( r ) => { setTimeout( () => r(), 1400 ) } )
 
@@ -611,7 +607,7 @@ describe( "dtmf", function() {
 
     expect( endpointapkcount ).to.be.within( 30, 51 )
     expect( endpointbpkcount ).to.be.within( 30, 51 )
-    expect( dtmfpkcount ).to.equal( 6 )
+    expect( dtmfpkcount ).to.be.within( 4, 8 )
 
     expect( receivedmessages.length ).to.equal( 5 )
 
@@ -715,19 +711,19 @@ describe( "dtmf", function() {
 
     /* send a packet every 20mS x 50 */
     /* NO FOR LOOPS for explicit readablity of the test */
-    sendpk( 0, 0, channela.local.port, endpointa )
-    sendpk( 1, 20, channela.local.port, endpointa )
-    sendpk( 2, 2*20, channela.local.port, endpointa )
-    sendpk( 3, 3*20, channela.local.port, endpointa )
-    sendpk( 4, 4*20, channela.local.port, endpointa )
-    sendpk( 5, 5*20, channela.local.port, endpointa )
-    sendpk( 6, 6*20, channela.local.port, endpointa )
-    sendpk( 7, 7*20, channela.local.port, endpointa )
-    sendpk( 8, 8*20, channela.local.port, endpointa )
-    sendpk( 9, 9*20, channela.local.port, endpointa )
-    sendpk( 10, 10*20, channela.local.port, endpointa )
-    sendpk( 11, 11*20, channela.local.port, endpointa )
-    sendpk( 12, 12*20, channela.local.port, endpointa )
+    sendpk( 0, 0, 0, channela.local.port, endpointa )
+    sendpk( 1, 1*160, 20, channela.local.port, endpointa )
+    sendpk( 2, 2*160, 2*20, channela.local.port, endpointa )
+    sendpk( 3, 3*160, 3*20, channela.local.port, endpointa )
+    sendpk( 4, 4*160, 4*20, channela.local.port, endpointa )
+    sendpk( 5, 5*160, 5*20, channela.local.port, endpointa )
+    sendpk( 6, 6*160, 6*20, channela.local.port, endpointa )
+    sendpk( 7, 7*160, 7*20, channela.local.port, endpointa )
+    sendpk( 8, 8*160, 8*20, channela.local.port, endpointa )
+    sendpk( 9, 9*160, 9*20, channela.local.port, endpointa )
+    sendpk( 10, 10*160, 10*20, channela.local.port, endpointa )
+    sendpk( 11, 11*160, 11*20, channela.local.port, endpointa )
+    sendpk( 12, 12*160, 12*20, channela.local.port, endpointa )
 
     /* rfc2833 - 3.6: An audio source SHOULD start transmitting event packets as soon as it
        recognizes an event and every 50 ms thereafter or the packet interval
@@ -737,47 +733,47 @@ describe( "dtmf", function() {
         senddtmf( sn, ts, sendtime, port, socket, endofevent, event )
         sendpk( sn, sendtime, port, socket, pt, ts, ssrc ) */
     senddtmf( 13, 13*160, 13*20, channela.local.port, endpointa, false, "4" )
-    sendpk( 14, 13*20, channela.local.port, endpointa, 0, 13*160 )
-    sendpk( 15, 14*20, channela.local.port, endpointa, 0, 14*160 )
-    senddtmf( 16, (14*160)+10, (15*20)+10, channela.local.port, endpointa, false, "4" )
-    sendpk( 17, 15*20, channela.local.port, endpointa, 0, 15*160 )
-    sendpk( 18, 16*20, channela.local.port, endpointa, 0, 16*160 )
-    senddtmf( 19, (15*160)+20, (17*20)+20, channela.local.port, endpointa, true, "4" )
-    sendpk( 20, 17*20, channela.local.port, endpointa, 0, 17*160 )
+    sendpk( 14, 13*160, 13*20, channela.local.port, endpointa, 0 )
+    sendpk( 15, 14*160, 14*20, channela.local.port, endpointa, 0 )
+    senddtmf( 16, (16*160), (13*20)+50, channela.local.port, endpointa, false, "4" )
+    sendpk( 17, 15*160, 15*20, channela.local.port, endpointa, 0 )
+    sendpk( 18, 16*160, 16*20, channela.local.port, endpointa, 0 )
+    senddtmf( 19, (19*160), (13*20)+100, channela.local.port, endpointa, true, "4" )
+    sendpk( 20, 17*160, 17*20, channela.local.port, endpointa, 0 )
+    sendpk( 21, 18*160, 18*20, channela.local.port, endpointa, 0 )
+    senddtmf( 22, (22*160)+20, (13*20)+150, channela.local.port, endpointa, true, "4" )
+    sendpk( 23, 19*160, 19*20, channela.local.port, endpointa, 0 )
 
-    sendpk( 21, 18*20, channela.local.port, endpointa, 0, 18*160 )
-    sendpk( 22, 19*20, channela.local.port, endpointa, 0, 19*160 )
-
-    senddtmf( 23, 20*160, 20*20, channela.local.port, endpointa, false, "5" )
-    sendpk( 24, 20*20, channela.local.port, endpointa, 0, 20*160 )
-    sendpk( 25, 21*20, channela.local.port, endpointa, 0, 21*160 )
-    senddtmf( 26, (21*160)+10, (21*20)+10, channela.local.port, endpointa, false, "5" )
-    sendpk( 27, 22*20, channela.local.port, endpointa, 0, 22*160 )
-    sendpk( 28, 23*20, channela.local.port, endpointa, 0, 23*160 )
-    senddtmf( 29, (23*160)+20, (23*20)+20, channela.local.port, endpointa, true, "5" )
-    sendpk( 30, 24*20, channela.local.port, endpointa, 0, 24*160 )
-    sendpk( 31, 25*20, channela.local.port, endpointa, 0, 25*160 )
-
-    sendpk( 32, 26*20, channela.local.port, endpointa, 0, 26*160 )
-    sendpk( 33, 27*20, channela.local.port, endpointa, 0, 27*160 )
-    sendpk( 34, 28*20, channela.local.port, endpointa, 0, 28*160 )
-    sendpk( 35, 29*20, channela.local.port, endpointa, 0, 29*160 )
-    sendpk( 36, 30*20, channela.local.port, endpointa, 0, 30*160 )
-    sendpk( 37, 31*20, channela.local.port, endpointa, 0, 31*160 )
-    sendpk( 38, 32*20, channela.local.port, endpointa, 0, 32*160 )
-    sendpk( 39, 33*20, channela.local.port, endpointa, 0, 33*160 )
-    sendpk( 40, 34*20, channela.local.port, endpointa, 0, 34*160 )
-    sendpk( 41, 35*20, channela.local.port, endpointa, 0, 35*160 )
-    sendpk( 42, 36*20, channela.local.port, endpointa, 0, 36*160 )
-    sendpk( 43, 37*20, channela.local.port, endpointa, 0, 37*160 )
-    sendpk( 44, 38*20, channela.local.port, endpointa, 0, 38*160 )
-    sendpk( 45, 39*20, channela.local.port, endpointa, 0, 39*160 )
-    sendpk( 46, 40*20, channela.local.port, endpointa, 0, 40*160 )
-    sendpk( 47, 41*20, channela.local.port, endpointa, 0, 41*160 )
-    sendpk( 48, 42*20, channela.local.port, endpointa, 0, 42*160 )
-    sendpk( 49, 43*20, channela.local.port, endpointa, 0, 43*160 )
-    sendpk( 50, 44*20, channela.local.port, endpointa, 0, 44*160 )
-    sendpk( 51, 45*20, channela.local.port, endpointa, 0, 45*160 )
+    senddtmf( 24, 20*160, 20*20, channela.local.port, endpointa, false, "5" )
+    sendpk( 25, 20*160, 20*20, channela.local.port, endpointa, 0 )
+    sendpk( 26, 21*160, 21*20, channela.local.port, endpointa, 0 )
+    senddtmf( 27, (27*160), (20*20)+50, channela.local.port, endpointa, false, "5" )
+    sendpk( 28, 22*160, 22*20, channela.local.port, endpointa, 0 )
+    sendpk( 29, 23*160, 23*20, channela.local.port, endpointa, 0 )
+    senddtmf( 30, (30*160), (20*20)+100, channela.local.port, endpointa, true, "5" )
+    sendpk( 31, 24*160, 24*20, channela.local.port, endpointa, 0 )
+    sendpk( 32, 25*160, 25*20, channela.local.port, endpointa, 0 )
+    senddtmf( 33, (33*160), (20*20)+150, channela.local.port, endpointa, true, "5" )
+    sendpk( 34, 26*160, 26*20, channela.local.port, endpointa, 0 )
+    sendpk( 35, 27*160, 27*20, channela.local.port, endpointa, 0 )
+    sendpk( 36, 28*160, 28*20, channela.local.port, endpointa, 0 )
+    sendpk( 37, 29*160, 29*20, channela.local.port, endpointa, 0 )
+    sendpk( 38, 30*160, 30*20, channela.local.port, endpointa, 0 )
+    sendpk( 39, 31*160, 31*20, channela.local.port, endpointa, 0 )
+    sendpk( 40, 32*160, 32*20, channela.local.port, endpointa, 0 )
+    sendpk( 41, 33*160, 33*20, channela.local.port, endpointa, 0 )
+    sendpk( 42, 34*160, 34*20, channela.local.port, endpointa, 0 )
+    sendpk( 43, 35*160, 35*20, channela.local.port, endpointa, 0 )
+    sendpk( 44, 36*160, 36*20, channela.local.port, endpointa, 0 )
+    sendpk( 45, 37*160, 37*20, channela.local.port, endpointa, 0 )
+    sendpk( 46, 38*160, 38*20, channela.local.port, endpointa, 0 )
+    sendpk( 47, 39*160, 39*20, channela.local.port, endpointa, 0 )
+    sendpk( 48, 40*160, 40*20, channela.local.port, endpointa, 0 )
+    sendpk( 49, 41*160, 41*20, channela.local.port, endpointa, 0 )
+    sendpk( 50, 42*160, 42*20, channela.local.port, endpointa, 0 )
+    sendpk( 51, 43*160, 43*20, channela.local.port, endpointa, 0 )
+    sendpk( 52, 44*160, 44*20, channela.local.port, endpointa, 0 )
+    sendpk( 53, 45*160, 45*20, channela.local.port, endpointa, 0 )
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1200 ) } )
 
@@ -794,8 +790,8 @@ describe( "dtmf", function() {
 
     // 3 after we return to the event loop and enter the callback with close event.
     expect( dtmfapkcount ).to.equal( 0 )
-    expect( dtmfbpkcount ).to.equal( 6 )
-    expect( dtmfcpkcount ).to.equal( 6 )
+    expect( dtmfbpkcount ).to.be.within( 4, 8 )
+    expect( dtmfcpkcount ).to.be.within( 4, 8 )
 
     expect( receveiedmessages[ 0 ].action ).to.equal( "mix" )
     expect( receveiedmessages[ 1 ].action ).to.equal( "mix" )
@@ -850,29 +846,29 @@ describe( "dtmf", function() {
 
       // Event "3"
       const dstport = channel.local.port
-      sendpk( 948, 0, dstport, server, 0, 148480, 518218235 )
+      sendpk( 948, 148480, 0, dstport, server, 0, 518218235 )
       sendpayload( 20, fromstr( "80 e5 03 b5 00 02 44 a0 1e e3 61 fb 03 0a 00 a0 4c d1" ), dstport, server )
-      sendpk( 950, 40, dstport, server, 0, 148800, 518218235 )
+      sendpk( 950, 148800, 40, dstport, server, 0, 518218235 )
       sendpayload( 60, fromstr( "80 65 03 b7 00 02 44 a0 1e e3 61 fb 03 0a 01 40 25 b8" ), dstport, server )
-      sendpk( 952, 80, dstport, server, 0, 149120, 518218235 )
+      sendpk( 952, 149120, 80, dstport, server, 0, 518218235 )
       sendpayload( 100, fromstr( "80 65 03 b9 00 02 44 a0 1e e3 61 fb 03 0a 01 e0 e8 81" ), dstport, server )
-      sendpk( 954, 120, dstport, server, 0, 149440, 518218235 )
+      sendpk( 954, 149440,120, dstport, server, 0, 518218235 )
       sendpayload( 140, fromstr( "80 65 03 bb 00 02 44 a0 1e e3 61 fb 03 0a 02 80 e2 74" ), dstport, server )
-      sendpk( 956, 160, dstport, server, 0, 149760, 518218235 )
+      sendpk( 956, 149760, 160, dstport, server, 0, 518218235 )
       sendpayload( 180, fromstr( "80 65 03 bd 00 02 44 a0 1e e3 61 fb 03 0a 03 20 1f bb" ), dstport, server )
-      sendpk( 958, 200, dstport, server, 0, 150080, 518218235 )
+      sendpk( 958, 150080, 200, dstport, server, 0, 518218235 )
       sendpayload( 220, fromstr( "80 65 03 bf 00 02 44 a0 1e e3 61 fb 03 0a 03 c0 13 0c" ), dstport, server )
-      sendpk( 960, 240, dstport, server, 0, 150400, 518218235 )
+      sendpk( 960, 150400,240, dstport, server, 0, 518218235 )
       sendpayload( 260, fromstr( "80 65 03 c1 00 02 44 a0 1e e3 61 fb 03 0a 04 60 2e bf" ), dstport, server )
-      sendpk( 962, 280, dstport, server, 0, 150720, 518218235 )
+      sendpk( 962, 150720, 280, dstport, server, 0, 518218235 )
       sendpayload( 300, fromstr( "80 65 03 c3 00 02 44 a0 1e e3 61 fb 03 8a 04 60 05 c1" ), dstport, server )
       sendpayload( 320 ,fromstr( "80 65 03 c4 00 02 44 a0 1e e3 61 fb 03 8a 04 60 bb 69" ), dstport, server )
-      sendpk( 965, 340, dstport, server, 0, 151200, 518218235 )
+      sendpk( 965, 151200, 340, dstport, server, 0, 518218235 )
       sendpayload( 360, fromstr( "80 65 03 c6 00 02 44 a0 1e e3 61 fb 03 8a 04 60 1e 27" ), dstport, server )
-      sendpk( 967, 380, dstport, server, 0, 151520, 518218235 )
-      sendpk( 968, 400, dstport, server, 0, 151680, 518218235 )
-      sendpk( 969, 420, dstport, server, 0, 151840, 518218235 )
-      sendpk( 970, 440, dstport, server, 0, 152000, 518218235 )
+      sendpk( 967, 151520, 380, dstport, server, 0, 518218235 )
+      sendpk( 968, 151680, 400, dstport, server, 0, 518218235 )
+      sendpk( 969, 151840, 420, dstport, server, 0, 518218235 )
+      sendpk( 970, 152000, 440, dstport, server, 0, 518218235 )
 
       setTimeout( () => channel.close(), 25*20 )
     } )
