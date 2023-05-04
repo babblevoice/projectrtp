@@ -90,6 +90,7 @@ describe( "record", function() {
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
     channel.close()
+    await new Promise( resolve => { server.on( "close", resolve ) } )
 
     /* Now test the file */
     const wavinfo = prtp.projectrtp.soundfile.info( "/tmp/ourrecording.wav" )
@@ -135,9 +136,6 @@ describe( "record", function() {
 
     server.bind()
 
-    let done
-    const finished = new Promise( ( r ) => { done = r } )
-
     let expectedmessagecount = 0
     const expectedmessages = [
       { action: "record", file: "/tmp/ourstoppedrecording.wav", event: "recording" },
@@ -151,7 +149,6 @@ describe( "record", function() {
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
         if( "close" === d.action ) {
-          done()
           server.close()
         }
       } )
@@ -175,7 +172,7 @@ describe( "record", function() {
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
     channel.close()
-    await finished
+    await new Promise( resolve => { server.on( "close", resolve ) } )
 
     /* Now test the file */
     const wavinfo = prtp.projectrtp.soundfile.info( "/tmp/ourstoppedrecording.wav" )
@@ -203,16 +200,12 @@ describe( "record", function() {
     this.timeout( 1500 )
     this.slow( 1200 )
 
-    let done
-    const finished = new Promise( ( r ) => { done = r } )
-
     server.bind()
     server.on( "listening", async function() {
 
       channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) {
           server.close()
-          done()
         }
       } )
 
@@ -238,8 +231,7 @@ describe( "record", function() {
 
     await new Promise( ( r ) => { setTimeout( () => r(), 1300 ) } )
     channel.close()
-
-    await finished
+    await new Promise( resolve => { server.on( "close", resolve ) } )
 
     /* Now test the file */
     const wavinfo = prtp.projectrtp.soundfile.info( "/tmp/ourpausedrecording.wav" )
