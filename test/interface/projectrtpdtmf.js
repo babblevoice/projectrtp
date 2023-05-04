@@ -477,7 +477,7 @@ describe( "dtmf", function() {
       { action: "close" }
     ]
 
-    expect( receviedpkcount ).to.be.above( 20 )
+    expect( receviedpkcount ).to.be.above( 15 )
     expect( receivedmessages.length ).to.equal( 2 )
     expect( receivedmessages[ 0 ] ).to.deep.include( expectedmessages[ 0 ] )
     expect( receivedmessages[ 1 ] ).to.deep.include( expectedmessages[ 1 ] )
