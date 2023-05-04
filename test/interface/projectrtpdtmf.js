@@ -686,9 +686,6 @@ describe( "dtmf", function() {
 
     const receveiedmessages = []
 
-    let done
-    const finished = new Promise( ( r ) => { done = r } )
-
     const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       receveiedmessages.push( d )
 
@@ -702,7 +699,11 @@ describe( "dtmf", function() {
 
     const channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 97 } }, function( d ) {
       expect( d.action).to.not.equal( "telephone-event" )
-      if( "close" === d.action ) done()
+      if( "close" === d.action ) {
+        endpointa.close()
+        endpointb.close()
+        endpointc.close()
+      }
     } )
 
     /* mix */
@@ -741,7 +742,7 @@ describe( "dtmf", function() {
     senddtmf( 19, (19*160), (13*20)+100, channela.local.port, endpointa, true, "4" )
     sendpk( 20, 17*160, 17*20, channela.local.port, endpointa, 0 )
     sendpk( 21, 18*160, 18*20, channela.local.port, endpointa, 0 )
-    senddtmf( 22, (22*160)+20, (13*20)+150, channela.local.port, endpointa, true, "4" )
+    senddtmf( 22, (18*160), (13*20)+150, channela.local.port, endpointa, true, "4" )
     sendpk( 23, 19*160, 19*20, channela.local.port, endpointa, 0 )
     sendpk( 24, 20*160, 19*20, channela.local.port, endpointa, 0 )
     sendpk( 25, 21*160, 20*20, channela.local.port, endpointa, 0 )
@@ -784,11 +785,12 @@ describe( "dtmf", function() {
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1200 ) } )
 
     channela.close()
-    endpointa.close()
-    endpointb.close()
-    endpointc.close()
 
-    await finished
+    await Promise.all( [
+      new Promise( resolve => { endpointa.on( "close", resolve ) } ),
+      new Promise( resolve => { endpointb.on( "close", resolve ) } ),
+      new Promise( resolve => { endpointc.on( "close", resolve ) } )
+    ] )
 
     expect( endpointapkcount ).to.be.within( 59, 70 )
     expect( endpointbpkcount ).to.be.within( 59, 70 )
