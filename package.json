@@ -25,14 +25,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/tinpotnick/projectrtp.git"
+    "url": "git+https://github.com/babblevoice/projectrtp.git"
   },
   "author": "Nick Knight",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/tinpotnick/projectrtp/issues"
+    "url": "https://github.com/babblevoice/projectrtp/issues"
   },
-  "homepage": "https://github.com/tinpotnick/projectrtp#readme",
+  "homepage": "https://github.com/babblevoice/projectrtp#readme",
   "dependencies": {
     "uuid": "^9.0.0"
   },
