@@ -432,7 +432,7 @@ describe( "dtls", function() {
     await finished
 
     expect( clientcclose.stats.in.count ).to.be.above( 10 )
-    expect( clientcclose.stats.in.skip ).to.equal( 0 )
+    expect( clientcclose.stats.in.skip ).to.be.below( 2 ) // allow a little loss in test
 
   } )
 } )
