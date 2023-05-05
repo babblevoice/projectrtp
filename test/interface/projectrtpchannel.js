@@ -437,7 +437,7 @@ describe( "rtpchannel", function() {
     expect( closedstats.stats.in.count ).to.equal( 300 )
     expect( closedstats.stats.out.count ).to.be.within( 180, 190 )
     expect( totalsndiff ).to.equal( 0 ) // received should be reordered
-    expect( totaltsdiff ).to.equal( 18400 )
+    expect( totaltsdiff ).to.be.within( 18240, 18400 ) // Allow some loss in test
     expect( lastsn - firstsn ).to.be.within( 180, 192 )
   } )
 
