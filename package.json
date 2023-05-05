@@ -1,6 +1,6 @@
 {
   "name": "@babblevoice/projectrtp",
-  "version": "2.4.4",
+  "version": "2.4.5",
   "description": "A scalable Node addon RTP server",
   "main": "index.js",
   "directories": {
@@ -10,7 +10,7 @@
   },
   "scripts": {
     "test": "./node_modules/mocha/bin/_mocha test/**/*.js --check-leaks",
-    "github:check": "node test/basictests.js; npm update; npm test",
+    "github:check": "node test/basictests.js; npm update; ./node_modules/mocha/bin/_mocha test/**/*.js --check-leaks --exit",
     "check": "tsc --checkJs --noEmit --target es6 --module commonjs --skipLibCheck *.js test/**/*.js; ./node_modules/eslint/bin/eslint.js ./",
     "docs": "jsdoc -c jsdoc.conf.json ./README.md",
     "stress": "node stress/index.js",
