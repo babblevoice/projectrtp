@@ -367,24 +367,31 @@ describe( "dtmf", function() {
       sendpk( i, i*160, i*20, channel.local.port, server )
     }
 
-    senddtmf( 13, 12 * 160, 13*20, channel.local.port, server, false, "4" )
-    senddtmf( 14, 12 * 160, 14*20, channel.local.port, server, false, "4" )
+    /* DTMF every 50mS */
+    senddtmf( 13, 12*160, 13*20, channel.local.port, server, false, "4" )
+    sendpk( 14, 13*160, 13*20, channel.local.port, server )
+    sendpk( 15, 14*160, 14*20, channel.local.port, server )
+    senddtmf( 16, 14*160, (13*20)+50, channel.local.port, server, false, "4" )
     // Packet loss
     // senddtmf( 15, 12 * 160, 15*20, channel.port, server, true, "4" )
 
-    for( let i = 16;  23 > i; i ++ ) {
-      sendpk( i, i*160, (i-3)*20, channel.local.port, server )
+    for( let i = 17;  30 > i; i ++ ) {
+      sendpk( i, (i-2)*160, (i-2)*20, channel.local.port, server )
     }
 
-    senddtmf( 23, 22 * 160, 23*20, channel.local.port, server, false, "5" )
-    senddtmf( 24, 22 * 160, 24*20, channel.local.port, server, false, "5" )
-    senddtmf( 25, 22 * 160, 25*20, channel.local.port, server, true, "5" )
+    senddtmf( 31, 29*160, 29*20, channel.local.port, server, false, "5" )
+    sendpk( 32, 29*160, 29*20, channel.local.port, server )
+    sendpk( 33, 30*160, 30*20, channel.local.port, server )
+    senddtmf( 34, 30*160, (29*20)+50, channel.local.port, server, false, "5" )
+    sendpk( 35, 31*160, 31*20, channel.local.port, server )
+    sendpk( 36, 32*160, 32*20, channel.local.port, server )
+    senddtmf( 37, 32*160, (29*20)+100, channel.local.port, server, true, "5" )
 
-    for( let i = 26;  33 > i; i ++ ) {
+    for( let i = 37; 45 > i; i ++ ) {
       sendpk( i, i*160, (i-6)*20, channel.local.port, server )
     }
 
-    setTimeout( () => channel.close(), 1000 )
+    setTimeout( () => channel.close(), 1100 )
     await new Promise( resolve => { server.on( "close", resolve ) } )
 
     expect( receivedmessages[ 0 ].action ).to.equal( "telephone-event" )
