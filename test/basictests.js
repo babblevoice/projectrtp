@@ -23,8 +23,23 @@ async function testopen() {
   }
 }
 
+let retval = 0
+console.log( "Running project RTP" )
 prtp.projectrtp.run()
-testopen()
+
+console.log( "Test open channel" )
+
+try{
+  testopen()
+} catch( e ) {
+  console.log( e )
+  retval = 1
+}
+
+console.log( "Shutting down projectrtp" )
 prtp.projectrtp.shutdown()
+console.log( "Shutdown - good to proceed" )
+
+process.exit( retval )
 
 
