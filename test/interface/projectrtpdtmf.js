@@ -338,7 +338,7 @@ describe( "dtmf", function() {
   } )
 
 
-  it( "Send multiple 2833 DTMF and check event", function( done ) {
+  it( "Send multiple 2833 DTMF and check event", async function() {
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
@@ -348,53 +348,51 @@ describe( "dtmf", function() {
     this.slow( 2500 )
 
     server.bind()
-    server.on( "listening", async function() {
+    await new Promise( ( resolve ) => { server.on( "listening", () => resolve() ) } )
 
-      const ourport = server.address().port
+    const ourport = server.address().port
 
-      let expectedmessagecount = 0
-      const expectedmessages = [
-        { action: "telephone-event", event: "4" },
-        { action: "telephone-event", event: "5" },
-        { action: "close" }
-      ]
-
-      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
-        expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
-        expectedmessagecount++
-
-        if( "close" === d.action ) {
-          server.close()
-          done()
-        }
-      } )
-
-      expect( channel.echo() ).to.be.true
-
-      /* send a packet every 20mS x 50 */
-      for( let i = 0;  13 > i; i ++ ) {
-        sendpk( i, i*160, i*20, channel.local.port, server )
+    const receivedmessages = []
+    const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      receivedmessages.push( d )
+      if( "close" === d.action ) {
+        server.close()
       }
-
-      senddtmf( 13, 12 * 160, 13*20, channel.local.port, server, false, "4" )
-      senddtmf( 14, 12 * 160, 14*20, channel.local.port, server, false, "4" )
-      // Packet loss
-      // senddtmf( 15, 12 * 160, 15*20, channel.port, server, true, "4" )
-
-      for( let i = 16;  23 > i; i ++ ) {
-        sendpk( i, i*160, (i-3)*20, channel.local.port, server )
-      }
-
-      senddtmf( 23, 22 * 160, 23*20, channel.local.port, server, false, "5" )
-      senddtmf( 24, 22 * 160, 24*20, channel.local.port, server, false, "5" )
-      senddtmf( 25, 22 * 160, 25*20, channel.local.port, server, true, "5" )
-
-      for( let i = 26;  33 > i; i ++ ) {
-        sendpk( i, i*160, (i-6)*20, channel.local.port, server )
-      }
-
-      setTimeout( () => channel.close(), 1000 )
     } )
+
+    expect( channel.echo() ).to.be.true
+
+    /* send a packet every 20mS x 50 */
+    for( let i = 0;  13 > i; i ++ ) {
+      sendpk( i, i*160, i*20, channel.local.port, server )
+    }
+
+    senddtmf( 13, 12 * 160, 13*20, channel.local.port, server, false, "4" )
+    senddtmf( 14, 12 * 160, 14*20, channel.local.port, server, false, "4" )
+    // Packet loss
+    // senddtmf( 15, 12 * 160, 15*20, channel.port, server, true, "4" )
+
+    for( let i = 16;  23 > i; i ++ ) {
+      sendpk( i, i*160, (i-3)*20, channel.local.port, server )
+    }
+
+    senddtmf( 23, 22 * 160, 23*20, channel.local.port, server, false, "5" )
+    senddtmf( 24, 22 * 160, 24*20, channel.local.port, server, false, "5" )
+    senddtmf( 25, 22 * 160, 25*20, channel.local.port, server, true, "5" )
+
+    for( let i = 26;  33 > i; i ++ ) {
+      sendpk( i, i*160, (i-6)*20, channel.local.port, server )
+    }
+
+    setTimeout( () => channel.close(), 1000 )
+    await new Promise( resolve => { server.on( "close", resolve ) } )
+
+    expect( receivedmessages[ 0 ].action ).to.equal( "telephone-event" )
+    expect( receivedmessages[ 0 ].event ).to.equal( "4" )
+    expect( receivedmessages[ 1 ].action ).to.equal( "telephone-event" )
+    expect( receivedmessages[ 1 ].event ).to.equal( "5" )
+    expect( receivedmessages[ 2 ].action ).to.equal( "close" )
+
   } )
 
   it( "Lose end packet", async function() {
