@@ -453,7 +453,7 @@ describe( "dtmf", function() {
       sendpk( 14, 13*160, 13*20, channel.local.port, server, 0 )
       sendpk( 15, 14*160, 14*20, channel.local.port, server, 0 )
 
-      senddtmf( 16, (15*160)+10, (15*20)+10, channel.local.port, server, false, "4" )
+      senddtmf( 16, (15*160)+10, (13*20)+50, channel.local.port, server, false, "4" )
       sendpk( 17, 15*160, 15*20, channel.local.port, server, 0 )
       sendpk( 18, 16*160, 16*20, channel.local.port, server, 0 )
       // Packet loss
