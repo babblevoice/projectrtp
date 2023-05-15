@@ -96,7 +96,7 @@ describe( "rtpchannel", function() {
     await finished
   } )
 
-  it( "call create channel and check the structure of the returned object ( server as listener )", async function() {
+  it( "call create channel and check the structure of the returned object - server as listener", async function() {
 
     const ourport = 45433
     await projectrtp.server.listen( ourport, "127.0.0.1" )
@@ -119,7 +119,7 @@ describe( "rtpchannel", function() {
     await server.destroy()
   } )
 
-  it( "call create channel and check the structure of the returned object ( node as listener )", async function() {
+  it( "call create channel and check the structure of the returned object - node as listener", async function() {
 
     const ourport = 45432
     projectrtp.server.clearnodes()
