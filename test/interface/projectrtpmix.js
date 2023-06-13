@@ -432,6 +432,69 @@ describe( "channel mix", function() {
 
   } )
 
+  it( "mix 2 channels - pcmu <-> g722 with recording", async function() {
+
+    this.timeout( 3000 )
+    this.slow( 2000 )
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+
+    let endpointapkcount = 0
+    let endpointbpkcount = 0
+
+    endpointa.on( "message", function( msg ) {
+      endpointapkcount++
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+    } )
+
+    endpointb.on( "message", function( msg ) {
+
+      endpointbpkcount++
+      expect( 0x7f & msg [ 1 ] ).to.equal( 9 )
+      endpointb.send( msg, channelb.local.port, "localhost" )
+    } )
+
+    endpointa.bind()
+    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+
+    endpointb.bind()
+    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) channelb.close()
+    } )
+
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 9 } }, function( d ) {
+      if( "close" === d.action ) done()
+    } )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+
+    channela.record( { "file": "/tmp/g722mix2recording.wav" } )
+
+    /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
+    for( let i = 0;  50 > i; i ++ ) {
+      sendpk( i, i, channela.local.port, endpointa )
+    }
+
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
+
+    channela.close()
+    endpointa.close()
+    endpointb.close()
+
+    expect( endpointapkcount ).to.be.above( 30 )
+    expect( endpointbpkcount ).to.be.above( 30 )
+
+    await finished
+
+  } )
+
   it( "mix 3 channels - 1 writer 3 readers", async function() {
 
     this.timeout( 3000 )
