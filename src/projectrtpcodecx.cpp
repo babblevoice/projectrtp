@@ -141,8 +141,7 @@ void codecx::reset()
 ## restart
 Do enough to manage missing packets.
 */
-void codecx::restart( void )
-{
+void codecx::restart( void ) {
   this->lpfilter.reset();
   this->dcpowerfilter.reset();
   this->resamplelastsample = 0;
@@ -154,8 +153,7 @@ void codecx::restart( void )
 
 From whichever PCM encoding (u or a) encode to the other without having to do intermediate l16.
 */
-bool codecx::alaw2ulaw( void )
-{
+bool codecx::alaw2ulaw( void ) {
   if( 0 == this->pcmaref.size() ) return false;
   if( this->pcmaref.isdirty() ) return false;
 
@@ -167,23 +165,22 @@ bool codecx::alaw2ulaw( void )
   outbufptr = this->pcmuref.c_str();
   this->pcmuref.size( insize );
 
-  if( nullptr == outbufptr || nullptr == inbufptr )
-  {
+  if( nullptr == outbufptr || nullptr == inbufptr ) {
     std::cerr << "PCMA NULLPTR shouldn't happen (" << (void*)outbufptr << ", " << (void*)inbufptr << ")" << std::endl;
     return false;
   }
 
-  for( size_t i = 0; i < insize; i++ )
-  {
-    *outbufptr++ = alaw_to_ulaw_table[ *inbufptr++ ];
+  for( size_t i = 0; i < insize; i++ ) {
+    *outbufptr = alaw_to_ulaw_table[ *inbufptr ];
+    inbufptr++;
+    outbufptr++;
   }
 
   this->pcmuref.dirty( false );
   return true;
 }
 
-bool codecx::ulaw2alaw( void )
-{
+bool codecx::ulaw2alaw( void ) {
   if( 0 == this->pcmuref.size() ) return false;
   if( this->pcmuref.isdirty() ) return false;
 
@@ -195,15 +192,15 @@ bool codecx::ulaw2alaw( void )
   outbufptr = this->pcmaref.c_str();
   this->pcmaref.size( insize );
 
-  if( nullptr == outbufptr || nullptr == inbufptr )
-  {
+  if( nullptr == outbufptr || nullptr == inbufptr ) {
     std::cerr << "PCMU NULLPTR shouldn't happen(" << (void*)outbufptr << ", " << (void*)inbufptr << ")" << std::endl;
     return false;
   }
 
-  for( size_t i = 0; i < insize; i++ )
-  {
-    *outbufptr++ = ulaw_to_alaw_table[ *inbufptr++ ];
+  for( size_t i = 0; i < insize; i++ ) {
+    *outbufptr = ulaw_to_alaw_table[ *inbufptr ];
+    inbufptr++;
+    outbufptr++;
   }
 
   this->pcmaref.dirty( false );
@@ -220,20 +217,15 @@ bool codecx::g711tol16( void )
   int16_t *convert;
   size_t insize;
 
-  if( this->pcmaref.size() > 0 && !this->pcmaref.isdirty() )
-  {
+  if( this->pcmaref.size() > 0 && !this->pcmaref.isdirty() ) {
     in = this->pcmaref.c_str();
     convert = _pcmatol16;
     insize = this->pcmaref.size();
-  }
-  else if ( this->pcmuref.size() > 0 && !this->pcmuref.isdirty() )
-  {
+  } else if ( this->pcmuref.size() > 0 && !this->pcmuref.isdirty() ) {
     in = this->pcmuref.c_str();
     convert = _pcmutol16;
     insize = this->pcmuref.size();
-  }
-  else
-  {
+  } else {
     return false;
   }
 
@@ -241,9 +233,10 @@ bool codecx::g711tol16( void )
 
   int16_t *out = ( int16_t * ) this->l168kref.c_str();
 
-  for( size_t i = 0; i < insize; i++ )
-  {
-    *out++ = convert[ *in++ ];
+  for( size_t i = 0; i < insize; i++ ) {
+    *out = convert[ *in ];
+    in++;
+    out++;
   }
 
   this->l168kref.dirty( false );
@@ -265,9 +258,12 @@ bool codecx::l16topcma( void )
   size_t l168klength = this->l168kref.size();
   in = ( int16_t * ) this->l168kref.c_str();
 
-  for( size_t i = 0; i < l168klength; i++ )
-  {
-    *out++ = _l16topcma[ ( *in++ ) + 32768 ];
+  uint16_t index;
+  for( size_t i = 0; i < l168klength; i++ ) {
+    index = *in + 32768;
+    *out = _l16topcma[ index ];
+    in++;
+    out++;
   }
   this->pcmaref.dirty( false );
   return true;
@@ -276,8 +272,7 @@ bool codecx::l16topcma( void )
 /*!md
 ## l16topcmu
 */
-bool codecx::l16topcmu( void )
-{
+bool codecx::l16topcmu( void ) {
   if( 0 == this->l168kref.size() ) return false;
   if( this->l168kref.isdirty() ) return false;
 
@@ -287,9 +282,12 @@ bool codecx::l16topcmu( void )
   size_t l168klength = this->l168kref.size();
   in = ( int16_t * ) this->l168kref.c_str();
 
-  for( size_t i = 0; i < l168klength; i++ )
-  {
-    *out++ = _l16topcmu[ ( *in++ ) + 32768 ];
+  uint16_t index;
+  for( size_t i = 0; i < l168klength; i++ ) {
+    index = *in + 32768;
+    *out = _l16topcmu[ index ];
+    in++;
+    out++;
   }
   this->pcmuref.dirty( false );
   return true;
@@ -299,8 +297,7 @@ bool codecx::l16topcmu( void )
 ## ilbctol16
 As it says.
 */
-bool codecx::ilbctol16( void )
-{
+bool codecx::ilbctol16( void ) {
   if( 0 == this->ilbcref.size() ) return false;
   if( this->ilbcref.isdirty() ) return false;
 
@@ -335,25 +332,20 @@ bool codecx::ilbctol16( void )
 ## l16tog722
 As it says.
 */
-bool codecx::l16tog722( void )
-{
+bool codecx::l16tog722( void ) {
   if( 0 == this->l1616kref.size() ) return false;
   if( this->l1616kref.isdirty() ) return false;
 
-  if( nullptr == this->g722encoder )
-  {
+  if( nullptr == this->g722encoder ) {
     this->g722encoder = g722_encode_init( NULL, 64000, G722_PACKED );
   }
 
   int len = g722_encode( this->g722encoder, this->g722ref.c_str(), ( int16_t * ) this->l1616kref.c_str(), this->g722ref.size() * 2 );
 
-  if( len > 0 )
-  {
+  if( len > 0 ) {
     this->g722ref.size( len );
     this->g722ref.dirty( false );
-  }
-  else
-  {
+  } else {
     std::cerr << "g722_encode didn't encode any data" << std::endl;
     this->g722ref.size( 0 );
   }
@@ -400,19 +392,16 @@ bool codecx::l16toilbc( void ) {
 ## g722tol16
 As it says.
 */
-bool codecx::g722tol16( void )
-{
+bool codecx::g722tol16( void ) {
   if( 0 == this->g722ref.size() ) return false;
   if( this->g722ref.isdirty() ) return false;
 
   /* x 2 for 16 bit instead of 8 and then x 2 sample rate */
   this->l1616kref.malloc( this->g722ref.size(), sizeof( int16_t ), L1616KPAYLOADTYPE );
 
-  if( nullptr == this->g722decoder )
-  {
+  if( nullptr == this->g722decoder ) {
     this->g722decoder = g722_decode_init( NULL, 64000, G722_PACKED );
-    if( nullptr ==  this->g722decoder )
-    {
+    if( nullptr ==  this->g722decoder ) {
       std::cerr << "Failed to init G722 decoder" << std::endl;
     }
   }
@@ -431,8 +420,7 @@ bool codecx::g722tol16( void )
 ## l16lowtowideband
 Upsample from narrow to wideband. Take each point and interpolate between them. We require the final sample from the last packet to continue the interpolating.
 */
-bool codecx::l16lowtowideband( void )
-{
+bool codecx::l16lowtowideband( void ) {
   size_t l168klength = this->l168kref.size();
 
   if( 0 == l168klength ) return false;
@@ -443,8 +431,7 @@ bool codecx::l16lowtowideband( void )
   int16_t *in = ( int16_t * ) this->l168kref.c_str();
   int16_t *out = ( int16_t * ) this->l1616kref.c_str();
 
-  for( size_t i = 0; i < l168klength; i++ )
-  {
+  for( size_t i = 0; i < l168klength; i++ ) {
     *out = ( ( *in - this->resamplelastsample ) / 2 ) + this->resamplelastsample;
     this->resamplelastsample = *in;
     out++;
@@ -463,8 +450,7 @@ bool codecx::l16lowtowideband( void )
 ## requirewideband
 Search for the relevent data and convert as necessary.
 */
-bool codecx::requirewideband( void )
-{
+bool codecx::requirewideband( void ) {
   if( 0 != this->l1616kref.size() && !this->l1616kref.isdirty() ) return true;
   if( this->g722tol16() ) return true;
   if( !this->g711tol16() )
@@ -491,10 +477,12 @@ bool codecx::l16widetonarrowband( void )
   int16_t *out = ( int16_t * ) this->l168kref.c_str();
   int16_t *in = ( int16_t * ) this->l1616kref.c_str();
 
-  for( size_t i = 0; i < l1616klength / 2; i++ )
-  {
-    lpfilter.execute( *in++ );
-    *out++ = lpfilter.execute( *in++ );
+  for( size_t i = 0; i < l1616klength / 2; i++ ) {
+    lpfilter.execute( *in );
+    in++;
+    *out = lpfilter.execute( *in );
+    in++;
+    out++;
   }
 
   this->l168kref.dirty( false );
@@ -820,6 +808,18 @@ void codectests( void )
 
 #ifdef NODE_MODULE
 
+static napi_value codectest( napi_env env, napi_callback_info info ) {
+  napi_value result;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+
+  codectests();
+
+  napi_create_uint32( env, 1, &result );
+  napi_coerce_to_bool( env, result, &result );
+
+  return result;
+}
+
 /*
 Support single number just for now - but TODO detect Buffer input to convert whole bufffer.
 */
@@ -929,6 +929,9 @@ void initrtpcodecx( napi_env env, napi_value &result ) {
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, pcmu2linear, nullptr, &funct ) ) return;
   if( napi_ok != napi_set_named_property( env, codecx, "pcmu2linear16", funct ) ) return;
+
+  if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, codectest, nullptr, &funct ) ) return;
+  if( napi_ok != napi_set_named_property( env, codecx, "codectests", funct ) ) return;
 }
 
 #endif /* NODE_MODULE */
