@@ -75,10 +75,6 @@ void projectchannelmux::mixall( void ) {
           this->postrtpdata( chan, dtmfchan, src );
         }
       }
-
-      AQUIRESPINLOCK( chan->rtpbufferlock );
-      chan->inbuff->poppeeked();
-      RELEASESPINLOCK( chan->rtpbufferlock );
     }
 
     if( nullptr != src ) {
@@ -94,7 +90,7 @@ void projectchannelmux::mixall( void ) {
 
     rtppacket *dst = chan->gettempoutbuf();
 
-    this->subtracted.zero();
+    /* start with a direct copy */
     this->subtracted.copy( this->added );
 
     if( chan->recv ) {
