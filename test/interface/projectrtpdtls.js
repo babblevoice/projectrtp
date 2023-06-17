@@ -298,24 +298,24 @@ describe( "dtls", function() {
   it( "Connect then remote to another session", async function() {
 
     /*
-                    |     internal projectrtp      |
-    Clienta         |  channela          channelb  |        clientb
-        |  RTP (DTLS)     |       MIX       |      RTP        |
-        |<--------------->|<--------------->|<--------------->| Step 1.
-        |<-(close)-(rem)->|<--------------->|<--------------->| Step 2.
-    Clientc
-        |<--------------->|<--------------->|<--------------->|Step 3.
-        play                                                 echo
+      Play, then encrypt at one end, then unencrypt in projectrtp and send onto d
+      Create an e channel so that we mix 3
 
+                                      |      internal       |
+      channel                        channel          channel                   channel
+        a       RTP over DTLS -----------b               c      RTP               d
+        play                             b       mix     c                      echo
+                                                 mix     e                         f
+                                                                                echo
     
     */
 
     this.timeout( 6000 )
     this.slow( 2500 )
 
-    projectrtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000", "/tmp/ukringing.wav" )
+    projectrtp.tone.generate( "400+450*0.25/0/400+450*0.25/0:400/200/400/2000", "/tmp/ukringing.wav" )
 
-    const channeltargeta = {
+    const targeta = {
       "address": "localhost",
       "port": 0,
       "codec": 0,
@@ -323,48 +323,23 @@ describe( "dtls", function() {
         "fingerprint": {
           "hash": ""
         },
-        "mode": "active" // - is this in the right place and the right way round!
+        "mode": "active"
       }
     }
 
-    const channeltargetc = {
-      "address": "localhost",
-      "port": 0,
-      "codec": 0,
-      "dtls": {
-        "fingerprint": {
-          "hash": ""
-        },
-        "mode": "active" // - is this in the right place and the right way round!
-      }
-    }
+    const targetb = JSON.parse( JSON.stringify( targeta ) )
 
-    const clienttargeta = {
-      "address": "localhost",
-      "port": 12008,
-      "codec": 0,
-      "dtls": {
-        "fingerprint": {
-          "hash": ""
-        },
-        "mode": "passive"
-      }
-    }
-
-    const channeltargetb = {
+    const targetc =     {
       "address": "localhost",
       "port": 0,
       "codec": 0
     }
-
-    const clienttargetb = {
-      "address": "localhost",
-      "port": 12010,
-      "codec": 0
-    }
+    const targetd = JSON.parse( JSON.stringify( targetc ) )
+    const targete = JSON.parse( JSON.stringify( targetc ) )
+    const targetf = JSON.parse( JSON.stringify( targetc ) )
 
     let done
-    const finished = new Promise( ( r ) => { done = r } )
+    const finished = new Promise( ( resolve ) => { done = resolve } )
 
     const channela = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
@@ -372,57 +347,66 @@ describe( "dtls", function() {
       }
     } )
 
-    const clienta = await projectrtp.openchannel( {}, function() {} )
-
-    channeltargeta.dtls.fingerprint.hash = clienta.local.dtls.fingerprint
-    channeltargeta.port = clienta.local.port
-    expect( channela.remote( channeltargeta ) ).to.be.true
-    clienttargeta.port = channela.local.port
-    clienttargeta.dtls.fingerprint.hash = channela.local.dtls.fingerprint
-    expect( clienta.remote( clienttargeta ) ).to.be.true
-
-    clienta.play( { "loop": true, "files": [
-      { "wav": "/tmp/ukringing.wav" } ] } )
-
-
     const channelb = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
-        clientb.close()
+        channelc.close()
       }
     } )
 
-    const clientb = await projectrtp.openchannel( {}, function( d ) {
+    const channelc = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
-        clientc.close()
+        channeld.close()
       }
     } )
 
-    let clientcclose = {}
-    const clientc = await projectrtp.openchannel( {}, function( d ) {
+    const channeld = await projectrtp.openchannel( {}, function( d ) {
       if( "close" === d.action ) {
-        clientcclose = d
+        channele.close()
+      }
+    } )
+
+    const channele = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) {
+        channelf.close()
+      }
+    } )
+
+    let channelclose = {}
+    const channelf = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) {
+        channelclose = d
         done()
       }
     } )
 
-    channeltargetb.port = clientb.local.port
-    expect( channelb.remote( channeltargetb ) ).to.be.true
-    clienttargetb.port = channelb.local.port
-    expect( clientb.remote( clienttargetb ) ).to.be.true
-    expect( clientb.echo() ).to.be.true
+    targeta.dtls.fingerprint.hash = channelb.local.dtls.fingerprint
+    targeta.port = channelb.local.port
+    expect( channela.remote( targeta ) ).to.be.true
+    targetb.port = channela.local.port
+    targetb.dtls.fingerprint.hash = channela.local.dtls.fingerprint
+    targetb.dtls.mode = "passive"
+    expect( channelb.remote( targetb ) ).to.be.true
 
-    channela.mix( channelb )
+    targetc.port = channeld.local.port
+    expect( channelc.remote( targetc ) ).to.be.true
+    targetd.port = channelc.local.port
+    expect( channeld.remote( targetd ) ).to.be.true
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 500 ) } )
+    targete.port = channelf.local.port
+    expect( channele.remote( targete ) ).to.be.true
+    targetf.port = channele.local.port
+    expect( channelf.remote( targetf ) ).to.be.true
 
-    channeltargetc.dtls.fingerprint.hash = clientc.local.dtls.fingerprint
-    channeltargetc.port = clientc.local.port
-    expect( channela.remote( channeltargetc ) ).to.be.true
-    expect( clientc.remote( clienttargeta ) ).to.be.true
-
-    clientc.play( { "loop": true, "files": [
+    /* play on one end */
+    channela.play( { "loop": true, "files": [
       { "wav": "/tmp/ukringing.wav" } ] } )
-    clienta.close()
+
+    /* mix in the middle */
+    channelb.mix( channelc )
+    channelb.mix( channele )
+
+    /* echo at the other end */
+    expect( channeld.echo() ).to.be.true
 
     await new Promise( ( r ) => { setTimeout( () => r(), 1500 ) } )
 
@@ -431,8 +415,8 @@ describe( "dtls", function() {
     await fs.promises.unlink( "/tmp/ukringing.wav" ).catch( () => {} )
     await finished
 
-    expect( clientcclose.stats.in.count ).to.be.above( 10 )
-    expect( clientcclose.stats.in.skip ).to.be.below( 2 ) // allow a little loss in test
+    expect( channelclose.stats.in.count ).to.be.above( 30 )
+    expect( channelclose.stats.in.skip ).to.be.below( 2 ) // allow a little loss in test
 
   } )
 } )
