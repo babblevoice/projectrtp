@@ -75,6 +75,10 @@ void projectchannelmux::mixall( void ) {
           this->postrtpdata( chan, dtmfchan, src );
         }
       }
+      /* remove the DTMF packet */
+      AQUIRESPINLOCK( chan->rtpbufferlock );
+      chan->inbuff->poppeeked();
+      RELEASESPINLOCK( chan->rtpbufferlock );
     }
 
     if( nullptr != src ) {
