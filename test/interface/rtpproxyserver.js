@@ -469,9 +469,9 @@ describe( "rtpproxy server", function() {
 
     await n.listen( ourport )
 
-    n.setmessagehandler( "open", ( msg ) => {
+    n.setmessagehandler( "open", ( msg, sendmessage ) => {
       openreceived = true
-      n.sendmessage( {
+      sendmessage( {
         "action": "open",
         "id": msg.id,
         "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec152",
@@ -484,8 +484,8 @@ describe( "rtpproxy server", function() {
 
     let closeresolv
     const closepromise = new Promise( ( r ) => closeresolv = r )
-    n.setmessagehandler( "close", ( msg ) => {
-      n.sendmessage( {
+    n.setmessagehandler( "close", ( msg, sendmessage ) => {
+      sendmessage( {
         "action": "close",
         "uuid": msg.uuid,
         "id": msg.id
@@ -528,9 +528,9 @@ describe( "rtpproxy server", function() {
     await n.listen( n1port )
     await n2.listen( n2port )
 
-    n.setmessagehandler( "open", ( msg ) => {
+    n.setmessagehandler( "open", ( msg, sendmessage ) => {
       openreceived = true
-      n.sendmessage( {
+      sendmessage( {
         "action": "open",
         "id": msg.id,
         "uuid": ""+ouruuid++,
@@ -541,9 +541,9 @@ describe( "rtpproxy server", function() {
       } )
     } )
 
-    n2.setmessagehandler( "open", ( msg ) => {
+    n2.setmessagehandler( "open", ( msg, sendmessage ) => {
       openreceived = true
-      n2.sendmessage( {
+      sendmessage( {
         "action": "open",
         "id": msg.id,
         "uuid": ""+ouruuid++,
@@ -556,8 +556,8 @@ describe( "rtpproxy server", function() {
 
     let closeresolv
     const closepromise = new Promise( ( r ) => closeresolv = r )
-    n.setmessagehandler( "close", ( msg ) => {
-      n.sendmessage( {
+    n.setmessagehandler( "close", ( msg, sendmessage ) => {
+      sendmessage( {
         "action": "close",
         "uuid": msg.uuid,
         "id": msg.id
@@ -565,8 +565,8 @@ describe( "rtpproxy server", function() {
       closeresolv()
     } )
 
-    n2.setmessagehandler( "close", ( msg ) => {
-      n2.sendmessage( {
+    n2.setmessagehandler( "close", ( msg, sendmessage ) => {
+      sendmessage( {
         "action": "close",
         "uuid": msg.uuid,
         "id": msg.id

@@ -42,15 +42,13 @@ describe( "rtpproxy multi node", function() {
     const rtp1 = new mocknode()
     const rtp2 = new mocknode()
 
-    const listenport = 32443
-
     const rtpreceveivedmessages = []
     let ouruuid = 0
 
-    rtp1.setmessagehandler( "open", ( msg ) => {
+    rtp1.setmessagehandler( "open", ( msg, sendmessage ) => {
       msg.node = "rtp1"
       rtpreceveivedmessages.push ( msg )
-      rtp1.sendmessage( {
+      sendmessage( {
         "action": "open",
         "id": msg.id,
         "uuid": ""+ouruuid++,
@@ -67,10 +65,10 @@ describe( "rtpproxy multi node", function() {
       rtpreceveivedmessages.push ( msg )
     } )
 
-    rtp1.setmessagehandler( "unmix", ( msg ) => {
+    rtp1.setmessagehandler( "unmix", ( msg, sendmessage ) => {
       msg.node = "rtp1"
       rtpreceveivedmessages.push ( msg )
-      rtp1.sendmessage( {
+      sendmessage( {
         "action": "unmix",
         "id": msg.id,
         "uuid": msg.uuid,
@@ -87,20 +85,20 @@ describe( "rtpproxy multi node", function() {
       rtpreceveivedmessages.push ( msg )
     } )
 
-    rtp1.setmessagehandler( "close", ( msg ) => {
+    rtp1.setmessagehandler( "close", ( msg, sendmessage ) => {
       msg.node = "rtp1"
       rtpreceveivedmessages.push ( msg )
-      rtp1.sendmessage( {
+      sendmessage( {
         "action": "close",
         "id": msg.id,
         "uuid": msg.uuid,
       } )
     } )
 
-    rtp2.setmessagehandler( "open", ( msg ) => {
+    rtp2.setmessagehandler( "open", ( msg, sendmessage ) => {
       msg.node = "rtp2"
       rtpreceveivedmessages.push( msg )
-      rtp2.sendmessage( {
+      sendmessage( {
         "action": "open",
         "id": msg.id,
         "uuid": ""+ouruuid++,
@@ -117,10 +115,10 @@ describe( "rtpproxy multi node", function() {
       rtpreceveivedmessages.push( msg )
     } )
 
-    rtp2.setmessagehandler( "unmix", ( msg ) => {
+    rtp2.setmessagehandler( "unmix", ( msg, sendmessage ) => {
       msg.node = "rtp2"
       rtpreceveivedmessages.push( msg )
-      rtp2.sendmessage( {
+      sendmessage( {
         "action": "unmix",
         "id": msg.id,
         "uuid": msg.uuid,
@@ -137,17 +135,18 @@ describe( "rtpproxy multi node", function() {
       rtpreceveivedmessages.push( msg )
     } )
 
-    rtp2.setmessagehandler( "close", ( msg ) => {  
+    rtp2.setmessagehandler( "close", ( msg, sendmessage ) => {  
       msg.node = "rtp2"
       rtpreceveivedmessages.push( msg )
 
-      rtp2.sendmessage( {
+      sendmessage( {
         "action": "close",
         "uuid": msg.uuid,
         "id": msg.id
       } )
     } )
 
+    const listenport = 32443
     const p = await prtp.proxy.listen( undefined, "127.0.0.1", listenport )
     await rtp1.connect( listenport )
     await rtp2.connect( listenport )
@@ -168,10 +167,240 @@ describe( "rtpproxy multi node", function() {
     expect( actual ).to.deep.equal( { "mix": 2, "open": 4, "unmix": 4, "close": 4, "remote": 2 } )
 
     /* Clean up */
-    rtp1.destroy()
-    rtp2.destroy()
-    p.destroy()
+    await rtp1.destroy()
+    await rtp2.destroy()
+    await p.destroy()
 
+  } )
+
+  it( "2 node 2 channel simple mix rtp server listening on same node", async function() {
+    
+    /*
+      We need to check that the nodes are maintained when using the same rtp server.
+    */
+
+    const actual = { "mix": 0, "open": 0, "unmix": 0, "close": 0, "remote": 0 }
+
+    const rtp1 = new mocknode()
+    const rtp2 = new mocknode()
+
+    const rtpreceveivedmessages = []
+    let ouruuid = 0
+
+    rtp1.setmessagehandler( "open", ( msg, sendmessage ) => {
+      msg.node = "rtp1"
+      rtpreceveivedmessages.push ( msg )
+      sendmessage( {
+        "action": "open",
+        "id": msg.id,
+        "uuid": ""+ouruuid++,
+        "local": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        },
+        "status": rtp1.ourstats
+      } )
+    } )
+
+    rtp1.setmessagehandler( "mix", ( msg ) => {
+      msg.node = "rtp1"
+      rtpreceveivedmessages.push ( msg )
+    } )
+
+    rtp1.setmessagehandler( "unmix", ( msg, sendmessage ) => {
+      msg.node = "rtp1"
+      rtpreceveivedmessages.push ( msg )
+      sendmessage( {
+        "action": "unmix",
+        "id": msg.id,
+        "uuid": msg.uuid,
+        "local": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        },
+        "status": rtp1.ourstats
+      } )
+    } )
+
+    rtp1.setmessagehandler( "remote", ( msg ) => {
+      msg.node = "rtp1"
+      rtpreceveivedmessages.push ( msg )
+    } )
+
+    rtp1.setmessagehandler( "close", ( msg, sendmessage ) => {
+      msg.node = "rtp1"
+      rtpreceveivedmessages.push ( msg )
+      sendmessage( {
+        "action": "close",
+        "id": msg.id,
+        "uuid": msg.uuid,
+      } )
+    } )
+
+    rtp2.setmessagehandler( "open", ( msg, sendmessage ) => {
+      msg.node = "rtp2"
+      rtpreceveivedmessages.push( msg )
+      sendmessage( {
+        "action": "open",
+        "id": msg.id,
+        "uuid": ""+ouruuid++,
+        "local": {
+          "port": 10004,
+          "address": "192.168.0.141"
+        },
+        "status": rtp2.ourstats
+      } )
+    } )
+
+    rtp2.setmessagehandler( "mix", ( msg ) => {
+      msg.node = "rtp2"
+      rtpreceveivedmessages.push( msg )
+    } )
+
+    rtp2.setmessagehandler( "unmix", ( msg, sendmessage ) => {
+      msg.node = "rtp2"
+      rtpreceveivedmessages.push( msg )
+      sendmessage( {
+        "action": "unmix",
+        "id": msg.id,
+        "uuid": msg.uuid,
+        "local": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        },
+        "status": rtp2.ourstats
+      } )
+    } )
+
+    rtp2.setmessagehandler( "remote", ( msg ) => {
+      msg.node = "rtp2"
+      rtpreceveivedmessages.push( msg )
+    } )
+
+    rtp2.setmessagehandler( "close", ( msg, sendmessage ) => {  
+      msg.node = "rtp2"
+      rtpreceveivedmessages.push( msg )
+
+      sendmessage( {
+        "action": "close",
+        "uuid": msg.uuid,
+        "id": msg.id
+      } )
+    } )
+
+    const listenport1 = await rtp1.listen( 0 )
+    const listenport2 = await rtp2.listen( 0 )
+    prtp.proxy.addnode( { "host": "127.0.0.1", "port": listenport1 } )
+    prtp.proxy.addnode( { "host": "127.0.0.1", "port": listenport2 } )
+
+    const channel1 = await prtp.openchannel()
+    const channel2 = await channel1.openchannel()
+    await channel1.mix( channel2 )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1000 ) } )
+    channel1.unmix()
+    channel2.unmix()
+
+    channel1.close()
+    channel2.close()
+
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } )
+
+    for ( const msg of rtpreceveivedmessages ) actual[ msg.channel ] += 1
+    expect( actual ).to.deep.equal( { "mix": 1, "open": 2, "unmix": 2, "close": 2, "remote": 0 } )
+
+    /* Clean up */
+    await rtp1.destroy()
+    await rtp2.destroy()
+
+    prtp.proxy.clearnodes()
+
+  } )
+
+  it( "2 node 2 channel connect to same rtp server not broken", async function() {
+
+    /*
+      We need to check that the nodes are maintained when using the same rtp server.
+    */
+
+    const actual = { "mix": 0, "open": 0, "unmix": 0, "close": 0, "remote": 0 }
+
+    const rtp1 = new mocknode()
+
+    const rtpreceveivedmessages = []
+    let ouruuid = 0
+
+    rtp1.setmessagehandler( "open", ( msg, sendmessage ) => {
+      msg.node = "rtp1"
+      rtpreceveivedmessages.push ( msg )
+      sendmessage( {
+        "action": "open",
+        "id": msg.id,
+        "uuid": ""+ouruuid++,
+        "local": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        },
+        "status": rtp1.ourstats
+      } )
+    } )
+
+    rtp1.setmessagehandler( "mix", ( msg ) => {
+      msg.node = "rtp1"
+      rtpreceveivedmessages.push ( msg )
+    } )
+
+    rtp1.setmessagehandler( "unmix", ( msg, sendmessage ) => {
+      msg.node = "rtp1"
+      rtpreceveivedmessages.push ( msg )
+      sendmessage( {
+        "action": "unmix",
+        "id": msg.id,
+        "uuid": msg.uuid,
+        "local": {
+          "port": 10002,
+          "address": "192.168.0.141"
+        },
+        "status": rtp1.ourstats
+      } )
+    } )
+
+    rtp1.setmessagehandler( "remote", ( msg ) => {
+      msg.node = "rtp1"
+      rtpreceveivedmessages.push ( msg )
+    } )
+
+    rtp1.setmessagehandler( "close", ( msg, sendmessage ) => {
+      msg.node = "rtp1"
+      rtpreceveivedmessages.push ( msg )
+      sendmessage( {
+        "action": "close",
+        "id": msg.id,
+        "uuid": msg.uuid,
+      } )
+    } )
+
+    const listenport = await rtp1.listen( 0 )
+    prtp.proxy.addnode( { "host": "127.0.0.1", "port": listenport } )
+
+    const channel1 = await prtp.openchannel()
+    const channel2 = await prtp.openchannel()
+
+    await channel1.mix( channel2 )
+    await new Promise( ( resolve ) => { setTimeout( resolve, 1000 ) } )
+    channel1.unmix()
+    channel2.unmix()
+
+    channel1.close()
+    channel2.close()
+
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } )
+
+    for ( const msg of rtpreceveivedmessages ) actual[ msg.channel ] += 1
+    expect( actual ).to.deep.equal( { "mix": 1, "open": 2, "unmix": 2, "close": 2, "remote": 0 } )
+
+    /* Clean up */
+    await rtp1.destroy()
+    prtp.proxy.clearnodes()
   } )
 
   it( "2 node 1 channel on one, 2 channels other", async function() {
@@ -352,10 +581,9 @@ describe( "rtpproxy multi node", function() {
     expect( actual ).to.deep.equal( { "mix": 3, "open": 5, "unmix": 5, "close": 5, "remote": 2 } )
 
     /* Clean up */
-    rtp1.destroy()
-    rtp2.destroy()
-    p.destroy()
-       
+    await rtp1.destroy()
+    await rtp2.destroy()
+    await p.destroy()
 
   } )
 
@@ -598,9 +826,9 @@ describe( "rtpproxy multi node", function() {
 
 
     /* Clean up */
-    rtp1.destroy()
-    rtp2.destroy()
-    p.destroy()
+    await rtp1.destroy()
+    await rtp2.destroy()
+    await p.destroy()
       
   } )
 } )
