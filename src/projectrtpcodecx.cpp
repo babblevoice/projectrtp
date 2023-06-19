@@ -559,7 +559,7 @@ rawsound& codecx::getref( int pt ) {
     }
     case PCMAPAYLOADTYPE: {
       if( this->pcmuref.size() > 0 ) {
-        this->alaw2ulaw();
+        this->ulaw2alaw();
       } else {
         this->requirenarrowband();
         this->l16topcma();
@@ -568,7 +568,7 @@ rawsound& codecx::getref( int pt ) {
     }
     case PCMUPAYLOADTYPE: {
       if( this->pcmaref.size() > 0 ) {
-        this->ulaw2alaw();
+        this->alaw2ulaw();
       } else {
         this->requirenarrowband();
         this->l16topcmu();
@@ -697,8 +697,7 @@ codecx& operator << ( codecx& c, const char& a )
 
 
 
-void codectests( void )
-{
+void codectests( void ) {
   /* init transcoding stuff */
   gen711convertdata();
 
@@ -715,8 +714,7 @@ void codectests( void )
 
 
   g722_decode_state_t *g722decoder = g722_decode_init( NULL, 64000, G722_PACKED );
-  if( nullptr == g722decoder )
-  {
+  if( nullptr == g722decoder ) {
     std::cerr << "Failed to init G722 decoder" << std::endl;
   }
 
@@ -727,15 +725,13 @@ void codectests( void )
                                 g722samplepk,
                                 160 );
   std::cout << "g722_decode returned " << l1616klength << " for an in packet of 160 bytes" << std::endl;
-  if( 320 != l1616klength )
-  {
+  if( 320 != l1616klength ) {
     std::cerr << "ERROR - decoded length is not 320 bytes" << std::endl;
   }
   g722_decode_free( g722decoder );
 
   std::cout << "L16 OUT (g722_decode) =" << std::endl;
-  for( int i = 0; i < 160; i ++ )
-  {
+  for( int i = 0; i < 160; i ++ ) {
     std::cout << unsigned( outbuf[ i ] ) << " ";
   }
   std::cout << std::endl;
@@ -744,66 +740,123 @@ void codectests( void )
   /*
   Move onto test our interface.
   */
-  rawsound r( g722samplepk, sizeof( g722samplepk ), G722PAYLOADTYPE, 16000 );
-  std::cout << "G722 raw packet size " << r.size() << " with a format of " << r.getformat() << " and sample rate " << r.getsamplerate() << std::endl;
-
-  codecx ourcodec;
-
-  ourcodec << codecx::next;
-  ourcodec << r;
-
-  rtppacket outpk;
-  outpk.setpayloadtype( PCMAPAYLOADTYPE );
-  outpk.setpayloadlength( 160 );
-  outpk.setsequencenumber( 0 );
-  outpk.settimestamp( 0 );
-  outpk << ourcodec;
-
-  std::cout << "PCMA OUT =" << std::endl;
-  uint8_t *pl = outpk.getpayload();
-
-  for( int i = 0; i < 160; i ++ )
   {
-    std::cout << unsigned( pl[ i ] ) << " ";
+    rawsound r( g722samplepk, sizeof( g722samplepk ), G722PAYLOADTYPE, 16000 );
+    std::cout << "G722 raw packet size " << r.size() << " with a format of " << r.getformat() << " and sample rate " << r.getsamplerate() << std::endl;
+
+    codecx ourcodec;
+
+    ourcodec << codecx::next;
+    ourcodec << r;
+
+    
+
+    rtppacket outpk;
+    outpk.setpayloadtype( PCMAPAYLOADTYPE );
+    outpk.setpayloadlength( 160 );
+    outpk.setsequencenumber( 0 );
+    outpk.settimestamp( 0 );
+    outpk << ourcodec;
+
+    std::cout << "PCMA OUT =" << std::endl;
+    uint8_t *pl = outpk.getpayload();
+
+    for( int i = 0; i < 160; i ++ ) {
+      std::cout << unsigned( pl[ i ] ) << " ";
+    }
+    std::cout << std::endl;
+
+    if( 213 != pl[ 0 ] ) std::cout << "ERROR ERROR First byte should be 213???" << std::endl;
+    if( 85 != pl[ 9 ] ) std::cout << "ERROR ERROR 9th byte should be 85???" << std::endl;
+
+    rawsound &ref8k = ourcodec.getref( L168KPAYLOADTYPE );
+
+    if( ref8k.isdirty() ) std::cout << "ERROR our 8k out ref should not be dirty" << std::endl;
+
+    /* Repeat as this will use a different bit of code getting cached bit */
+    ref8k = ourcodec.getref( L168KPAYLOADTYPE );
+    if( ref8k.isdirty() ) std::cout << "ERROR our 8k out ref should not be dirty" << std::endl;
+
+    std::cout << "8k is dirty: " << std::boolalpha << ref8k.isdirty() << std::endl;
+    std::cout << "8k size: " << ref8k.size() << std::endl;
+    std::cout << "8k bytes per sample (should be 2): " << ref8k.getbytespersample() << std::endl;
+
+    /* 2 bytes per sample */
+    int16_t *pl16 = ( int16_t * ) ref8k.c_str();
+    for( size_t i = 0; i < ref8k.size(); i ++ ) {
+      std::cout << static_cast<int16_t>( pl16[ i ] ) << " ";
+    }
+    std::cout << std::endl;
+
+
+    rawsound &ref16k = ourcodec.getref( L1616KPAYLOADTYPE );
+    if( ref16k.isdirty() ) std::cout << "ERROR our 16k out ref should not be dirty" << std::endl;
+    std::cout << "16k is dirty: " << std::boolalpha << ref16k.isdirty() << std::endl;
+    std::cout << "16k size: " << ref16k.size() << std::endl;
+    std::cout << "16k bytes per sample (should be 2): " << ref16k.getbytespersample() << std::endl;
+
+    pl16 = ( int16_t * ) ref16k.c_str();
+    for( size_t i = 0; i < ref16k.size(); i ++ ) {
+      std::cout << static_cast<int16_t>( pl16[ i ] ) << " ";
+    }
+    std::cout << std::endl;
   }
-  std::cout << std::endl;
 
-  if( 213 != pl[ 0 ] ) std::cout << "ERROR ERROR First byte should be 213???" << std::endl;
-  if( 85 != pl[ 9 ] ) std::cout << "ERROR ERROR 9th byte should be 85???" << std::endl;
 
-  rawsound &ref8k = ourcodec.getref( L168KPAYLOADTYPE );
-
-  if( ref8k.isdirty() ) std::cout << "ERROR our 8k out ref should not be dirty" << std::endl;
-
-  /* Repeat as this will use a different bit of code getting cached bit */
-  ref8k = ourcodec.getref( L168KPAYLOADTYPE );
-  if( ref8k.isdirty() ) std::cout << "ERROR our 8k out ref should not be dirty" << std::endl;
-
-  std::cout << "8k is dirty: " << std::boolalpha << ref8k.isdirty() << std::endl;
-  std::cout << "8k size: " << ref8k.size() << std::endl;
-  std::cout << "8k bytes per sample (should be 2): " << ref8k.getbytespersample() << std::endl;
-
-  /* 2 bytes per sample */
-  int16_t *pl16 = ( int16_t * ) ref8k.c_str();
-  for( size_t i = 0; i < ref8k.size(); i ++ )
   {
-    std::cout << static_cast<int16_t>( pl16[ i ] ) << " ";
+    /* problem with converting pcmu to pcma */
+    /* use the same data, but pretend it is PCMU */
+    rawsound r( g722samplepk, sizeof( g722samplepk ), PCMUPAYLOADTYPE, 8000 );
+
+    codecx ourcodec;
+
+    ourcodec << codecx::next;
+    ourcodec << r;
+
+    rtppacket outpk;
+    outpk.setpayloadtype( PCMAPAYLOADTYPE );
+    outpk.setpayloadlength( 160 );
+    outpk.setsequencenumber( 0 );
+    outpk.settimestamp( 0 );
+    outpk << ourcodec;
+
+    std::cout << "PCMA OUT (it should not be all zeros) = " << std::endl;
+
+    uint8_t *pl = outpk.getpayload();
+
+    for( int i = 0; i < 160; i ++ ) {
+      std::cout << unsigned( pl[ i ] ) << " ";
+    }
+    std::cout << std::endl;
   }
-  std::cout << std::endl;
 
+    {
+    /* problem with converting pcmu to pcma */
+    /* use the same data, but pretend it is PCMU */
+    rawsound r( g722samplepk, sizeof( g722samplepk ), PCMAPAYLOADTYPE, 8000 );
 
-  rawsound &ref16k = ourcodec.getref( L1616KPAYLOADTYPE );
-  if( ref16k.isdirty() ) std::cout << "ERROR our 16k out ref should not be dirty" << std::endl;
-  std::cout << "16k is dirty: " << std::boolalpha << ref16k.isdirty() << std::endl;
-  std::cout << "16k size: " << ref16k.size() << std::endl;
-  std::cout << "16k bytes per sample (should be 2): " << ref16k.getbytespersample() << std::endl;
+    codecx ourcodec;
 
-  pl16 = ( int16_t * ) ref16k.c_str();
-  for( size_t i = 0; i < ref16k.size(); i ++ )
-  {
-    std::cout << static_cast<int16_t>( pl16[ i ] ) << " ";
+    ourcodec << codecx::next;
+    ourcodec << r;
+
+    rtppacket outpk;
+    outpk.setpayloadtype( PCMUPAYLOADTYPE );
+    outpk.setpayloadlength( 160 );
+    outpk.setsequencenumber( 0 );
+    outpk.settimestamp( 0 );
+    outpk << ourcodec;
+
+    std::cout << "PCMU OUT (it should not be all zeros) = " << std::endl;
+
+    uint8_t *pl = outpk.getpayload();
+
+    for( int i = 0; i < 160; i ++ ) {
+      std::cout << unsigned( pl[ i ] ) << " ";
+    }
+    std::cout << std::endl;
   }
-  std::cout << std::endl;
+  
 }
 
 #ifdef NODE_MODULE
