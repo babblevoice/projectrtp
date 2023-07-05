@@ -620,6 +620,7 @@ describe( "dtmf", function() {
     expect( receivedmessages[ 1 ].action ).to.equal( "telephone-event" )
     expect( receivedmessages[ 2 ].action ).to.equal( "telephone-event" )
     expect( receivedmessages[ 3 ].action ).to.equal( "mix" )
+    expect( receivedmessages[ 3 ].event ).to.equal( "finished" )
     expect( receivedmessages[ 4 ].action ).to.equal( "close" )
 
     expect( receivedmessages[ 0 ].event ).to.equal( "start" )
