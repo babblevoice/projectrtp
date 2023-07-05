@@ -121,11 +121,13 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
 }
 
 void projectrtpchannel::requestclose( std::string reason ) {
-  if( !this->_requestclose.exchange( true, std::memory_order_acquire ) ) {
-    this->closereason = reason;
-  }
 
-  this->removemixer = true;
+  this->closereason = reason;
+  if( this->mixing ) {
+    this->removemixer = true;
+  } else {
+    this->_requestclose.exchange( true, std::memory_order_acquire );
+  }
 }
 
 void projectrtpchannel::remote( std::string address,
@@ -390,6 +392,11 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   if( error == boost::asio::error::operation_aborted ) return;
   if( !this->active ) return;
 
+  if( this->_requestclose ) {
+    this->doclose();
+    return;
+  }
+
   if( this->dtlsnegotiate() ) {
     this->setnexttick();
     return;
@@ -399,11 +406,6 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
     this->setnexttick();
     return;
   };
-
-  if( this->_requestclose ) {
-    this->doclose();
-    return;
-  }
 
   this->startticktimer();
 
@@ -1075,6 +1077,10 @@ void projectrtpchannel::dounmix( void ) {
   RELEASESPINLOCK( this->mixerlock );
 
   postdatabacktojsfromthread( shared_from_this(), "mix", "finished" );
+
+  if( this->closereason.length() > 0 ) {
+    this->_requestclose.exchange( true, std::memory_order_acquire );
+  }
 }
 
 /*
