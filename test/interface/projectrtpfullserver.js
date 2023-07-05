@@ -2,6 +2,7 @@
 const prtp = require( "../../index" )
 const node = require( "../../lib/node" )
 const expect = require( "chai" ).expect
+const fs = require( "node:fs" )
 
 /**
  * Test file to run tests acting as a remote note. Starts a babble-rtp node in the background
@@ -25,7 +26,7 @@ describe( "server connect interface", () => {
 
   it( "server connect and open channel", async function () {
     this.timeout( 6000 )
-    this.slow( 3000 )
+    this.slow( 30000 )
 
     const totalotherchannelcount = 100
     let chanclosecount = 0
@@ -37,6 +38,8 @@ describe( "server connect interface", () => {
     }
 
     // A very short wav file
+    await fs.promises.rm( "/tmp/serverconnecttestwav.wav", { force: true } )
+    await fs.promises.rm( "/tmp/otherserverconnecttestwav.wav", { force: true } )
     prtp.projectrtp.tone.generate( "350+440*0.5:100", "/tmp/serverconnecttestwav.wav" )
     prtp.projectrtp.tone.generate( "350+440*0.5:100", "/tmp/otherserverconnecttestwav.wav" )
 
@@ -48,16 +51,13 @@ describe( "server connect interface", () => {
     for( let i = 0; 3 > i; i++ ) {
       let done
       const finished = new Promise( resolve => done = resolve )
-  
       const receivedmessages = []
       const chan = await prtp.projectrtp.openchannel( ( e ) => {
         receivedmessages.push( e )
         if( "play" == e.action && "end" == e.event ) chan.close()
         if( "close" == e.action ) done()
       } )
-  
       chan.play( { "interupt":true, "files": [ { "wav": "/tmp/serverconnecttestwav.wav" }, { "wav": "/tmp/otherserverconnecttestwav.wav" } ] } )
-  
       await finished
 
       //console.log(receivedmessages)
