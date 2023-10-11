@@ -1031,7 +1031,7 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
   } else if ( nullptr != this->mixer && nullptr == other->mixer ) {
     other->mixer = this->mixer;
     this->mixer->addchannel( other );
-    postdatabacktojsfromthread( shared_from_this(), "mix", "start" );
+    postdatabacktojsfromthread( other, "mix", "start" );
   } else if( nullptr == this->mixer && nullptr == other->mixer  ) {
     this->mixer = projectchannelmux::create( workercontext );
     other->mixer = this->mixer;
@@ -1041,6 +1041,7 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
     postdatabacktojsfromthread( other, "mix", "start" );
   } else {
     /* If we get here this and other are already mixing and should be cleaned up first */
+    postdatabacktojsfromthread( shared_from_this(), "mix", "busy" );
     RELEASESPINLOCK( this->mixerlock );
     return false;
   }
@@ -1061,7 +1062,11 @@ Add the other to a mixer - both channels have access to the same mixer.
 n way relationship. Adds to queue for when our main thread calls into us.
 */
 bool projectrtpchannel::unmix( void ) {
-  this->removemixer = true;
+
+  AQUIRESPINLOCK( this->mixerlock );
+  if( nullptr != this->mixer ) this->removemixer = true;
+  RELEASESPINLOCK( this->mixerlock );
+
   return true;
 }
 
