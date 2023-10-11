@@ -808,17 +808,17 @@ describe( "dtmf", function() {
     expect( dtmfcpkcount ).to.be.within( 4, 8 )
 
     expect( receveiedmessages[ 0 ].action ).to.equal( "mix" )
-    //expect( receveiedmessages[ 1 ].action ).to.equal( "mix" )
-    expect( receveiedmessages[ 1 ].action ).to.equal( "telephone-event" )
+    expect( receveiedmessages[ 1 ].action ).to.equal( "mix" )
     expect( receveiedmessages[ 2 ].action ).to.equal( "telephone-event" )
-    expect( receveiedmessages[ 3 ].action ).to.equal( "mix" )
-    expect( receveiedmessages[ 4 ].action ).to.equal( "close" )
+    expect( receveiedmessages[ 3 ].action ).to.equal( "telephone-event" )
+    expect( receveiedmessages[ 4 ].action ).to.equal( "mix" )
+    expect( receveiedmessages[ 5 ].action ).to.equal( "close" )
 
-    //expect( receveiedmessages[ 0 ].event ).to.equal( "start" )
     expect( receveiedmessages[ 0 ].event ).to.equal( "start" )
-    expect( receveiedmessages[ 1 ].event ).to.equal( "4" )
-    expect( receveiedmessages[ 2 ].event ).to.equal( "5" )
-    expect( receveiedmessages[ 3 ].event ).to.equal( "finished" )
+    expect( receveiedmessages[ 1 ].event ).to.equal( "start" )
+    expect( receveiedmessages[ 2 ].event ).to.equal( "4" )
+    expect( receveiedmessages[ 3 ].event ).to.equal( "5" )
+    expect( receveiedmessages[ 4 ].event ).to.equal( "finished" )
 
   } )
 
