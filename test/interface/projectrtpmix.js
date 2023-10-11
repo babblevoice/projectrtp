@@ -172,6 +172,101 @@ describe( "channel mix", function() {
 
   } )
 
+
+  it( "mix 2 channels then unmix then mix again", async function() {
+
+    this.timeout( 6000 )
+    this.slow( 5000 )
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+
+    const endpointapkcount = [ 0, 0, 0, 0 ]
+    const endpointbpkcount = [ 0, 0, 0, 0 ]
+
+    endpointa.on( "message", function( msg ) {
+      endpointapkcount[ 0x7f & msg[ 50 ] ]++
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+    } )
+
+    endpointb.on( "message", function( msg ) {
+      endpointbpkcount[ 0x7f & msg[ 50 ] ]++
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+    } )
+
+    endpointa.bind()
+    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+
+    endpointb.bind()
+    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+
+    let promisearesolve, promisebresolve
+    const promisea = new Promise( r => promisearesolve = r )
+    const promiseb = new Promise( r => promisebresolve = r )
+    
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+        promisearesolve()
+      }
+    } )
+
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+        promisebresolve()
+      }
+    } )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+    /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
+    let dataa = Buffer.alloc( 172 - 12 ).fill( 0 )
+    let datab = Buffer.alloc( 172 - 12 ).fill( 1 )
+
+    for( let i = 0;  50 > i; i ++ ) {
+      sendpk( i, i, channela.local.port, endpointa, dataa )
+      sendpk( i, i, channelb.local.port, endpointb, datab )
+    }
+
+    /* 1S for 50 packets to get through, 0.5 seconds to allow all through jitter buffers */
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } )
+
+    channela.direction( { send: true, recv: false } )
+    expect( channelb.unmix( channela ) ).to.be.true
+    channelb.play( { "loop": true, "files": [
+      { "wav": "/tmp/ukringing.wav" } ] } )
+
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 200 ) } )
+
+    channela.direction( { send: true, recv: true } )
+    expect( channelb.mix( channela ) ).to.be.true
+    
+
+    dataa = Buffer.alloc( 172 - 12 ).fill( 2 )
+    datab = Buffer.alloc( 172 - 12 ).fill( 3 )
+    for( let i = 0;  50 > i; i ++ ) {
+      sendpk( i, i, channela.local.port, endpointa, dataa )
+      sendpk( i, i, channelb.local.port, endpointb, datab )
+    }
+
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } )
+
+    channelb.close()
+    channela.close()
+    endpointa.close()
+    endpointb.close()
+
+    /* have we cleaned up? */
+    await Promise.all( [ promisea, promiseb ] )
+
+    expect( endpointapkcount[ 1 ] ).to.be.within( 49, 51 )
+    expect( endpointapkcount[ 3 ] ).to.be.within( 49, 51 )
+    expect( endpointbpkcount[ 0 ] ).to.be.within( 49, 51 )
+    expect( endpointbpkcount[ 2 ] ).to.be.within( 49, 51 )
+
+  } )
+
   it( "mix 2 channels then close b", async function() {
 
     this.timeout( 3000 )
