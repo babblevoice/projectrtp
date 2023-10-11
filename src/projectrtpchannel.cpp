@@ -1027,22 +1027,20 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
   if( nullptr == this->mixer && nullptr != other->mixer ) {
     this->mixer = other->mixer;
     this->mixer->addchannel( shared_from_this() );
-    postdatabacktojsfromthread( shared_from_this(), "mix", "start" );
+
   } else if ( nullptr != this->mixer && nullptr == other->mixer ) {
     other->mixer = this->mixer;
     this->mixer->addchannel( other );
-    postdatabacktojsfromthread( other, "mix", "start" );
+
   } else if( nullptr == this->mixer && nullptr == other->mixer  ) {
     this->mixer = projectchannelmux::create( workercontext );
     other->mixer = this->mixer;
 
     this->mixer->addchannels( shared_from_this(), other );
-    postdatabacktojsfromthread( shared_from_this(), "mix", "start" );
-    postdatabacktojsfromthread( other, "mix", "start" );
   } else {
     /* If we get here this and other are already mixing and should be cleaned up first */
-    postdatabacktojsfromthread( shared_from_this(), "mix", "busy" );
     RELEASESPINLOCK( this->mixerlock );
+    postdatabacktojsfromthread( shared_from_this(), "mix", "busy" );
     return false;
   }
 
@@ -1052,6 +1050,9 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
   this->mixer->go();
 
   RELEASESPINLOCK( this->mixerlock );
+
+  postdatabacktojsfromthread( shared_from_this(), "mix", "start" );
+  postdatabacktojsfromthread( other, "mix", "start" );
 
   return true;
 }
