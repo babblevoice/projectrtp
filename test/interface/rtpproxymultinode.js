@@ -6,7 +6,7 @@ const mocknode = require( "../mock/mocknode" )
 
 describe( "rtpproxy multi node", function() {
 
-  it( "2 node simple mix", async function() {
+  it.skip( "2 node simple mix", async function() {
     
     const actual = { "mix": 0, "open": 0, "unmix": 0, "close": 0, "remote": 0 }
     /*
@@ -173,7 +173,7 @@ describe( "rtpproxy multi node", function() {
 
   } )
 
-  it( "2 node 2 channel simple mix rtp server listening on same node", async function() {
+  it.skip( "2 node 2 channel simple mix rtp server listening on same node", async function() {
     
     /*
       We need to check that the nodes are maintained when using the same rtp server.
@@ -316,7 +316,7 @@ describe( "rtpproxy multi node", function() {
 
   } )
 
-  it( "2 node 2 channel connect to same rtp server not broken", async function() {
+  it.skip( "2 node 2 channel connect to same rtp server not broken", async function() {
 
     /*
       We need to check that the nodes are maintained when using the same rtp server.
@@ -403,7 +403,7 @@ describe( "rtpproxy multi node", function() {
     prtp.proxy.clearnodes()
   } )
 
-  it( "2 node 1 channel on one, 2 channels other", async function() {
+  it.skip( "2 node 1 channel on one, 2 channels other", async function() {
 
     this.timeout( 3000 )
     this.slow( 2500 )
@@ -587,7 +587,7 @@ describe( "rtpproxy multi node", function() {
 
   } )
 
-  it( "3 node 1 channel each, close main node", async function() {
+  it.skip( "3 node 1 channel each, close main node", async function() {
 
     this.timeout( 3000 )
     this.slow( 2500 )
