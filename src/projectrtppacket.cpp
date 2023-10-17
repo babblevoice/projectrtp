@@ -1,8 +1,7 @@
 
-#ifdef TESTSUITE
 #include <iostream>
+#include <cstdlib>
 #include  <iomanip>
-#endif
 
 #include "projectrtppacket.h"
 #include "globals.h"
@@ -276,25 +275,22 @@ void rtppacket::setpayloadlength( size_t length )
   this->length = 12 + ( this->getpacketcsrccount() * 4 ) + length;
 }
 
-#ifdef TESTSUITE
-/* show the contents to cout */
+/* dump the contents to cout */
 void rtppacket::dump() {
   std::cout << "=================BEGIN=================" << std::endl;
-  std::cout << "length: " << this->length << std::endl;
-  std::cout << "payload length: " << this->getpayloadlength() << std::endl;
+  std::cout << "length: " << std::dec << this->length << std::endl;
+  std::cout << "payload length: " << std::dec << this->getpayloadlength() << std::endl;
   std::cout << "marker: " << +this->getpacketmarker() << std::endl;
   std::cout << "pt: " << +this->getpayloadtype() << std::endl;
-  std::cout << "sn: " << this->getsequencenumber() << std::endl;
-  std::cout << "ts: " << this->gettimestamp() << std::endl;
-  std::cout << "ssrc: " << this->getssrc() << std::endl;
+  std::cout << "sn: " << std::dec << this->getsequencenumber() << std::endl;
+  std::cout << "ts: " << std::dec << this->gettimestamp() << std::endl;
+  std::cout << "ssrc: " << std::dec << this->getssrc() << std::endl;
 
   auto v = this->getpayload();
   for( auto i = 0; i < this->getpayloadlength(); i ++ ) {
     std::cout << std::showbase << std::setfill( '0' ) << std::setw( 2 ) << std::hex << std::right << +(*(v+i)) << ' ';
-    if( 0 == i % 16 ) std::cout << std::endl;
+    if( 0 != i && 0 == i % 16 ) std::cout << std::endl;
   }
   std::cout << std::dec;
-
   std::cout << std::endl << "=================END===================" << std::endl;
 }
-#endif
