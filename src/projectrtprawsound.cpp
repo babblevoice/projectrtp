@@ -1,5 +1,7 @@
 
 #include <iostream>   // cerr
+#include <cstdlib>
+#include <iomanip>
 
 #include "projectrtprawsound.h"
 #include "projectrtpcodecx.h"
@@ -353,4 +355,22 @@ rawsound& rawsound::operator-=( codecx& rhs )
   }
 
   return *this;
+}
+
+
+void rawsound::dump() {
+
+  std::cout << "=================BEGIN=================" << std::endl;
+  std::cout << "samples: " << std::dec << this->samples << std::endl;
+  std::cout << "bytespersample: " << std::dec << this->bytespersample << std::endl;
+  std::cout << "format: " << std::dec << this->format << std::endl;
+  
+  auto v = this->data;
+  size_t len = this->samples * this->bytespersample;
+  for( size_t i = 0; i < len; i ++ ) {
+    std::cout << std::showbase << std::setfill( '0' ) << std::setw( 2 ) << std::hex << std::right << +(*(v+i)) << ' ';
+    if( 0 != i && 0 == i % 16 ) std::cout << std::endl;
+  }
+  std::cout << std::dec;
+  std::cout << std::endl << "=================END===================" << std::endl;
 }

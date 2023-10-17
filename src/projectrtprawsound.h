@@ -39,6 +39,8 @@ public:
   rawsound& operator+=( codecx& rhs );
   rawsound& operator-=( codecx& rhs );
 
+  void dump();
+
 private:
   void frompt( int payloadtype );
 
