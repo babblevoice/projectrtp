@@ -1,5 +1,7 @@
 
 #include <iostream>
+#include <cstdlib>
+#include <iomanip>
 #include <math.h>
 
 #include "projectrtpcodecx.h"
@@ -320,10 +322,10 @@ bool codecx::ilbctol16( void ) {
 
   if( -1 == l168klength ) {
     this->l168kref.size( 0 );
-    this->l168kref.dirty( false );
     return false;
   }
 
+  this->l168kref.dirty( false );
   this->l168kref.size( l168klength );
   return true;
 }
@@ -518,9 +520,10 @@ rawsound& codecx::requirel16( void )
   return this->l168kref;
 }
 
-/*
-# getref
-returns a reference to the relavent rawsound and ensures it is transcoded if required.
+/**
+ * Obtain a reference to a rawsound for the codec type pt. i.e. we alrteady have 
+ * the input sound and based on the format we want to convert it to that 
+ * format.
 */
 rawsound& codecx::getref( int pt ) {
   /* If we have already have or converted this packet... */
