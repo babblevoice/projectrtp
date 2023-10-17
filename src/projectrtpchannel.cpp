@@ -839,6 +839,7 @@ void projectrtpchannel::readsomertp( void ) {
       if( !this->active || this->_requestclose ) return;
 
       if ( bytesrecvd > 0 && bytesrecvd <= RTPMAXLENGTH ) {
+        buf->length = bytesrecvd;
 
         if( this->handlestun( buf->pk, bytesrecvd ) ) {
           this->readsomertp();
@@ -888,14 +889,9 @@ void projectrtpchannel::readsomertp( void ) {
           return;
         }
 
-
-
-        buf->length = bytesrecvd;
-
         AQUIRESPINLOCK( this->rtpbufferlock );
         this->inbuff->push();
         RELEASESPINLOCK( this->rtpbufferlock );
-
       }
 
       this->readsomertp();
