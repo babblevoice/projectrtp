@@ -561,7 +561,7 @@ rawsound& codecx::getref( int pt ) {
       return this->g722ref;
     }
     case PCMAPAYLOADTYPE: {
-      if( this->pcmuref.size() > 0 ) {
+      if( !this->pcmuref.isdirty() && this->pcmuref.size() > 0 ) {
         this->ulaw2alaw();
       } else {
         this->requirenarrowband();
@@ -570,7 +570,7 @@ rawsound& codecx::getref( int pt ) {
       return this->pcmaref;
     }
     case PCMUPAYLOADTYPE: {
-      if( this->pcmaref.size() > 0 ) {
+      if( !this->pcmaref.isdirty() && this->pcmaref.size() > 0 ) {
         this->alaw2ulaw();
       } else {
         this->requirenarrowband();
