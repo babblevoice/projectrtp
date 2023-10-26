@@ -8,6 +8,7 @@ const fft = require( "fft-js" ).fft
 const projectrtp = require( "../../index" ).projectrtp
 const expect = require( "chai" ).expect
 const dgram = require( "dgram" )
+const fs = require( "fs" )
 
 
 /*
@@ -174,9 +175,10 @@ function pcmutolinear( inarray ) {
  * @param { number } pt - payload type
  * @param { number } ssrc  - a unique payload type
  * @param { Array< number > } payload
+ * @param { number } [ snoffset = 0 ] - if we want to have an offset
  * @returns 
  */
-function sendpk( sn, dstport, server, pt = 0, ssrc, payload ) {
+function sendpk( sn, dstport, server, pt = 0, ssrc, payload, snoffset=0 ) {
 
   if( !ssrc ) ssrc = 25
   const ts = sn * 160
@@ -187,7 +189,7 @@ function sendpk( sn, dstport, server, pt = 0, ssrc, payload ) {
   return setTimeout( () => {
     const subheader = Buffer.alloc( 10 )
 
-    subheader.writeUInt16BE( ( sn ) % ( 2**16 ) )
+    subheader.writeUInt16BE( ( sn + snoffset ) % ( 2**16 ) )
     subheader.writeUInt32BE( ts, 2 )
     subheader.writeUInt32BE( ssrc, 6 )
 
@@ -354,6 +356,151 @@ describe( "Transcode", function() {
 
   it( "trancode pcma <==> pcmu", async function() {
     await looptest( 0, 8, lineartopcma, pcmatolinear )
+  } )
+
+  it( "simulate an xfer with multiple mix then test new path pcma <==> g722", async function() {
+
+    this.timeout( 8000 )
+    this.slow( 7000 )
+
+    /* make sure we have some tone to play */
+    projectrtp.tone.generate( "300*0.5:2000", "/tmp/tone.wav" )
+    projectrtp.tone.generate( "800*0.5:2000", "/tmp/hightone.wav" )
+
+    /**
+     * a and b is the 2 phone legs, c is the transfered channel
+     */
+    const acodec = 8
+    const bcodec = 0
+    const ccodec = 9
+
+    /*
+    a = 8, b = 0, c = 0 missing tones on a
+    a = 8, b = 9, c = 0 all works
+    a = 8, b = 0, c = 9, missing tones and missing c leg back on a
+    */
+
+    const a = dgram.createSocket( "udp4" )
+    const b = dgram.createSocket( "udp4" )
+    const c = dgram.createSocket( "udp4" )
+
+    a.bind()
+    await new Promise( resolve => a.on( "listening", resolve ) )
+    b.bind()
+    await new Promise( resolve => b.on( "listening", resolve ) )
+    c.bind()
+    await new Promise( resolve => c.on( "listening", resolve ) )
+
+    /* echo straight back */
+    c.on( "message", function( msg ) {
+      c.send( msg, cchannel.local.port, "localhost" )
+    } )
+
+    b.on( "message", function( msg ) {
+      b.send( msg, bchannel.local.port, "localhost" )
+    } )
+
+    let received = Buffer.alloc( 0 )
+    let ondonereceiving, recvcount = 0
+    const receiveuntil = new Promise( resolve => ondonereceiving = resolve )
+    a.on( "message", function( msg ) {
+      const pk = parsepk( msg )
+      received = Buffer.concat( [ received, pk.payload ] )
+      if( 100 < recvcount++ ) ondonereceiving()
+    } )
+
+    let done
+    const finished = new Promise( ( resolve ) => { done = resolve } )
+
+    let unmixresolve
+    const unmixdone = new Promise( resolve => unmixresolve = resolve )
+
+    /* This channel reflects the outbound channel */
+    const achannel = await projectrtp.openchannel( { "id": "4" }, function( d ) {
+      if( "close" === d.action ) {
+        a.close()
+        b.close()
+        c.close()
+        cchannel.close()
+      }
+
+      if( "mix" === d.action && "finished" === d.event ) unmixresolve()
+    } )
+
+    await new Promise( resolve => setTimeout( resolve, 800 ) )
+    achannel.remote( { "address": "localhost", "port": a.address().port, "codec": acodec } )
+
+    /* This channel reflects the originator */
+    const bchannel = await projectrtp.openchannel( { "id": "5", "remote": { "address": "localhost", "port": b.address().port, "codec": bcodec } }, function( /*d*/ ) {
+    } )
+
+    achannel.mix( bchannel )
+    await new Promise( resolve => setTimeout( resolve, 500 ) ) // we really should wait for the mix start events
+
+    /* for some reason in our lib this gets sent again */
+    achannel.remote( { "address": "localhost", "port": a.address().port, "codec": acodec } )
+    bchannel.remote( { "address": "localhost", "port": b.address().port, "codec": bcodec } )
+
+    achannel.mix( bchannel )
+    bchannel.record( { file: "/tmp/test.wav", numchannels: 2, mp3: true } )
+
+    const y = gensignal( 100 )
+    const encoded = lineartopcma( Array.from( y ) )
+
+    for( let i = 0 ; 120 > i; i ++ ) {
+      sendpk( i, achannel.local.port, a, acodec, 44, encoded, 6300 )
+    }
+
+    await new Promise( resolve => setTimeout( resolve, 1200 ) )
+
+    /* Now our blind xfer happens */
+    achannel.unmix()
+    bchannel.unmix()
+    await unmixdone
+    
+    /* moh followed by ringing tone */
+    achannel.play( { "loop": true, "files": [ { "wav": "/tmp/tone.wav" } ] } )
+    await new Promise( resolve => setTimeout( resolve, 200 ) )
+    achannel.play( { "loop": true, "files": [ { "wav": "/tmp/hightone.wav" } ] } )
+
+    await new Promise( resolve => setTimeout( resolve, 200 ) )
+
+    /* now open our new leg */
+    const cchannel = await projectrtp.openchannel( { "id": "6" }, function( d ) {
+      if( "close" === d.action ) done()
+    } )
+
+    bchannel.close()
+    cchannel.remote( { "address": "localhost", "port": c.address().port, "codec": ccodec } )
+    await new Promise( resolve => setTimeout( resolve, 40 ) )
+    cchannel.mix( achannel )
+
+    /* now we have one way audio in real life */
+    await receiveuntil
+    const y2 = pcmatolinear( Array.from( received ) )
+
+    await new Promise( resolve => setTimeout( resolve, 1000 ) )
+    achannel.close()
+    await finished
+
+    npl.plot( [ {
+      y: Array.from( y ),
+      type: "scatter"
+    } ] )
+
+    npl.plot( [ {
+      y: Array.from( y2 ),
+      type: "scatter"
+    } ] )
+
+    /* TODO this currently doesn't test the c leg as this is teh same frequency as the a leg*/
+    const amps = ampbyfrequency( y2 )
+    expect( has( amps, 100, 25000000 ) ).to.be.true
+    expect( has( amps, 300, 25000000 ) ).to.be.true
+    expect( has( amps, 800, 25000000 ) ).to.be.true
+    expect( has( amps, 500, 25000000 ) ).to.be.false
+
+    await fs.promises.unlink( "/tmp/ukringing.wav" ).catch( () => {} )
   } )
 } )
 
