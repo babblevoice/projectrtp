@@ -10,13 +10,17 @@
 #include "projectrtppacket.h"
 
 /* Defaults */
-/* The number of packets we will keep in a buffer */
-#define BUFFERPACKETCOUNT 40
+/* 
+  The number of packets we will keep in a buffer 
+  MUST BE POWER OF 2 or the mod won't work on the 
+  circular buffer when wrapping around the uint16.
+*/
+#define BUFFERPACKETCOUNT 32
 /* 
   How many packets we receive before we start taking packets out of the buffer 
   If we fill, Delay = ( BUFFERPACKETCOUNT - BUFFERPACKETCAP ) * 20mS 
 */
-#define BUFFERPACKETCAP 15  /* 200mS @ a ptime of 20mS */
+#define BUFFERPACKETCAP 10  /* 200mS @ a ptime of 20mS */
 
 /*
 My thoughts on buffers. We reorder as we might want to use the data
@@ -49,6 +53,10 @@ public:
   void push( void );
   rtppacket* reserve( void );
   uint64_t getdropped( void ) { return this->dropped; }
+  uint64_t getpushed( void ) { return this->pushed; }
+  uint64_t getpopped( void ) { return this->popped; }
+  uint64_t getbadsn( void ) { return this->badsn; }
+  uint16_t getoutsn( void ) { return this->outsn; }
 
   int size( void ) { return this->buffercount; }
 
@@ -76,6 +84,9 @@ private:
   int waterlevel;
   uint16_t outsn;
   uint64_t dropped;
+  uint64_t pushed;
+  uint64_t popped;
+  uint64_t badsn;
 };
 
 #ifdef TESTSUITE
