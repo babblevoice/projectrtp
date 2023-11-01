@@ -1,4 +1,7 @@
 
+#include <iostream>
+#include <cstdlib>
+
 #include "projectrtpbuffer.h"
 #include "globals.h"
 
@@ -23,7 +26,10 @@ rtpbuffer::rtpbuffer( int buffercount, int waterlevel ) :
   buffercount( buffercount ),
   waterlevel( waterlevel ),
   outsn( 0 ),
-  dropped( 0 ) {
+  dropped( 0 ),
+  pushed( 0 ),
+  popped( 0 ),
+  badsn( 0 ) {
 
   this->buffer.resize( buffercount );
   this->orderedrtpdata.resize( buffercount );
@@ -46,7 +52,8 @@ Returns the next packet in order - does not modify our structure.
 */
 rtppacket* rtpbuffer::peek( void ) {
   if( nullptr != this->peekedpopped ) return this->peekedpopped;
-  this->peekedpopped = this->orderedrtpdata.at( this->outsn % this->buffercount );
+  uint16_t bufindex = this->outsn % this->buffercount;
+  this->peekedpopped = this->orderedrtpdata.at( bufindex );
   return this->peekedpopped;
 }
 
@@ -80,12 +87,19 @@ rtppacket* rtpbuffer::pop( void ) {
   this->peekedpopped = nullptr;
   if( nullptr == out ) return nullptr;
 
-  if( nullptr != this->orderedrtpdata.at( oldsn % this->buffercount ) ) {
-    this->orderedrtpdata.at( oldsn % this->buffercount ) = nullptr;
+  uint16_t bufindex = oldsn % this->buffercount;
+  if( nullptr != this->orderedrtpdata.at( bufindex ) ) {
+    this->orderedrtpdata.at( bufindex ) = nullptr;
     this->availablertpdata.push( out );
   }
 
-  if( out->getsequencenumber() != oldsn ) return nullptr;
+  auto outsn = out->getsequencenumber();
+  if( outsn != oldsn ) {
+    this->badsn++;
+    return nullptr;
+  }
+
+  this->popped++;
   return out;
 }
 
@@ -94,7 +108,12 @@ Stores the last reserved packet.
 */
 void rtpbuffer::push( void ) {
 
-  if( nullptr == this->reserved ) return;
+  if( nullptr == this->reserved ) {
+    fprintf( stderr, "Push on buffer - but no buffer reserved to push\n" );
+    this->dropped++;
+    return;
+  }
+
   uint16_t sn = this->reserved->getsequencenumber();
 
   /*
@@ -117,6 +136,11 @@ void rtpbuffer::push( void ) {
 
   if( nullptr == this->orderedrtpdata.at( sn % this->buffercount ) ) {
     this->orderedrtpdata.at( sn % this->buffercount ) = this->reserved;
+    this->pushed++;
+  } else {
+    /* this shouldn't happen as it means a duplicate sn or we have got our index incorrect */
+    this->availablertpdata.push( this->reserved );
+    this->dropped++;
   }
 
   this->reserved = nullptr;
