@@ -128,6 +128,9 @@ void projectchannelmux::mix2( void ) {
   auto chan2 = *chans;
   rtppacket *src;
 
+//std::cout << chan1->ssrcout << " - this->snout=" << chan1->snout << std::endl;
+//std::cout << chan2->ssrcout << " - this->snout=" << chan2->snout << std::endl;
+
   while( true ) {
     AQUIRESPINLOCK( chan1->rtpbufferlock );
     src = chan1->inbuff->pop();
@@ -198,14 +201,7 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
 
   for( auto& chan: this->channels ) {
     chan->startticktimer();
-  }
-
-  for( auto& chan: this->channels ) {
     chan->checkfornewrecorders();
-  }
-
-  for( auto& chan: this->channels ) {
-    chan->dtlsnegotiate();
     chan->incrtsout();
   }
 
@@ -219,14 +215,15 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
     chan->senddtmf();
     chan->writerecordings();
     chan->checkidlerecv();
-  }
-
-  for( auto& chan: this->channels ) {
     chan->endticktimer();
   }
 
   /* The last thing we do */
   this->setnexttick();
+
+  for( auto& chan: this->channels ) {
+    chan->endticktimer();
+  }
 }
 
 void projectchannelmux::setnexttick( void ) {
@@ -293,12 +290,15 @@ void projectchannelmux::checkfornewmixes( void ) {
 
 void projectchannelmux::addchannel( projectrtpchannelptr chan ) {
   AQUIRESPINLOCK( this->newchannelslock );
+  chan->mixing = true;
   this->newchannels.push_back( chan );
   RELEASESPINLOCK( this->newchannelslock );
 }
 
 void projectchannelmux::addchannels( projectrtpchannelptr chana, projectrtpchannelptr chanb ) {
   AQUIRESPINLOCK( this->newchannelslock );
+  chana->mixing = true;
+  chanb->mixing = true;
   this->newchannels.push_back( chana );
   this->newchannels.push_back( chanb );
   RELEASESPINLOCK( this->newchannelslock );
@@ -313,6 +313,7 @@ void projectchannelmux::postrtpdata( projectrtpchannelptr srcchan, projectrtpcha
   rtppacket *dst = dstchan->gettempoutbuf();
 
   if( nullptr == dst ) {
+    dstchan->outpkdropcount++;
     fprintf( stderr, "We have a null out buffer\n" );
     return;
   }
