@@ -53,8 +53,10 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   totalticktime( 0 ),
   totaltickcount( 0 ),
   tickswithnortpcount( 0 ),
+  outpkwritecount( 0 ),
   outpkcount( 0 ),
   outpkskipcount( 0 ),
+  outpkdropcount( 0 ),
   inbuff( rtpbuffer::create() ),
   rtpbufferlock( false ),
   rtpoutindex( 0 ),
@@ -410,12 +412,16 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   this->startticktimer();
 
   this->incrtsout();
-  if( this->checkidlerecv() ) return;
+
+  if( this->checkidlerecv() ) {
+    this->endticktimer();
+    return;
+  }
+
   this->checkfornewrecorders();
 
   this->incodec << codecx::next;
   this->outcodec << codecx::next;
-
 
   rtppacket *src;
   do {
@@ -827,6 +833,7 @@ void projectrtpchannel::readsomertp( void ) {
   RELEASESPINLOCK( this->rtpbufferlock );
 
   if( nullptr == buf ) {
+    fprintf( stderr, "Error no buffer\n" );
     this->requestclose( "error.nobuffer" );
     return;
   }
@@ -835,16 +842,16 @@ void projectrtpchannel::readsomertp( void ) {
   boost::asio::buffer( buf->pk, RTPMAXLENGTH  ), this->rtpsenderendpoint,
     [ this, buf ]( boost::system::error_code ec, std::size_t bytesrecvd ) {
 
-      if( ec ) return;
+      if ( ec && ec != boost::asio::error::message_size ) return;
+      this->receivedpkcount++;
+
       if( !this->active || this->_requestclose ) return;
 
       if ( bytesrecvd > 0 && bytesrecvd <= RTPMAXLENGTH ) {
         buf->length = bytesrecvd;
 
-        if( this->handlestun( buf->pk, bytesrecvd ) ) {
-          this->readsomertp();
-          return;
-        }
+        if( this->handlestun( buf->pk, bytesrecvd ) )
+          goto readsomemore;
 
         AQUIRESPINLOCK( this->rtpdtlslock );
         dtlssession::pointer currentdtlssession = this->rtpdtls;
@@ -855,20 +862,13 @@ void projectrtpchannel::readsomertp( void ) {
           AQUIRESPINLOCK( this->rtpdtlslock );
           currentdtlssession->write( buf->pk, bytesrecvd );
           RELEASESPINLOCK( this->rtpdtlslock );
-
           this->dtlsnegotiate();
-          this->readsomertp();
-          return;
+          goto readsomemore;
         }
-
-        /* RTP - TODO check for MUXED RTCP */
-        /* We should still count packets we are instructed to drop */
-        this->receivedpkcount++;
 
         if( !this->recv ) {
           this->receivedpkskip++;
-          this->readsomertp();
-          return;
+          goto readsomemore;
         }
 
         this->tickswithnortpcount = 0;
@@ -879,14 +879,12 @@ void projectrtpchannel::readsomertp( void ) {
         if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint ) {
           /* After the first packet - we only accept data from the verified source */
           this->receivedpkskip++;
-          this->readsomertp();
-          return;
+          goto readsomemore;
         }
 
         if( buf->getssrc() != this->ssrcin ) {
           this->receivedpkskip++;
-          this->readsomertp();
-          return;
+          goto readsomemore;
         }
 
         AQUIRESPINLOCK( this->rtpbufferlock );
@@ -894,6 +892,7 @@ void projectrtpchannel::readsomertp( void ) {
         RELEASESPINLOCK( this->rtpbufferlock );
       }
 
+readsomemore:
       this->readsomertp();
 
     } );
@@ -957,44 +956,38 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
 
   if( !this->active ) return;
 
-  if( nullptr == pk ) {
-    this->outpkskipcount++;
-    fprintf( stderr, "We have been given an nullptr RTP packet??\n" );
-    return;
-  }
-
-  if( 0 == pk->length ) {
-    this->outpkskipcount++;
-    fprintf( stderr, "We have been given an RTP packet of zero length??\n" );
-    return;
-  }
-
-  if( !this->send ) {
-    this->outpkskipcount++;
-    /* silently drop - could we do this sooner to use less CPU? */
-    return;
-  }
-
   AQUIRESPINLOCK( this->rtpdtlslock );
   dtlssession::pointer currentdtlssession = this->rtpdtls;
   RELEASESPINLOCK( this->rtpdtlslock );
 
   if( nullptr != currentdtlssession &&
       currentdtlssession->rtpdtlshandshakeing ) {
-    this->outpkskipcount++;
-    return;
+    goto completewrite;
   }
+
+  if( nullptr == pk ) {
+    fprintf( stderr, "We have been given an nullptr RTP packet??\n" );
+    goto completewrite;
+  }
+
+  if( 0 == pk->length ) {
+    fprintf( stderr, "We have been given an RTP packet of zero length??\n" );
+    goto completewrite;
+  }
+
+  /* silently drop - could we do this sooner to use less CPU? */
+  if( !this->send ) goto completewrite;
 
   if( nullptr != currentdtlssession &&
       !currentdtlssession->rtpdtlshandshakeing ) {
     if( !currentdtlssession->protect( pk ) ) {
-      this->outpkskipcount++;
-      return;
+      goto completewrite;
     }
   }
 
   if( this->remoteconfirmed ) {
     this->snout++;
+    this->outpkwritecount++;
 
     this->rtpsocket.async_send_to(
                       boost::asio::buffer( pk->pk, pk->length ),
@@ -1005,6 +998,7 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
                                     boost::asio::placeholders::bytes_transferred ) );
     return;
   }
+completewrite:
   this->outpkskipcount++;
 }
 
@@ -1033,17 +1027,14 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
     other->mixer = this->mixer;
 
     this->mixer->addchannels( shared_from_this(), other );
+
+    this->mixer->go();
   } else {
     /* If we get here this and other are already mixing and should be cleaned up first */
     RELEASESPINLOCK( this->mixerlock );
     postdatabacktojsfromthread( shared_from_this(), "mix", "busy" );
     return false;
   }
-
-  this->mixing = true;
-  other->mixing = true;
-
-  this->mixer->go();
 
   RELEASESPINLOCK( this->mixerlock );
 
@@ -1186,6 +1177,9 @@ void projectrtpchannel::handlesend(
 
   if( !error && bytes_transferred > 0 ) {
     this->outpkcount++;
+  } else {
+    fprintf( stderr, "Problem sending packet\n" );
+    this->outpkdropcount++;
   }
 }
 
@@ -1710,22 +1704,34 @@ napi_value createcloseobject( napi_env env, projectrtpchannel::pointer p ) {
     if( napi_ok != napi_create_double( env, 0.0, &mos ) ) return NULL;
   }
 
-  napi_value receivedpkcount, receivedpkskip, receiveddropped;
+  napi_value receivedpkcount, receivedpkskip, receiveddropped, resceivedpushed, resceivedpopped, bufferbadsn;
   if( napi_ok != napi_create_double( env, p->receivedpkcount, &receivedpkcount ) ) return NULL;
   if( napi_ok != napi_create_double( env, p->receivedpkskip, &receivedpkskip ) ) return NULL;
   if( napi_ok != napi_create_double( env, p->inbuff->getdropped(), &receiveddropped ) ) return NULL;
+  if( napi_ok != napi_create_double( env, p->inbuff->getpopped(), &resceivedpopped ) ) return NULL;
+  if( napi_ok != napi_create_double( env, p->inbuff->getpushed(), &resceivedpushed ) ) return NULL;
+  if( napi_ok != napi_create_double( env, p->inbuff->getbadsn(), &bufferbadsn ) ) return NULL;
 
   if( napi_ok != napi_set_named_property( env, in, "mos", mos ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, in, "count", receivedpkcount ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, in, "dropped", receiveddropped ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, in, "popped", resceivedpopped ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, in, "pushed", resceivedpushed ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, in, "skip", receivedpkskip ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, in, "badsn", bufferbadsn ) ) return NULL;
 
-  napi_value sentpkcount, outpkskipcount;
+  napi_value sentpkcount, outpkskipcount, outdropcount, outwritecount;
   if( napi_ok != napi_create_double( env, p->outpkcount, &sentpkcount ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, out, "count", sentpkcount ) ) return NULL;
 
   if( napi_ok != napi_create_double( env, p->outpkskipcount, &outpkskipcount ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, out, "skip", outpkskipcount ) ) return NULL;
+
+  if( napi_ok != napi_create_double( env, p->outpkdropcount, &outdropcount ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, out, "drop", outdropcount ) ) return NULL;
+
+  if( napi_ok != napi_create_double( env, p->outpkwritecount, &outwritecount ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, out, "write", outwritecount ) ) return NULL;
 
   napi_value meanticktimeus, maxticktimeus, totaltickcount;
   if( p->totaltickcount > 0 ) {

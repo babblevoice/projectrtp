@@ -132,8 +132,10 @@ public:
   std::atomic_uint64_t totaltickcount;
   std::atomic_uint16_t tickswithnortpcount;
 
+  std::atomic_uint64_t outpkwritecount;
   std::atomic_uint64_t outpkcount;
   std::atomic_uint64_t outpkskipcount;
+  std::atomic_uint64_t outpkdropcount;
 
   /* buffer and spin lock for in traffic */
   rtpbuffer::pointer inbuff;
