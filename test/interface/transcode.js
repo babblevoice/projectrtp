@@ -176,9 +176,10 @@ function pcmutolinear( inarray ) {
  * @param { number } ssrc  - a unique payload type
  * @param { Array< number > } payload
  * @param { number } [ snoffset = 0 ] - if we want to have an offset
+ * @param { function } [ cb ] - callback when sent
  * @returns 
  */
-function sendpk( sn, dstport, server, pt = 0, ssrc, payload, snoffset=0 ) {
+function sendpk( sn, dstport, server, pt = 0, ssrc, payload, snoffset=0, cb ) {
 
   if( !ssrc ) ssrc = 25
   const ts = sn * 160
@@ -199,6 +200,7 @@ function sendpk( sn, dstport, server, pt = 0, ssrc, payload, snoffset=0 ) {
       uint8pl ] )
 
     server.send( rtppacket, dstport, "localhost" )
+    if( cb ) cb( { rtppacket, dstport } )
   }, sendtime )
 }
 
@@ -310,11 +312,142 @@ async function looptest( acodec, bcodec, encode, decode ) {
   expect( has( amps, frequency + 100, 25000000 ) ).to.be.false
 }
 
+/**
+ * Test to check we receive all packets. ALso check basic codecs to make sure
+ * no duff packets come through (i,.e. memory is cleared out). It will only work
+ * with non-lossy CODECS
+ * @param { number } acodec 
+ * @param { number } bcodec 
+ * @param { encodefunction } encode 
+ * @param { decodefunction } decode
+ * @param { number } [ expectedval ] what value we expect after the round trip (i.e. ulaw - alawy and back again might not be the same value)
+ */
+async function loopcounttest( acodec, bcodec, encode, decode, expectedval = 0 ) {
+
+  const a = dgram.createSocket( "udp4" )
+  const b = dgram.createSocket( "udp4" )
+
+  a.bind()
+  await new Promise( resolve => a.on( "listening", resolve ) )
+  b.bind()
+  await new Promise( resolve => b.on( "listening", resolve ) )
+
+  let done
+  const finished = new Promise( ( r ) => { done = r } )
+
+  const allstats = {
+    a: {
+      recv:{ count: 0 },
+      send:{ count: 0 },
+      port: a.address().port
+    },
+    b: {
+      recv:{ count: 0 },
+      send:{ count: 0 },
+      srcport: b.address().port,
+      dstport: 0
+    },
+    notcorrect: 0
+  }
+
+  const achannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": a.address().port, "codec": acodec } }, function( d ) {
+    if( "close" === d.action ) {
+      a.close()
+      b.close()
+      bchannel.close()
+      allstats.achannel = { stats: d.stats }
+    }
+  } )
+
+  const bchannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": b.address().port, "codec": bcodec } }, function( d ) {
+    if( "close" === d.action ) {
+      allstats.bchannel = { stats: d.stats }
+      done()
+    }
+  } )
+
+  allstats.b.dstport = bchannel.local.port
+
+  /* echo straight back */
+  a.on( "message", function( msg ) {
+    a.send( msg, achannel.local.port, "localhost" )
+    allstats.a.recv.count++
+    allstats.a.send.count++
+  } )
+
+  bchannel.mix( achannel )
+
+  b.on( "message", function( msg ) {
+    allstats.b.recv.count++
+    const pk = parsepk( msg )
+    const decoded = decode( Array.from( pk.payload ) )
+    for( let i = 0; i < decoded.length; i++ ) {
+      if( expectedval != decoded[ i ] ) allstats.notcorrect++
+    }
+  } )
+
+  const y = new Int16Array( datalength ).fill( 0 )
+  const encoded = encode( Array.from( y ) )
+
+  for( let i = 0; 60 > i; i ++ ) {
+    sendpk( i, bchannel.local.port, b, bcodec, 44, encoded, 0, () => { allstats.b.send.count++ } )
+  }
+
+  const bufferdelay = 350
+  const errormarin = 500
+  const packettime = 20 * 60
+  const totaltimerequired = packettime + bufferdelay + errormarin
+  await new Promise( resolve => setTimeout( resolve, totaltimerequired ) )
+
+  achannel.close()
+  await finished
+
+  return allstats
+}
+
+
 
 describe( "Transcode", function() {
 
   this.slow( 3000 )
   this.timeout( 5000 )
+
+  it( "basic count test and data check trancode pcmu <==> pcmu", async function() {
+    /* 2 seconds is important, it should be below 60 * 20mS + JT = 1200 + 300 + 300 = 1800mS - we are taking 1820 */
+    this.timeout( 4000 )
+    this.slow( 2000 )
+
+    const all = []
+    for( let i = 0; 50 > i; i++) {
+      all.push( loopcounttest( 0, 0, lineartopcmu, pcmutolinear ) )
+    }
+    const results = await Promise.all( all )
+    results.forEach( ( i ) => {
+      expect( i.a.recv.count ).to.equal( 60 )
+      expect( i.b.recv.count ).to.equal( 60 )
+    } )
+  } )
+
+  it( "basic count test and data check trancode pcma <==> pcma", async function() {
+    this.timeout( 3000 )
+    this.slow( 2500 )
+    const result = await loopcounttest( 0, 0, lineartopcma, pcmatolinear, 8 )
+    expect( result.notcorrect ).to.equal( 0 )
+  } )
+
+  it( "basic count test and data check trancode pcmu <==> pcma", async function() {
+    this.timeout( 3000 )
+    this.slow( 2500 )
+    const result = await loopcounttest( 8, 0, lineartopcmu, pcmutolinear, 8 )
+    expect( result.notcorrect ).to.equal( 0 )
+  } )
+
+  it( "basic count test and data check trancode pcma <==> pcmu", async function() {
+    this.timeout( 3000 )
+    this.slow( 2500 )
+    const result = await loopcounttest( 0, 8, lineartopcma, pcmatolinear, 8 )
+    expect( result.notcorrect ).to.equal( 0 )
+  } )
 
   it( "Test our linear to pcma converting routines", async function() {
 
@@ -356,6 +489,14 @@ describe( "Transcode", function() {
 
   it( "trancode pcma <==> pcmu", async function() {
     await looptest( 0, 8, lineartopcma, pcmatolinear )
+  } )
+
+  it( "trancode pcma <==> pcma", async function() {
+    await looptest( 8, 8, lineartopcma, pcmatolinear )
+  } )
+
+  it( "trancode pcmu <==> pcmu", async function() {
+    await looptest( 0, 0, lineartopcmu, pcmutolinear )
   } )
 
   it( "simulate an xfer with multiple mix then test new path pcma <==> g722", async function() {
