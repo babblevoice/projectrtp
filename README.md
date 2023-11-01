@@ -54,81 +54,14 @@ The folder is separated out into interface, unit and mock. The mock folder conta
 
 These are designed to create real world scenarios - opening and closing multiple channels and random times and at load. This is designed to test for unexpected behaviour. These test do not provide a pass/fail - but might crash or produce unexpected output on bad behaviour. These have concurrency/race condition tests in mind.
 
-### `npm run check`
-
-Use tsc for type checking and eslint.
-
-NB: tsc should be installed as a global module:
-
-```bash
-npm install -G typescript
-```
-
-Eslint should be installed as a module
-
-```bash
-npm install eslint
-```
-
-Other types modules need installing:
-
-```bash
-npm i --save-dev @types/node @types/mocha @types/chai @types/uuid
-```
-
-## Dependencies
-
-* spandsp-devel
-* libilbc
-* boost
-* gnutls
-* libsrtp
-* openssl (for now the NodeJS scripts use openssl to generate a self signed cert for DTLS)
-
-libilbc is included as a git submodule and requires building. This needs pulling which also
-has a submodule so (although this is handled inteh Dockerfile if you are building an image): 
-
-```
-git submodule update --init --recursive
-```
-
-## Docker/Podman
-
-Podman has some shortfalls. Remove and install docker.
-
-```
-docker build .
-```
-
-### Multi arch targets
-
-Qemu emulators are needed
-
-```
-docker run -it --rm --privileged tonistiigi/binfmt --install all
-```
-
-Or in one shot and build it. This create a docker image and container buildkit. 
-```
-docker buildx create --name rtpbuilder --use --bootstrap --platform linux/amd64,linux/arm64
-```
-
-To clean up if you want to remove this buildx env:
-```
-docker buildx rm rtpbuilder
-```
-
-Then to build, and push to Docker hub (REMEMBER to update all references to version number including in Dockerfile)
-```
-docker buildx prune
-docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:<version> . --push
-```
-
-NB: updating version, Docker file, this readme and package.json all need updating - is there a way of automating this?
-
 ### Local build
 
-If you wish to build outsode of a Docker image, there are npm target scripts for build and rebuild.
+If you wish to build outsode of a Docker image, there are npm target scripts for build and rebuild. For beta releases the following can be done.
+
+```bash
+docker buildx prune
+docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.4.20_beta1 . --push
+```
 
 ## Example scripts
 
