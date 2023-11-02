@@ -82,6 +82,8 @@ public:
   void remote( std::string address,
                unsigned short port,
                uint32_t codec,
+               unsigned short ilbcpt,
+               unsigned short rfc2833pt,
                dtlssession::mode,
                std::string fingerprint );
 
@@ -161,6 +163,8 @@ private:
   std::atomic_bool active;
   unsigned short port;
   unsigned short rfc2833pt;
+  unsigned short ilbcpt;
+
   uint32_t lasttelephoneeventsn;
   uint8_t lasttelephoneevent;
 

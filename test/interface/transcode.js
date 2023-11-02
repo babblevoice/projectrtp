@@ -241,9 +241,10 @@ function parsepk( packet ) {
  * @param { number } acodec 
  * @param { number } bcodec 
  * @param { encodefunction } encode 
- * @param { decodefunction } decode 
+ * @param { decodefunction } decode
+ * @param { number } [ ilbcpt = -1 ] if acodec is ilbc then set the dynamic pt
  */
-async function looptest( acodec, bcodec, encode, decode ) {
+async function looptest( acodec, bcodec, encode, decode, ilbcpt = -1 ) {
   const a = dgram.createSocket( "udp4" )
   const b = dgram.createSocket( "udp4" )
 
@@ -255,7 +256,10 @@ async function looptest( acodec, bcodec, encode, decode ) {
   let done
   const finished = new Promise( ( r ) => { done = r } )
 
-  const achannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": a.address().port, "codec": acodec } }, function( d ) {
+  const channeladef = { "id": "4", "remote": { "address": "localhost", "port": a.address().port, "codec": acodec } }
+  if( 97 == acodec && -1 != ilbcpt ) channeladef.remote.ilbcpt = ilbcpt
+
+  const achannel = await projectrtp.openchannel( channeladef, function( d ) {
     if( "close" === d.action ) {
       a.close()
       b.close()
@@ -271,6 +275,8 @@ async function looptest( acodec, bcodec, encode, decode ) {
 
   /* echo straight back */
   a.on( "message", function( msg ) {
+    const rtppk = parsepk( msg )
+    if( -1 != ilbcpt ) expect( rtppk.pt ).to.equal( ilbcpt )
     a.send( msg, achannel.local.port, "localhost" )
   } )
 
@@ -467,8 +473,12 @@ describe( "Transcode", function() {
     expect( has( amps, 500, 25000000 ) ).to.be.false
   } )
 
-  it( "trancode pcmu <==> ilbc", async function() {
+  it( "trancode pcmu <==> ilbc static pt", async function() {
     await looptest( 97, 0, lineartopcmu, pcmutolinear )
+  } )
+
+  it( "trancode pcmu <==> ilbc with dynamic pt", async function() {
+    await looptest( 97, 0, lineartopcmu, pcmutolinear, 123 )
   } )
 
   it( "trancode pcmu <==> g722", async function() {

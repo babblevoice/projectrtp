@@ -589,7 +589,7 @@ rawsound& codecx::getref( int pt ) {
   }
 
   /* We should ever get here unless an invalid param has been passed in */
-  std::cerr << "codecx::getref call with bad pt" << std::endl;
+  std::cerr << "codecx::getref call with bad pt: " << pt << std::endl;
   return this->pcmuref;
 }
 

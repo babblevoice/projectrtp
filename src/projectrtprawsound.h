@@ -6,8 +6,7 @@
 #include "projectrtppacket.h"
 
 class codecx;
-class rawsound
-{
+class rawsound {
 public:
   rawsound();
   rawsound( uint8_t *ptr, std::size_t samples, int format, uint16_t samplerate );

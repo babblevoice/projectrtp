@@ -23,6 +23,21 @@ function sendpayload( sendtime, pk, dstport, server ) {
   }, sendtime )
 }
 
+/**
+ * Limitation of not parsing ccrc.
+ * @param { Buffer } packet
+ * @return { object }
+ */
+function parsepk( packet ) {
+  return {
+    sn: packet.readUInt16BE( 2 ),
+    ts: packet.readUInt32BE( 4 ),
+    pt: packet.readUInt8( 1 ) & 0x7f,
+    ssrc: packet.readUInt32BE( 8 ),
+    payload: new Uint8Array( packet.slice( 12 ) )
+  }
+}
+
 /* helper functions */
 function sendpk( sn, ts, sendtime, dstport, server, pt = 0, ssrc ) {
 
@@ -253,6 +268,74 @@ describe( "dtmf", function() {
     expect( dtmfpkcount ).to.equal( 3*3 )
   } )
 
+  it( "2 channels mixing and request rtp server to send 2833 to one with dynamic payloadtype", async function() {
+
+    /* create our RTP/UDP endpoint */
+    const clienta = dgram.createSocket( "udp4" )
+    const clientb = dgram.createSocket( "udp4" )
+
+    const rfc2833pt = 44
+
+    let dtmfpkcount = 0
+    clienta.on( "message", function( msg ) {
+      if( rfc2833pt == ( 0x7f & msg [ 1 ] ) ) {
+        dtmfpkcount++
+      } else {
+        expect( msg.length ).to.equal( 172 )
+        expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+      }
+    } )
+
+    clientb.on( "message", function( msg ) {
+      if( 101 == ( 0x7f & msg [ 1 ] ) ) {
+        expect( true ).to.equal( false ) //here = bad
+        dtmfpkcount++
+      }
+      clientb.send( msg, channelb.local.port, "localhost" )
+    } )
+
+    this.timeout( 3000 )
+    this.slow( 2500 )
+
+    clienta.bind()
+    await new Promise( ( resolve ) => { clienta.on( "listening", () => resolve()  ) } )
+    clientb.bind()
+    await new Promise( ( resolve ) => { clientb.on( "listening", () => resolve()  ) } )
+
+    const ouraport = clienta.address().port
+    const ourbport = clientb.address().port
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ouraport, "codec": 0, rfc2833pt } }, function( d ) {
+      if( "close" === d.action ) channelb.close()
+    } )
+
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) done()
+    } )
+
+    expect( channela.mix( channelb ) ).to.be.true
+
+    /* send a packet every 20mS x 70 */
+    for( let i = 0;  50 > i; i ++ ) {
+      sendpk( i, i*160, i*20, channela.local.port, clienta )
+    }
+
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 400 ) } )
+    channela.dtmf( "*9F" )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 800 ) } )
+    channela.close()
+
+    await finished
+
+    clienta.close()
+    clientb.close()
+
+    expect( dtmfpkcount ).to.equal( 3*3 )
+  } )
+
   it( "3 channels mixing and request rtp server to send 2833 to one", async function() {
 
     /* create our RTP/UDP endpoint */
@@ -262,11 +345,12 @@ describe( "dtmf", function() {
 
     let dtmfpkcount = 0
     clienta.on( "message", function( msg ) {
-      if( 101 == ( 0x7f & msg [ 1 ] ) ) {
+      const pk = parsepk( msg )
+      if( 101 == pk.pt ) {
         dtmfpkcount++
       } else {
         expect( msg.length ).to.equal( 172 )
-        expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+        expect( pk.pt ).to.equal( 0 )
       }
     } )
 

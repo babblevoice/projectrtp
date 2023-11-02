@@ -3,6 +3,8 @@
 #ifndef PROJECTRTPCODECX_H
 #define PROJECTRTPCODECX_H
 
+#include <iostream>
+#include <cstdlib>
 
 #include <ilbc.h>
 #include <spandsp.h>
@@ -127,6 +129,8 @@ auto* operator << ( auto *pk, codecx& c ) {
 
   switch( outpayloadtype ) {
     case ILBCPAYLOADTYPE: {
+      pk->setpayloadlength( ILBC20PAYLOADBYTES );
+
       if( !c.ilbcref.isdirty() ) {
         pk->copy( c.ilbcref.c_str(), c.ilbcref.size() * c.ilbcref.getbytespersample() );
         return pk;
@@ -135,6 +139,7 @@ auto* operator << ( auto *pk, codecx& c ) {
       break;
     }
     case G722PAYLOADTYPE: {
+      pk->setpayloadlength( G722PAYLOADBYTES );
       if( !c.g722ref.isdirty() ) {
         pk->copy( c.g722ref.c_str(), c.g722ref.size() * c.g722ref.getbytespersample() );
         return pk;
@@ -143,6 +148,7 @@ auto* operator << ( auto *pk, codecx& c ) {
       break;
     }
     case PCMAPAYLOADTYPE: {
+      pk->setpayloadlength( G711PAYLOADBYTES );
       if( !c.pcmaref.isdirty() ) {
         pk->copy( c.pcmaref.c_str(), c.pcmaref.size() * c.pcmaref.getbytespersample() );
         return pk;
@@ -151,6 +157,7 @@ auto* operator << ( auto *pk, codecx& c ) {
       break;
     }
     case PCMUPAYLOADTYPE: {
+      pk->setpayloadlength( G711PAYLOADBYTES );
       if( !c.pcmuref.isdirty() ) {
         pk->copy( c.pcmuref.c_str(), c.pcmuref.size() * c.pcmuref.getbytespersample() );
         return pk;
@@ -159,6 +166,7 @@ auto* operator << ( auto *pk, codecx& c ) {
       break;
     }
     case L168KPAYLOADTYPE: {
+      pk->setpayloadlength( L16NARROWBANDBYTES );
       if( !c.l168kref.isdirty() ) {
         pk->copy( c.l168kref.c_str(), c.l168kref.size() * c.l168kref.getbytespersample() );
         return pk;
@@ -168,6 +176,7 @@ auto* operator << ( auto *pk, codecx& c ) {
     }
 
     case L1616KPAYLOADTYPE: {
+      pk->setpayloadlength( L16WIDEBANDBYTES );
       if( !c.l1616kref.isdirty() ) {
         pk->copy( c.l1616kref.c_str(), c.l1616kref.size() * c.l1616kref.getbytespersample() );
         return pk;
@@ -175,10 +184,16 @@ auto* operator << ( auto *pk, codecx& c ) {
       c.l1616kref = rawsound( *pk, true );
       break;
     }
+    default: {
+      /* this should not happen */
+      std::cerr << "Unknown CODEC when encoding: " << outpayloadtype << std::endl;
+      return pk;
+    }
   }
 
-  rawsound r = c.getref( outpayloadtype );
-  pk->setpayloadlength( r.size() );
+  /* encode */
+  c.getref( outpayloadtype );
+
   return pk;
 }
 
