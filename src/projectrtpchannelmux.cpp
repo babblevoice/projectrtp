@@ -128,9 +128,6 @@ void projectchannelmux::mix2( void ) {
   auto chan2 = *chans;
   rtppacket *src;
 
-//std::cout << chan1->ssrcout << " - this->snout=" << chan1->snout << std::endl;
-//std::cout << chan2->ssrcout << " - this->snout=" << chan2->snout << std::endl;
-
   while( true ) {
     AQUIRESPINLOCK( chan1->rtpbufferlock );
     src = chan1->inbuff->pop();

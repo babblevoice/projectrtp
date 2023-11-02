@@ -68,7 +68,8 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   /* private */
   active( false ),
   port( port ),
-  rfc2833pt( 101 ),
+  rfc2833pt( RFC2833PAYLOADTYPE ),
+  ilbcpt( ILBCPAYLOADTYPE ),
   lasttelephoneeventsn( 0 ),
   lasttelephoneevent( 0 ),
   resolver( workercontext ),
@@ -135,6 +136,8 @@ void projectrtpchannel::requestclose( std::string reason ) {
 void projectrtpchannel::remote( std::string address,
                                 unsigned short port,
                                 uint32_t codec,
+                                unsigned short ilbcpt,
+                                unsigned short rfc2833pt,
                                 dtlssession::mode m,
                                 std::string fingerprint ) {
 
@@ -164,6 +167,8 @@ void projectrtpchannel::remote( std::string address,
   }
 
   this->codec = codec;
+  this->rfc2833pt = rfc2833pt;
+  this->ilbcpt = ilbcpt;
 
   if( changed ) {
     if( dtlssession::none != m ) {
@@ -887,6 +892,14 @@ void projectrtpchannel::readsomertp( void ) {
           goto readsomemore;
         }
 
+        /* dynamic payload types */
+        auto pt = buf->getpayloadtype();
+        if( pt == this->ilbcpt ) {
+          buf->setpayloadtype( ILBCPAYLOADTYPE );
+        } else if ( pt == this->rfc2833pt ) {
+          buf->setpayloadtype( RFC2833PAYLOADTYPE );
+        }
+
         AQUIRESPINLOCK( this->rtpbufferlock );
         this->inbuff->push();
         RELEASESPINLOCK( this->rtpbufferlock );
@@ -988,6 +1001,14 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
   if( this->remoteconfirmed ) {
     this->snout++;
     this->outpkwritecount++;
+
+    /* dynamic payload types */
+    auto pt = pk->getpayloadtype();
+    if( pt == ILBCPAYLOADTYPE ) {
+      pk->setpayloadtype( this->ilbcpt );
+    } else if ( pt == RFC2833PAYLOADTYPE ) {
+      pk->setpayloadtype( this->rfc2833pt );
+    }
 
     this->rtpsocket.async_send_to(
                       boost::asio::buffer( pk->pk, pk->length ),
@@ -1551,6 +1572,23 @@ static napi_value channelremote( napi_env env, napi_callback_info info ) {
   uint32_t codecval = 0;
   napi_get_value_uint32( env, ncodec, &codecval );
 
+  uint32_t ilbcpt = ILBCPAYLOADTYPE;
+  uint32_t rfc2833pt = RFC2833PAYLOADTYPE;
+
+  bool hasit;
+  napi_value nptval;
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "ilbcpt", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "ilbcpt", &nptval ) ) {
+    napi_get_value_uint32( env, nptval, &ilbcpt );
+  }
+
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "rfc2833pt", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "rfc2833pt", &nptval ) ) {
+    napi_get_value_uint32( env, nptval, &rfc2833pt );
+  }
+
   size_t bytescopied;
   char remoteaddress[ 128 ];
 
@@ -1561,7 +1599,6 @@ static napi_value channelremote( napi_env env, napi_callback_info info ) {
 
   /* optional - DTLS */
   napi_value dtls;
-  bool hasit;
   dtlssession::mode dtlsmode = dtlssession::none;
   char vfingerprint[ 128 ];
   vfingerprint[ 0 ] = 0;
@@ -1611,7 +1648,7 @@ static napi_value channelremote( napi_env env, napi_callback_info info ) {
     }
   }
 
-  chan->remote( remoteaddress, remoteport, codecval, dtlsmode, vfingerprint );
+  chan->remote( remoteaddress, remoteport, codecval, ilbcpt, rfc2833pt, dtlsmode, vfingerprint );
 
   return createnapibool( env, true );
 }
@@ -1905,6 +1942,8 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   char vfingerprint[ 128 ];
   vfingerprint[ 0 ] = 0;
   uint32_t codecval = 0;
+  uint32_t ilbcpt = ILBCPAYLOADTYPE;
+  uint32_t rfc2833pt = RFC2833PAYLOADTYPE;
 
   if( napi_ok == napi_has_named_property( env, argv[ 0 ], "remote", &hasit ) &&
       hasit &&
@@ -1975,6 +2014,19 @@ nodtls:
     if( napi_ok != napi_get_named_property( env, nremote, "codec", &ncodec ) ) {
       napi_throw_error( env, "1", "Missing codec in remote object" );
       return NULL;
+    }
+
+    napi_value nptval;
+    if( napi_ok == napi_has_named_property( env, nremote, "ilbcpt", &hasit ) &&
+        hasit &&
+        napi_ok == napi_get_named_property( env, nremote, "ilbcpt", &nptval ) ) {
+      napi_get_value_uint32( env, nptval, &ilbcpt );
+    }
+
+    if( napi_ok == napi_has_named_property( env, nremote, "rfc2833pt", &hasit ) &&
+        hasit &&
+        napi_ok == napi_get_named_property( env, nremote, "rfc2833pt", &nptval ) ) {
+      napi_get_value_uint32( env, nptval, &rfc2833pt );
     }
 
     napi_get_value_uint32( env, ncodec, &codecval );
@@ -2089,7 +2141,7 @@ nodtls:
     return NULL;
   }
 
-  p->remote( remoteaddress, remoteport, codecval, dtlsmode, vfingerprint );
+  p->remote( remoteaddress, remoteport, codecval, ilbcpt, rfc2833pt, dtlsmode, vfingerprint );
   uint32_t ssrc = p->requestopen();
 
   /* methods */

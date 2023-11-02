@@ -243,15 +243,12 @@ void rawsound::malloc( size_t samplecount, size_t bytespersample, int format )
   this->bytespersample = bytespersample;
   this->format = format;
   size_t requiredsize = samplecount * bytespersample;
-  if( L1616KPAYLOADTYPE == format )
-  {
+  if( L1616KPAYLOADTYPE == format ) {
     requiredsize = requiredsize * 2;
   }
 
-  if( this->allocatedlength > 0 )
-  {
-    if( this->allocatedlength >= requiredsize )
-    {
+  if( this->allocatedlength > 0 ) {
+    if( this->allocatedlength >= requiredsize ) {
       return;
     }
 

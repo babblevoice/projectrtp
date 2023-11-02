@@ -17,6 +17,8 @@
 #define PCMUPAYLOADTYPE 0
 #define PCMAPAYLOADTYPE 8
 #define G722PAYLOADTYPE 9
+/* defaults for our supported dynamic payload types */
+#define RFC2833PAYLOADTYPE 101
 #define ILBCPAYLOADTYPE 97
 /* Only use this value for internal use and must not clash with the types above */
 #define L168KPAYLOADTYPE 11

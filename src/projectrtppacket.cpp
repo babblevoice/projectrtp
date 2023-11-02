@@ -42,7 +42,7 @@ void rtppacket::copy( rtppacket *src )
           src->pk + 12 + ( src->getpacketcsrccount() * 4 ),
           src->getpayloadlength() );
 
-  this->length = src->getpayloadlength() + 12 + ( this->getpacketcsrccount() * 4 );
+  this->length = src->length;
 }
 
 /*!md
@@ -138,28 +138,11 @@ uint8_t rtppacket::getpayloadtype( void )
 /*!md
 ## setpayloadtype
 As it says. We also set the length of the packet to a default amount for that CODEC.
+If setting a dynamic payloadtype - don't mess with the length as we won't know it 
+and it must already be set.
 */
-void rtppacket::setpayloadtype( uint8_t pt )
-{
+void rtppacket::setpayloadtype( uint8_t pt ) {
   this->pk[ 1 ] = ( this->pk[ 1 ] & 0x80 ) | ( pt & 0x7f );
-
-  switch( pt )
-  {
-    case ILBC20PAYLOADBYTES:
-    {
-      this->length = 12 + ILBC20PAYLOADBYTES;
-      break;
-    }
-    case ILBC30PAYLOADBYTES:
-    {
-      this->length = 12 + ILBC30PAYLOADBYTES;
-      break;
-    }
-    default:
-    {
-      this->length = 12 + G711PAYLOADBYTES;
-    }
-  }
 }
 
 /*!md
@@ -242,8 +225,7 @@ uint32_t rtppacket::getcsrc( uint8_t index )
 ## getpayload
 Returns a pointer to the start of the payload.
 */
-uint8_t *rtppacket::getpayload( void )
-{
+uint8_t *rtppacket::getpayload( void ) {
   uint8_t *ptr = this->pk;
   ptr += 12;
   ptr += ( this->getpacketcsrccount() * 4 );
@@ -255,11 +237,9 @@ uint8_t *rtppacket::getpayload( void )
 ## getpayloadlength
 As it says.
 */
-uint16_t rtppacket::getpayloadlength( void )
-{
+uint16_t rtppacket::getpayloadlength( void ) {
 
-  if( this->length < ( 12 - ( (size_t)this->getpacketcsrccount() * 4 ) ) )
-  {
+  if( this->length < ( 12 - ( (size_t) this->getpacketcsrccount() * 4 ) ) ) {
     fprintf( stderr, "RTP Packet has a nonsense size\n" );
     return 0;
   }
@@ -270,8 +250,7 @@ uint16_t rtppacket::getpayloadlength( void )
 ## setpayloadlength
 As it says.
 */
-void rtppacket::setpayloadlength( size_t length )
-{
+void rtppacket::setpayloadlength( size_t length ) {
   this->length = 12 + ( this->getpacketcsrccount() * 4 ) + length;
 }
 
