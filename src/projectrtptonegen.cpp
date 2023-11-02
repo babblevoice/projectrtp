@@ -51,13 +51,11 @@ static void gentone( int16_t *outbuffer, int sizeofblock, double startfrequency,
 }
 
 
-static void gen( std::string tone, std::string filename )
-{
+static void gen( std::string tone, std::string filename ) {
   vectorofstrings freqscadence;
   boost::split( freqscadence, tone, boost::is_any_of( ":" ) );
 
-  if( 2 != freqscadence.size() )
-  {
+  if( 2 != freqscadence.size() ) {
     std::cerr << "You must supply a cadence, eg. 400:1000" << std::endl;
     return;
   }
@@ -76,8 +74,7 @@ static void gen( std::string tone, std::string filename )
   vectorofstrings cadenceparts;
   int cadencepos = 0;
   int cadencetotal = 0;
-  for( it = frequencies.begin(); it != frequencies.end(); it++ )
-  {
+  for( it = frequencies.begin(); it != frequencies.end(); it++ ) {
     cadencetotal += std::atoi( cadences[ cadencepos ].c_str() );
     cadencepos = ( cadencepos + 1 ) % cadences.size();
   }
@@ -94,8 +91,7 @@ static void gen( std::string tone, std::string filename )
   /* 3. Generate tones */
   int pos = 0;
   cadencepos = 0;
-  for( it = frequencies.begin(); it != frequencies.end(); it++ )
-  {
+  for( it = frequencies.begin(); it != frequencies.end(); it++ ) {
     /* Current cadence. */
     int cadence = std::atoi( cadences[ cadencepos ].c_str() );
     cadencepos = ( cadencepos + 1 ) % cadences.size();
@@ -109,14 +105,12 @@ static void gen( std::string tone, std::string filename )
     boost::split( freqamp, *it, boost::is_any_of( "*" ) );
     double startamp = 1;
     double endamp = 1;
-    if( freqamp.size() > 1 )
-    {
+    if( freqamp.size() > 1 ) {
       vectorofstrings ampfromto;
       boost::split( ampfromto, freqamp[ 1 ], boost::is_any_of( "~" ) );
       startamp = std::atof( ampfromto[ 0 ].c_str() );
       endamp = startamp;
-      if( ampfromto.size() > 1 )
-      {
+      if( ampfromto.size() > 1 ) {
         endamp = std::atof( ampfromto[ 1 ].c_str() );
       }
     }
@@ -127,27 +121,20 @@ static void gen( std::string tone, std::string filename )
     double endfreq = -1;
 
     std::size_t found = freqamp[ 0 ].find_first_of( "+x~" );
-    if( std::string::npos == found )
-    {
+    if( std::string::npos == found ) {
       startfreq = std::atof( freqparts[ 0 ].c_str() );
       gentone( outbuffer, sizeofblock, startfreq, startfreq, startamp, endamp, outwavheader.sample_rate );
       goto continueloop;
-    }
-    else
-    {
-      switch( freqamp[ 0 ][ found ] )
-      {
-        case '+':
-        {
-          for( auto freqit = freqparts.begin(); freqit != freqparts.end(); freqit++ )
-          {
+    } else {
+      switch( freqamp[ 0 ][ found ] ) {
+        case '+': {
+          for( auto freqit = freqparts.begin(); freqit != freqparts.end(); freqit++ ) {
             startfreq = std::atof( freqit->c_str() );
             gentone( outbuffer, sizeofblock, startfreq, startfreq, startamp, endamp, outwavheader.sample_rate );
           }
           break;
         }
-        case '~':
-        {
+        case '~': {
           startfreq = std::atof( freqparts[ 0 ].c_str() );
           endfreq = std::atof( freqparts[ 1 ].c_str() );
           gentone( outbuffer, sizeofblock, startfreq, endfreq, startamp, endamp, outwavheader.sample_rate );
@@ -164,39 +151,35 @@ continueloop:
   /* Write */
   int file = open( filename.c_str(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR );
   off_t position = lseek( file, 0, SEEK_END );
-  if( 0 == position )
-  {
-    write( file, &outwavheader, sizeof( wavheader ) );
-    write( file, readbuffer, outwavheader.chunksize );
-  }
-  else
-  {
+  if( 0 == position ) {
+    if( -1 == write( file, &outwavheader, sizeof( wavheader ) ) ) std::cerr <<  "Error writing to tone file" << std::endl;
+    if( -1 == write( file, readbuffer, outwavheader.chunksize ) ) std::cerr <<  "Error writing to tone file" << std::endl;
+  } else {
     wavheader currentheader;
     lseek( file, 0, SEEK_SET );
-    read( file, &currentheader, sizeof( wavheader ) );
+    if( sizeof( wavheader ) != read( file, &currentheader, sizeof( wavheader ) ) ) {
+      std::cerr << "Error reading existing tone file" << std::endl;
+      goto cleanuupgen;
+    }
     lseek( file, 0, SEEK_END );
 
     if( currentheader.audio_format == outwavheader.audio_format &&
-          currentheader.sample_rate == outwavheader.sample_rate )
-    {
+          currentheader.sample_rate == outwavheader.sample_rate ) {
       /* Ok, good enough! */
       currentheader.chunksize += outwavheader.chunksize;
       currentheader.subchunksize += outwavheader.subchunksize;
 
       lseek( file, 0, SEEK_SET );
-      write( file, &currentheader, sizeof( wavheader ) );
+      if( -1 == write( file, &currentheader, sizeof( wavheader ) ) ) std::cerr << "Error writing to tone file" << std::endl;
       lseek( file, 0, SEEK_END );
-      write( file, readbuffer, outwavheader.chunksize );
-    }
-    else
-    {
+      if( -1 == write( file, readbuffer, outwavheader.chunksize ) ) std::cerr << "Error writing to tone file" << std::endl;
+    } else {
       std::cerr << "File format to append should be the same" << std::endl;
     }
   }
 
-  /* Clean up */
-  if( nullptr != readbuffer )
-  {
+cleanuupgen:
+  if( nullptr != readbuffer ) {
     delete[] readbuffer;
   }
 

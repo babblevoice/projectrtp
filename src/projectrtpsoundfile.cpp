@@ -605,7 +605,10 @@ static napi_value wavinfo( napi_env env, napi_callback_info info ) {
     return NULL;
   }
 
-  read( fd, &hd, sizeof( wavheader ) );
+  if( sizeof( wavheader ) != read( fd, &hd, sizeof( wavheader ) ) ) {
+    napi_throw_type_error( env, "0", "Bad wav header" );
+    goto done;
+  }
 
   if( 'R' != hd.riff_header[ 0 ] ||
       'I' != hd.riff_header[ 1 ] ||
