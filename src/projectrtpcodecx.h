@@ -85,10 +85,8 @@ private:
   ilbcencinst *ilbcencoder;
   ilbcdecinst *ilbcdecoder;
 
-  /* If we require downsampling */
+  /* If we require up/downsampling */
   lowpass3_4k16k lpfilter;
-  /* When we up sample we need to interpolate so need last sample */
-  int16_t resamplelastsample;
 
   rawsound l168kref;
   rawsound l1616kref;
