@@ -1,7 +1,7 @@
 /* if we want to see what is going on - use nodeplotlib instead of our placeholder */
-//const npl = require( "nodeplotlib" )
+const npl = require( "nodeplotlib" )
 // eslint-disable-next-line no-unused-vars
-const npl = { plot: ( /** @type {any} */ a ) => {} }
+//const npl = { plot: ( /** @type {any} */ a ) => {} }
 
 
 const fft = require( "fft-js" ).fft
@@ -9,6 +9,7 @@ const projectrtp = require( "../../index" ).projectrtp
 const expect = require( "chai" ).expect
 const dgram = require( "dgram" )
 const fs = require( "fs" )
+const pcap = require( "./pcap" )
 
 
 /*
@@ -165,6 +166,20 @@ function pcmutolinear( inarray ) {
   }
 
   return out
+}
+
+/**
+ * Send Buffer to server at required time
+ * @param { number } sendtime 
+ * @param { Buffer } pk 
+ * @param { number } dstport 
+ * @param { dgram.Socket } server 
+ * @returns 
+ */
+function sendpayload( sendtime, pk, dstport, server ) {
+  return setTimeout( () => {
+    server.send( pk, dstport, "localhost" )
+  }, sendtime )
 }
 
 /**
@@ -652,6 +667,75 @@ describe( "Transcode", function() {
     expect( has( amps, 500, 25000000 ) ).to.be.false
 
     await fs.promises.unlink( "/tmp/ukringing.wav" ).catch( () => {} )
+  } )
+
+  it( "replay captured g722 from poly", async () => {
+
+    const g722endpoint = dgram.createSocket( "udp4" )
+    g722endpoint.on( "message", function() {} )
+
+    const pcmuendpoint = dgram.createSocket( "udp4" )
+    let receivedpcmu = []
+    pcmuendpoint.on( "message", function( msg ) {
+      pcmuendpoint.send( msg, pcmuchannel.local.port, "localhost" )
+
+      receivedpcmu = [ ...receivedpcmu,  ...Array.from( pcmutolinear( parsepk( msg ).payload ) ) ]
+    } )
+
+    g722endpoint.bind()
+    await new Promise( resolve => g722endpoint.on( "listening", resolve ) )
+    pcmuendpoint.bind()
+    await new Promise( resolve => pcmuendpoint.on( "listening", resolve ) )
+
+    const allstats = {}
+
+    const g722channel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": g722endpoint.address().port, "codec": 9 } }, function( d ) {
+      if( "close" === d.action ) {
+        g722endpoint.close()
+        pcmuendpoint.close()
+        pcmuchannel.close()
+        allstats.achannel = { stats: d.stats }
+      }
+    } )
+
+    let done
+    const allclose = new Promise( resolve => done = resolve )
+    const pcmuchannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": pcmuendpoint.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+        allstats.bchannel = { stats: d.stats }
+        done()
+      }
+    } )
+
+    const ourpcap = ( await pcap.readpcap( "test/interface/pcaps/440hzinbackgroundg722.pcap" ) ).slice( 0, 50 )
+
+    g722channel.mix( pcmuchannel )
+
+    const offset = 0
+    ourpcap.forEach( ( packet ) => {
+      if( packet.ipv4 && packet.ipv4.udp && 10018 == packet.ipv4.udp.dstport ) {
+        sendpayload( ( 1000 * packet.ts_sec_offset ) - offset, packet.ipv4.udp.data, g722channel.local.port, g722endpoint )
+      }
+    } )
+
+    await new Promise( resolve => setTimeout( resolve, 1400 ) )
+    g722channel.close()
+    await allclose
+
+    npl.plot( [ {
+      y: Array.from( receivedpcmu ),
+      type: "scatter"
+    } ] )
+
+    const amps = ampbyfrequency( Int16Array.from( receivedpcmu ) )
+    const bin = 225
+    expect( 20000 < amps[ bin ] ).to.be.true
+
+    npl.plot( [ {
+      y: Array.from( amps ),
+      type: "scatter"
+    } ] )
+
   } )
 } )
 
