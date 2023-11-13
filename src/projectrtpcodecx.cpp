@@ -87,7 +87,6 @@ codecx::codecx() :
   ilbcencoder( nullptr ),
   ilbcdecoder( nullptr ),
   lpfilter(),
-  resamplelastsample( 0 ),
   l168kref(),
   l1616kref(),
   pcmaref(),
@@ -146,7 +145,6 @@ Do enough to manage missing packets.
 void codecx::restart( void ) {
   this->lpfilter.reset();
   this->dcpowerfilter.reset();
-  this->resamplelastsample = 0;
   this->_hasdata = false;
 }
 
@@ -160,19 +158,17 @@ bool codecx::alaw2ulaw( void ) {
   if( this->pcmaref.isdirty() ) return false;
 
   uint8_t *inbufptr, *outbufptr;
-  size_t insize;
 
-  insize = this->pcmaref.size();
   inbufptr = this->pcmaref.c_str();
   outbufptr = this->pcmuref.c_str();
-  this->pcmuref.size( insize );
+  this->pcmuref.size( G711PAYLOADBYTES );
 
   if( nullptr == outbufptr || nullptr == inbufptr ) {
     std::cerr << "PCMA NULLPTR shouldn't happen (" << (void*)outbufptr << ", " << (void*)inbufptr << ")" << std::endl;
     return false;
   }
 
-  for( size_t i = 0; i < insize; i++ ) {
+  for( size_t i = 0; i < G711PAYLOADBYTES; i++ ) {
     *outbufptr = alaw_to_ulaw_table[ *inbufptr ];
     inbufptr++;
     outbufptr++;
@@ -187,19 +183,17 @@ bool codecx::ulaw2alaw( void ) {
   if( this->pcmuref.isdirty() ) return false;
 
   uint8_t *inbufptr, *outbufptr;
-  size_t insize;
 
-  insize = this->pcmuref.size();
   inbufptr = this->pcmuref.c_str();
   outbufptr = this->pcmaref.c_str();
-  this->pcmaref.size( insize );
+  this->pcmaref.size( G711PAYLOADBYTES );
 
   if( nullptr == outbufptr || nullptr == inbufptr ) {
     std::cerr << "PCMU NULLPTR shouldn't happen(" << (void*)outbufptr << ", " << (void*)inbufptr << ")" << std::endl;
     return false;
   }
 
-  for( size_t i = 0; i < insize; i++ ) {
+  for( size_t i = 0; i < G711PAYLOADBYTES; i++ ) {
     *outbufptr = ulaw_to_alaw_table[ *inbufptr ];
     inbufptr++;
     outbufptr++;
@@ -217,25 +211,22 @@ bool codecx::g711tol16( void )
 {
   uint8_t *in;
   int16_t *convert;
-  size_t insize;
 
   if( this->pcmaref.size() > 0 && !this->pcmaref.isdirty() ) {
     in = this->pcmaref.c_str();
     convert = _pcmatol16;
-    insize = this->pcmaref.size();
   } else if ( this->pcmuref.size() > 0 && !this->pcmuref.isdirty() ) {
     in = this->pcmuref.c_str();
     convert = _pcmutol16;
-    insize = this->pcmuref.size();
   } else {
     return false;
   }
 
-  this->l168kref.malloc( insize, sizeof( int16_t ), L168KPAYLOADTYPE );
+  this->l168kref.malloc( G711PAYLOADSAMPLES, sizeof( int16_t ), L168KPAYLOADTYPE );
 
   int16_t *out = ( int16_t * ) this->l168kref.c_str();
 
-  for( size_t i = 0; i < insize; i++ ) {
+  for( size_t i = 0; i < G711PAYLOADSAMPLES; i++ ) {
     *out = convert[ *in ];
     in++;
     out++;
@@ -257,11 +248,10 @@ bool codecx::l16topcma( void )
   uint8_t *out = this->pcmaref.c_str();
 
   int16_t *in;
-  size_t l168klength = this->l168kref.size();
   in = ( int16_t * ) this->l168kref.c_str();
 
   uint16_t index;
-  for( size_t i = 0; i < l168klength; i++ ) {
+  for( size_t i = 0; i < G711PAYLOADBYTES; i++ ) {
     index = *in + 32768;
     *out = _l16topcma[ index ];
     in++;
@@ -281,11 +271,10 @@ bool codecx::l16topcmu( void ) {
   uint8_t *out = this->pcmuref.c_str();;
 
   int16_t *in;
-  size_t l168klength = this->l168kref.size();
   in = ( int16_t * ) this->l168kref.c_str();
 
   uint16_t index;
-  for( size_t i = 0; i < l168klength; i++ ) {
+  for( size_t i = 0; i < G711PAYLOADBYTES; i++ ) {
     index = *in + 32768;
     *out = _l16topcmu[ index ];
     in++;
@@ -315,43 +304,16 @@ bool codecx::ilbctol16( void ) {
 
   int16_t l168klength = WebRtcIlbcfix_Decode( this->ilbcdecoder,
                         ( ilbcencodedval ) this->ilbcref.c_str(),
-                        this->ilbcref.size(),
+                        ILBC20PAYLOADBYTES,
                         ( ilbcdecodedval )this->l168kref.c_str(),
                         &speechType
                       );
 
   if( -1 == l168klength ) {
-    this->l168kref.size( 0 );
     return false;
   }
 
   this->l168kref.dirty( false );
-  this->l168kref.size( l168klength );
-  return true;
-}
-
-/*!md
-## l16tog722
-As it says.
-*/
-bool codecx::l16tog722( void ) {
-  if( 0 == this->l1616kref.size() ) return false;
-  if( this->l1616kref.isdirty() ) return false;
-
-  if( nullptr == this->g722encoder ) {
-    this->g722encoder = g722_encode_init( NULL, 64000, G722_PACKED );
-  }
-
-  int len = g722_encode( this->g722encoder, this->g722ref.c_str(), ( int16_t * ) this->l1616kref.c_str(), this->g722ref.size() * 2 );
-
-  if( len > 0 ) {
-    this->g722ref.size( len );
-    this->g722ref.dirty( false );
-  } else {
-    std::cerr << "g722_encode didn't encode any data" << std::endl;
-    this->g722ref.size( 0 );
-  }
-
   return true;
 }
 
@@ -375,11 +337,10 @@ bool codecx::l16toilbc( void ) {
 
   int16_t len = WebRtcIlbcfix_Encode( this->ilbcencoder,
                             ( ilbcdecodedval ) this->l168kref.c_str(),
-                            this->l168kref.size(),
+                            L16PAYLOADSAMPLES,
                             ( ilbcencodedval ) this->ilbcref.c_str()
                           );
   if ( len > 0 ) {
-    this->ilbcref.size( len );
     this->ilbcref.dirty( false );
     return true;
   }
@@ -391,6 +352,33 @@ bool codecx::l16toilbc( void ) {
 
 
 /*!md
+## l16tog722
+As it says.
+*/
+bool codecx::l16tog722( void ) {
+
+  if( 0 == this->l1616kref.size() ) return false;
+  if( this->l1616kref.isdirty() ) return false;
+
+  if( nullptr == this->g722encoder ) {
+    this->g722encoder = g722_encode_init( NULL, 64000, G722_PACKED );
+  }
+
+  // TODO - when we convert to g722 - 722 buffer is always output -so malloc need sto be able to detect that.
+  //this->g722ref.malloc( G722PAYLOADSAMPLES, sizeof( int8_t ), G722PAYLOADTYPE );
+
+  int len = g722_encode( this->g722encoder, this->g722ref.c_str(), ( int16_t * ) this->l1616kref.c_str(), L1616PAYLOADSAMPLES );
+
+  if( 160 != len ) {
+    std::cerr << "g722_encode didn't encode correct length of data" << std::endl;
+    return false;
+  }
+
+  this->g722ref.dirty( false );
+  return true;
+}
+
+/*!md
 ## g722tol16
 As it says.
 */
@@ -398,8 +386,7 @@ bool codecx::g722tol16( void ) {
   if( 0 == this->g722ref.size() ) return false;
   if( this->g722ref.isdirty() ) return false;
 
-  /* x 2 for 16 bit instead of 8 and then x 2 sample rate */
-  this->l1616kref.malloc( this->g722ref.size(), sizeof( int16_t ), L1616KPAYLOADTYPE );
+  this->l1616kref.malloc( L1616PAYLOADSAMPLES, sizeof( int16_t ), L1616KPAYLOADTYPE );
 
   if( nullptr == this->g722decoder ) {
     this->g722decoder = g722_decode_init( NULL, 64000, G722_PACKED );
@@ -411,9 +398,10 @@ bool codecx::g722tol16( void ) {
   size_t l1616klength = g722_decode( this->g722decoder,
                                 ( int16_t * ) this->l1616kref.c_str(),
                                 this->g722ref.c_str(),
-                                this->g722ref.size() );
+                                G722PAYLOADBYTES );
 
-  this->l1616kref.size( l1616klength );
+  if( 320 != l1616klength ) return false;
+  
   this->l1616kref.dirty( false );
   return true;
 }
@@ -423,23 +411,19 @@ bool codecx::g722tol16( void ) {
 Upsample from narrow to wideband. Take each point and interpolate between them. We require the final sample from the last packet to continue the interpolating.
 */
 bool codecx::l16lowtowideband( void ) {
-  size_t l168klength = this->l168kref.size();
 
-  if( 0 == l168klength ) return false;
+  if( 0 == this->l168kref.size() ) return false;
   if( this->l168kref.isdirty() ) return false;
 
-  this->l1616kref.malloc( l168klength, sizeof( int16_t ), L1616KPAYLOADTYPE );
+  this->l1616kref.malloc( L1616PAYLOADSAMPLES, sizeof( int16_t ), L1616KPAYLOADTYPE );
 
   int16_t *in = ( int16_t * ) this->l168kref.c_str();
   int16_t *out = ( int16_t * ) this->l1616kref.c_str();
 
-  for( size_t i = 0; i < l168klength; i++ ) {
-    *out = ( ( *in - this->resamplelastsample ) / 2 ) + this->resamplelastsample;
-    this->resamplelastsample = *in;
+  for( size_t i = 0; i < L16PAYLOADSAMPLES; i++ ) {
+    *out = this->lpfilter.execute( *in );
     out++;
-
-    *out = *in;
-
+    *out = this->lpfilter.execute( 0 );
     out++;
     in++;
   }
@@ -457,7 +441,7 @@ bool codecx::requirewideband( void ) {
   if( this->g722tol16() ) return true;
   if( !this->g711tol16() )
   {
-    if( this->ilbctol16() ) return false;
+    if( !this->ilbctol16() ) return false;
   }
 
   return this->l16lowtowideband();
@@ -467,22 +451,20 @@ bool codecx::requirewideband( void ) {
 ##  l16widetolowband
 Downsample our L16 wideband samples to 8K. Pass through filter then grab every other sample.
 */
-bool codecx::l16widetonarrowband( void )
-{
-  size_t l1616klength = this->l1616kref.size();
+bool codecx::l16widetonarrowband( void ) {
 
-  if( 0 == l1616klength ) return false;
+  if( 0 == this->l1616kref.size() ) return false;
   if( this->l1616kref.isdirty() ) return false;
 
-  this->l168kref.malloc( l1616klength / 2, sizeof( int16_t ), L168KPAYLOADTYPE );
+  this->l168kref.malloc( L16PAYLOADSAMPLES, sizeof( int16_t ), L168KPAYLOADTYPE );
 
   int16_t *out = ( int16_t * ) this->l168kref.c_str();
   int16_t *in = ( int16_t * ) this->l1616kref.c_str();
 
-  for( size_t i = 0; i < l1616klength / 2; i++ ) {
-    lpfilter.execute( *in );
+  for( size_t i = 0; i < L16PAYLOADSAMPLES; i++ ) {
+    this->lpfilter.execute( *in );
     in++;
-    *out = lpfilter.execute( *in );
+    *out = this->lpfilter.execute( *in );
     in++;
     out++;
   }
@@ -628,52 +610,43 @@ We pass a packet in, then we can take multiple out - i.e. we may want different 
 
 Have a think about if this is where we want to mix audio data.
 */
-codecx& operator << ( codecx& c, rtppacket& pk )
-{
+codecx& operator << ( codecx& c, rtppacket& pk ) {
   c.inpkcount++;
   rawsound r = rawsound( pk );
   c << r;
   return c;
 }
 
-codecx& operator << ( codecx& c, rawsound& raw )
-{
+codecx& operator << ( codecx& c, rawsound& raw ) {
   int inpayloadtype = raw.getformat();
 
-  switch( inpayloadtype )
-  {
-    case PCMAPAYLOADTYPE:
-    {
+  switch( inpayloadtype ) {
+    case PCMAPAYLOADTYPE: {
       c.pcmaref = raw;
       c._hasdata = true;
       break;
     }
-    case PCMUPAYLOADTYPE:
-    {
+    case PCMUPAYLOADTYPE: {
       c.pcmuref = raw;
       c._hasdata = true;
       break;
     }
-    case ILBCPAYLOADTYPE:
-    {
+    case ILBCPAYLOADTYPE: {
       c.ilbcref = raw;
       c._hasdata = true;
       break;
     }
-    case G722PAYLOADTYPE:
-    {
+    case G722PAYLOADTYPE: {
       c.g722ref = raw;
       c._hasdata = true;
       break;
     }
-    case L168KPAYLOADTYPE:
-    {
+    case L168KPAYLOADTYPE: {
       c.l168kref = raw;
       c._hasdata = true;
       break;
     }
-    case L1616KPAYLOADTYPE:
-    {
+    case L1616KPAYLOADTYPE: {
       c.l1616kref = raw;
       c._hasdata = true;
       break;
