@@ -1,9 +1,9 @@
 
 const expect = require( "chai" ).expect
-const projectrtp = require( "../../index.js" ).projectrtp
+const projectrtp = require( "../../index" ).projectrtp
 const dgram = require( "dgram" )
 
-const pcap = require( "./pcap.js" )
+const pcap = require( "./pcap" )
 
 /*
 i.e. the RTP payload
