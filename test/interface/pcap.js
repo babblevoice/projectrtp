@@ -132,9 +132,9 @@ module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
           etherpacket.ipv4.udp = {}
           etherpacket.ipv4.udp.srcport = parseInt( toHex( etherpacket.ipv4.data[ 20 ] ) + toHex( etherpacket.ipv4.data[ 21 ] ), 16 )
           etherpacket.ipv4.udp.dstport = parseInt( toHex( etherpacket.ipv4.data[ 22 ] ) + toHex( etherpacket.ipv4.data[ 23 ] ), 16 )
-          etherpacket.ipv4.udp.length = parseInt( toHex( etherpacket.ipv4.data[ 24 ] ) + toHex( etherpacket.ipv4.data[ 25 ] ), 16 )
+          etherpacket.ipv4.udp.length = parseInt( toHex( etherpacket.ipv4.data[ 24 ] ) + toHex( etherpacket.ipv4.data[ 25 ] ), 16 ) - /* udp header */ 8
           etherpacket.ipv4.udp.checksum = parseInt( toHex( etherpacket.ipv4.data[ 26 ] ) + toHex( etherpacket.ipv4.data[ 27 ] ), 16 )
-          etherpacket.ipv4.udp.data = etherpacket.ipv4.data.subarray( 28, 28 + etherpacket.ipv4.data.length )
+          etherpacket.ipv4.udp.data = etherpacket.ipv4.data.subarray( 28, 28 + etherpacket.ipv4.udp.length )
           break
         case 6:
           /* TCP */
