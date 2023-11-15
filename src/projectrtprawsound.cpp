@@ -147,24 +147,17 @@ rawsound::~rawsound()
 ## zero
 Reset buffer with zero
 */
-void rawsound::zero( void )
-{
-  if( nullptr != this->data )
-  {
-    size_t zeroamount = this->samples * this->bytespersample;
-    if( L1616KPAYLOADTYPE == format )
-    {
-      zeroamount = zeroamount * 2;
-    }
+void rawsound::zero( void ) {
+  if( nullptr == this->data ) return;
 
-    if( 0 != this->allocatedlength && zeroamount > this->allocatedlength )
-    {
-      std::cerr << "Trying to zero memory but capped by allocated amount" << std::endl;
-      zeroamount = this->allocatedlength;
-    }
+  size_t zeroamount = this->samples * this->bytespersample;
 
-    memset( this->data, 0, zeroamount );
+  if( 0 != this->allocatedlength && zeroamount > this->allocatedlength ) {
+    std::cerr << "Trying to zero memory but capped by allocated amount" << std::endl;
+    zeroamount = this->allocatedlength;
   }
+
+  memset( this->data, 0, zeroamount );
 }
 
 /*
@@ -172,49 +165,31 @@ void rawsound::zero( void )
 * Target (this) MUST have memory available.
 * format must be set appropriatly before the call
 */
-void rawsound::copy( uint8_t *src, size_t len )
-{
-  if( nullptr != this->data )
-  {
-    memcpy( this->data,
-            src,
-            len );
+void rawsound::copy( uint8_t *src, size_t len ) {
+  if( nullptr == this->data ) return;
 
-    switch( this->format )
-    {
-      case L168KPAYLOADTYPE:
-      case L1616KPAYLOADTYPE:
-      {
-        this->samples = len / 2;
-        break;
-      }
-      default:
-      {
-        this->samples = len;
-        break;
-      }
-    }
-  }
+  memcpy( this->data,
+          src,
+          len );
 }
 
 /*
 ## copy (from other)
 * Target (this) MUST have data allocated.
 */
-void rawsound::copy( rawsound &other )
-{
-  if( nullptr != this->data && this->samples >= other.samples )
-  {
-    this->bytespersample = other.bytespersample;
-    this->samplerate = other.samplerate;
-    this->format = other.format;
-    this->samples = other.samples;
+void rawsound::copy( rawsound &other ) {
 
-    memcpy( this->data,
-            other.data,
-            other.samples * other.bytespersample );
+  if( nullptr == this->data || this->samples < other.samples ) return;
 
-  }
+  this->bytespersample = other.bytespersample;
+  this->samplerate = other.samplerate;
+  this->format = other.format;
+  this->samples = other.samples;
+
+  memcpy( this->data,
+          other.data,
+          other.samples * other.bytespersample );
+
 }
 
 /*
@@ -258,46 +233,39 @@ void rawsound::malloc( size_t samplecount, size_t bytespersample, int format ) {
 ## operator +=
 Used for mixing audio
 */
-rawsound& rawsound::operator+=( codecx& rhs )
-{
+rawsound& rawsound::operator+=( codecx& rhs ) {
   size_t length;
 
   int16_t *in;
   int16_t *out = ( int16_t * ) this->data;
 
-  switch( this->format )
-  {
-    case L168KPAYLOADTYPE:
-    {
+  switch( this->format ) {
+    case L168KPAYLOADTYPE: {
       rhs.requirenarrowband();
-
+      if( rhs.l168kref.isdirty() ) return *this;
       length = rhs.l168kref.size();
       in = ( int16_t * ) rhs.l168kref.c_str();
       break;
     }
-    case L1616KPAYLOADTYPE:
-    {
+    case L1616KPAYLOADTYPE: {
       rhs.requirewideband();
-
+      if( rhs.l1616kref.isdirty() ) return *this;
       length = rhs.l1616kref.size();
       in = ( int16_t * ) rhs.l1616kref.c_str();
       break;
     }
-    default:
-    {
+    default: {
       std::cerr << "Attemping to perform an addition on a none linear format" << std::endl;
       return *this;
     }
   }
 
-  if( length > this->samples )
-  {
+  if( length > this->samples ) {
     std::cerr << "We have been asked to add samples but we don't have enough space" << std::endl;
     length = this->samples;
   }
 
-  for( size_t i = 0; i < length; i++ )
-  {
+  for( size_t i = 0; i < length; i++ ) {
     *out++ += *in++;
   }
 
