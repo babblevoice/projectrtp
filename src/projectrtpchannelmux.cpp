@@ -15,7 +15,8 @@ projectchannelmux::projectchannelmux( boost::asio::io_context &iocontext ):
   newchannels(),
   newchannelslock( false ),
   added(),
-  subtracted() {
+  subtracted(),
+  active( false ) {
 }
 
 projectchannelmux::~projectchannelmux() {
@@ -29,22 +30,24 @@ projectchannelmux::pointer projectchannelmux::create( boost::asio::io_context &i
 void projectchannelmux::mixall( void ) {
   /* First decide on a common rate (if we only have 8K channels it is pointless
   upsampling them all and wasting resources) */
-  int l16krequired = L168KPAYLOADTYPE;
+  int l16format = L168KPAYLOADTYPE;
   size_t insize = L16PAYLOADSAMPLES;
 
   for( auto& chan: this->channels ) {
     switch( chan->codec ) {
       case G722PAYLOADTYPE:
       case L1616KPAYLOADTYPE: {
-        l16krequired = L1616KPAYLOADTYPE;
+        l16format = L1616KPAYLOADTYPE;
+        insize = L1616PAYLOADSAMPLES;
         goto endofforloop;
       }
     }
   }
   endofforloop:
 
-  this->added.malloc( insize, sizeof( int16_t ), l16krequired );
-  this->subtracted.malloc( insize, sizeof( int16_t ), l16krequired );
+  /* allocate the max needed */
+  this->added.malloc( insize, sizeof( int16_t ), l16format );
+  this->subtracted.malloc( insize, sizeof( int16_t ), l16format );
   this->added.zero();
 
   /* We first have to add them all up */
@@ -186,6 +189,8 @@ Our timer handler.
 void projectchannelmux::handletick( const boost::system::error_code& error ) {
   if ( error == boost::asio::error::operation_aborted ) return;
 
+  if( !this->active ) return;
+
   this->checkfornewmixes();
 
   /* Check for channels which have request removal */
@@ -193,6 +198,7 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
 
   if( 0 == this->channels.size() ) {
     /* We're done */
+    this->active = false;
     return;
   }
 
@@ -233,6 +239,10 @@ void projectchannelmux::setnexttick( void ) {
 }
 
 void projectchannelmux::go( void ) {
+
+  if( this->active ) return;
+  this->active = true;
+
   this->nexttick = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds( 20 );
 
   this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
