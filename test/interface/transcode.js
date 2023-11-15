@@ -737,5 +737,85 @@ describe( "Transcode", function() {
     } ] )
 
   } )
+
+  it( "replay captured g722 no transcode from poly 3 way mix", async () => {
+
+    const g722endpoint = dgram.createSocket( "udp4" )
+    g722endpoint.on( "message", function() {} )
+
+    const pcmuendpoint = dgram.createSocket( "udp4" )
+    let receivedpcmu = []
+
+    pcmuendpoint.on( "message", function( msg ) {
+      pcmuendpoint.send( msg, pcmuchannel.local.port, "localhost" )
+
+      receivedpcmu = [ ...receivedpcmu,  ...Array.from( pcmutolinear( parsepk( msg ).payload ) ) ]
+    } )
+
+    g722endpoint.bind()
+    await new Promise( resolve => g722endpoint.on( "listening", resolve ) )
+    pcmuendpoint.bind()
+    await new Promise( resolve => pcmuendpoint.on( "listening", resolve ) )
+
+    const allstats = {}
+
+    const g722channel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": g722endpoint.address().port, "codec": 9 } }, function( d ) {
+      if( "close" === d.action ) {
+        g722endpoint.close()
+        pcmuendpoint.close()
+        pcmuchannel.close()
+        secondg722.close()
+        allstats.achannel = { stats: d.stats }
+      }
+    } )
+
+    let done
+    const allclose = new Promise( resolve => done = resolve )
+    const pcmuchannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": pcmuendpoint.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) {
+        allstats.bchannel = { stats: d.stats }
+        done()
+      }
+    } )
+
+    const secondg722 = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": 9990, "codec": 9 } }, function( d ) {
+      if( "close" === d.action ) {
+        allstats.bchannel = { stats: d.stats }
+        done()
+      }
+    } )
+
+    const ourpcap = ( await pcap.readpcap( "test/interface/pcaps/440hzinbackgroundg722.pcap" ) ).slice( 0, 50 )
+
+    g722channel.mix( pcmuchannel )
+    g722channel.mix( secondg722 )
+
+    const offset = 0
+    ourpcap.forEach( ( packet ) => {
+      if( packet.ipv4 && packet.ipv4.udp && 10018 == packet.ipv4.udp.dstport ) {
+        sendpayload( ( 1000 * packet.ts_sec_offset ) - offset, packet.ipv4.udp.data, g722channel.local.port, g722endpoint )
+      }
+    } )
+
+    await new Promise( resolve => setTimeout( resolve, 1400 ) )
+    g722channel.close()
+    await allclose
+
+    npl.plot( [ {
+      y: Array.from( receivedpcmu ),
+      type: "scatter"
+    } ] )
+
+    const amps = ampbyfrequency( Int16Array.from( receivedpcmu ) )
+
+    npl.plot( [ {
+      y: Array.from( amps ),
+      type: "scatter"
+    } ] )
+
+    const bin = 430
+    expect( 20000 < amps[ bin ] ).to.be.true
+
+  } )
 } )
 
