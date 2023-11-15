@@ -22,8 +22,8 @@ typedef std::shared_ptr< projectrtpchannel > projectrtpchannelptr;
 typedef std::list< projectrtpchannelptr > projectchanptrlist;
 
 class projectchannelmux:
-  public std::enable_shared_from_this< projectchannelmux >
-{
+  public std::enable_shared_from_this< projectchannelmux > {
+
 public:
   projectchannelmux( boost::asio::io_context &iocontext );
   ~projectchannelmux();
@@ -58,6 +58,8 @@ private:
 
   rawsound added;
   rawsound subtracted;
+
+  bool active;
 };
 
 #endif /* PROJECTRTPCHANNELMUX_H */
