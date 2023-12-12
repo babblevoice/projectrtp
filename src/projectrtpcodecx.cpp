@@ -438,10 +438,16 @@ Search for the relevent data and convert as necessary.
 */
 bool codecx::requirewideband( void ) {
   if( 0 != this->l1616kref.size() && !this->l1616kref.isdirty() ) return true;
+
+  if( 0 != this->l168kref.size() && !this->l168kref.isdirty() ) {
+    return this->l16lowtowideband();
+  }
+
   if( this->g722tol16() ) return true;
-  if( !this->g711tol16() )
-  {
-    if( !this->ilbctol16() ) return false;
+  if( !this->g711tol16() ) {
+    if( !this->ilbctol16() ) {
+      return false;
+    }
   }
 
   return this->l16lowtowideband();
@@ -477,9 +483,13 @@ bool codecx::l16widetonarrowband( void ) {
 ## requirenarrowband
 Search for the relevent data and convert as necessary.
 */
-bool codecx::requirenarrowband( void )
-{
+bool codecx::requirenarrowband( void ) {
   if( 0 != this->l168kref.size() && !this->l168kref.isdirty() ) return true;
+
+  if( 0 != this->l1616kref.size() && !this->l1616kref.isdirty() ) {
+    return this->l16widetonarrowband();
+  }
+
   if( this->g711tol16() ) return true;
   if( this->ilbctol16() ) return true;
   this->g722tol16();
