@@ -655,7 +655,7 @@ bool projectrtpchannel::checkfordtmf( rtppacket *src ) {
   uint16_t sn = src->getsequencenumber();
 
   if( 0 != this->rfc2833pt &&
-      src->getpayloadtype() == this->rfc2833pt ) {
+      src->getpayloadtype() == RFC2833PAYLOADTYPE ) {
 
     if( src->getpayloadlength() >= 4 ) {
       /* We have to look for DTMF events handling issues like missing events - such as the marker or end bit */
@@ -872,6 +872,12 @@ void projectrtpchannel::readsomertp( void ) {
         }
 
         if( !this->recv ) {
+          this->receivedpkskip++;
+          goto readsomemore;
+        }
+
+        /* TODO ZRTP? */
+        if( buf->getpacketextension() ) {
           this->receivedpkskip++;
           goto readsomemore;
         }
