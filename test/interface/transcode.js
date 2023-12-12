@@ -1,7 +1,7 @@
 /* if we want to see what is going on - use nodeplotlib instead of our placeholder */
-const npl = require( "nodeplotlib" )
+//const npl = require( "nodeplotlib" )
 // eslint-disable-next-line no-unused-vars
-//const npl = { plot: ( /** @type {any} */ a ) => {} }
+const npl = { plot: ( /** @type {any} */ a ) => {} }
 
 
 const fft = require( "fft-js" ).fft
