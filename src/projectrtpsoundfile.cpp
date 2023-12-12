@@ -101,6 +101,7 @@ soundfilereader::soundfilereader( std::string &url ) :
   blocksize( L16NARROWBANDBYTES ),
   badheader( false ),
   headerread( false ),
+  bodyread( false ),
   initseekmseconds( 0 ),
   ploadtype( L168KPAYLOADTYPE ) {
 
@@ -127,15 +128,13 @@ soundfilereader::soundfilereader( std::string &url ) :
   /* read */
   if ( aio_read( &this->cbwavheader ) == -1 ) {
     fprintf( stderr, "aio_read read of header failed in soundfile\n" );
-    close( this->file );
-    this->file = -1;
+    this->badheader = true;
     return;
   }
 
   if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
     fprintf( stderr, "aio_read read of block failed in soundfile" );
-    close( this->file );
-    this->file = -1;
+    this->bodyread = true;
     return;
   }
 
@@ -177,16 +176,17 @@ bool soundfilereader::read( rawsound &out ) {
 
   if( this->badheader ) {
     fprintf( stderr, "Bad wav file\n" );
-    return false;
-  }
-
-  if( !this->headerread &&
-      aio_error( &this->cbwavheader ) == EINPROGRESS ) {
-    fprintf( stderr, "Read of soundfile wav header has not completed\n" );
-    return false;
+    out.zero();
+    return true;
   }
 
   if( !this->headerread ) {
+    if( aio_error( &this->cbwavheader ) == EINPROGRESS ) {
+      fprintf( stderr, "Read of soundfile wav header has not completed\n" );
+      out.zero();
+      return true;
+    }
+
     if( 'W' != this->ourwavheader.wave_header[ 0 ] ) {
       this->badheader = true;
     }
@@ -197,7 +197,9 @@ bool soundfilereader::read( rawsound &out ) {
         break;
       default:
         fprintf( stderr, "Bad sample rate in wav\n" );
-        return false;
+        this->badheader = true;
+        out.zero();
+        return true;
     }
 
     this->ploadtype = L168KPAYLOADTYPE;
@@ -211,7 +213,9 @@ bool soundfilereader::read( rawsound &out ) {
           this->ploadtype = L1616KPAYLOADTYPE;
           this->blocksize = L16WIDEBANDBYTES;
         } else {
-          return false;
+          this->badheader = true;
+          out.zero();
+          return true;
         }
         break;
       }
@@ -236,8 +240,10 @@ bool soundfilereader::read( rawsound &out ) {
         break;
       }
       default: {
+        this->badheader = true;
+        out.zero();
         fprintf( stderr, "Bad audio format in wav\n" );
-        return false;
+        return true;
       }
     }
     this->headerread = true;
@@ -245,12 +251,15 @@ bool soundfilereader::read( rawsound &out ) {
 
   if( this->initseekmseconds > 0 ) {
     this->setposition( this->initseekmseconds );
+    out.zero();
     return true;
   }
 
   if( aio_error( &this->cbwavblock[ this->currentcbindex ] ) == EINPROGRESS ) {
     fprintf( stderr, "Read of soundfile wav block has not completed\n" );
-    return false;
+    /* return some silence */
+    out.zero();
+    return true;
   }
 
   /* success? */
@@ -258,11 +267,19 @@ bool soundfilereader::read( rawsound &out ) {
 
   if( -1 == numbytes ) {
     fprintf( stderr, "Bad call to aio_return\n" );
-    return false;
+    this->bodyread = true;
+    out.zero();
+    return true;
   }
 
   uint8_t *current = ( uint8_t * ) this->cbwavblock[ this->currentcbindex ].aio_buf;
   out = rawsound( current, this->blocksize, this->ploadtype, this->ourwavheader.sample_rate );
+  
+  if( numbytes < this->blocksize ) {
+    this->bodyread = true;
+    /* TODO if we get a partial read we probably should not zero that part */
+    out.zero();
+  }
 
   /* Get the next block reading */
   auto lastreadoffset = this->cbwavblock[ this->currentcbindex ].aio_offset;
@@ -277,10 +294,10 @@ bool soundfilereader::read( rawsound &out ) {
   this->cbwavblock[ this->currentcbindex ].aio_nbytes = this->blocksize;
 
   /* read next block */
-  if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
-    close( this->file );
-    this->file = -1;
-    return false;
+  if ( !this->bodyread && aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
+    this->bodyread = true;
+    out.zero();
+    return true;
   }
 
   return true;
@@ -291,11 +308,11 @@ bool soundfilereader::read( rawsound &out ) {
 Have we completed reading the file.
 */
 bool soundfilereader::complete( void ) {
-  if( this->badheader || !this->headerread ) {
-    return false;
-  }
 
-  return ( this->cbwavblock[ this->currentcbindex ].aio_offset + this->blocksize ) > this->ourwavheader.chunksize;
+  if( this->badheader ) return true;
+  if( !this->headerread ) return false;
+  if( -1 == this->file ) return true;
+  return this->bodyread;
 }
 
 /*!md
@@ -319,6 +336,8 @@ void soundfilereader::setposition( long mseconds ) {
   if( this->headerread ) {
     while( AIO_NOTCANCELED == aio_cancel( this->file, NULL ) );
 
+    this->bodyread = false;
+
     this->currentcbindex = ( this->currentcbindex + 1 ) % SOUNDFILENUMBUFFERS;
 
     off_t our_aio_offset = ( this->ourwavheader.bit_depth /*16*/ / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * mseconds; /* bytes per sample */
@@ -326,18 +345,13 @@ void soundfilereader::setposition( long mseconds ) {
     our_aio_offset += sizeof( wavheader );
 
     for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
-      memset( &this->cbwavblock[ i ], 0, sizeof( aiocb ) );
-      this->cbwavblock[ i ].aio_nbytes = L16WIDEBANDBYTES;
-      this->cbwavblock[ i ].aio_fildes = this->file;
-      this->cbwavblock[ i ].aio_offset = sizeof( wavheader ) + our_aio_offset + ( i * L16WIDEBANDBYTES );
-      this->cbwavblock[ i ].aio_buf = this->buffer + ( i * L16WIDEBANDBYTES );
+      this->cbwavblock[ ( this->currentcbindex + i ) % SOUNDFILENUMBUFFERS ].aio_offset = sizeof( wavheader ) + our_aio_offset + ( i * L16WIDEBANDBYTES );
     }
 
     /* read ahead */
     this->currentcbindex = 0;
     if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
-      close( this->file );
-      this->file = -1;
+      this->bodyread = true;
     }
 
     this->initseekmseconds = 0;
