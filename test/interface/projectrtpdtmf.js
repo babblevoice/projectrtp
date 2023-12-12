@@ -66,15 +66,13 @@ function sendpk( sn, ts, sendtime, dstport, server, pt = 0, ssrc ) {
 /*
 
 */
-function senddtmf( sn, ts, sendtime, dstport, server, endofevent, ev ) {
+function senddtmf( sn, ts, sendtime, dstport, server, endofevent, ev, pt = 101 ) {
 
   return setTimeout( () => {
     const ssrc = 25
-    const pklength = 58
+    const pklength = 16
 
     const header = Buffer.alloc( pklength )
-
-    const pt = 101
 
     header.writeUInt8( 0x80 )
     header.writeUInt8( pt, 1 ) // payload type
@@ -699,6 +697,149 @@ describe( "dtmf", function() {
     expect( dtmfpkcount ).to.be.within( 4, 8 )
 
     expect( receivedmessages.length ).to.equal( 5 )
+
+    expect( receivedmessages[ 0 ].action ).to.equal( "mix" )
+    expect( receivedmessages[ 1 ].action ).to.equal( "telephone-event" )
+    expect( receivedmessages[ 2 ].action ).to.equal( "telephone-event" )
+    expect( receivedmessages[ 3 ].action ).to.equal( "mix" )
+    expect( receivedmessages[ 3 ].event ).to.equal( "finished" )
+    expect( receivedmessages[ 4 ].action ).to.equal( "close" )
+
+    expect( receivedmessages[ 0 ].event ).to.equal( "start" )
+    expect( receivedmessages[ 1 ].event ).to.equal( "4" )
+    expect( receivedmessages[ 2 ].event ).to.equal( "5" )
+    expect( receivedmessages[ 3 ].event ).to.equal( "finished" )
+
+  } )
+
+
+  it( "mix 2 channels - pcmu <-> pcma and send DTMF different 2833 pt", async function() {
+
+    /*
+      When mixing 2 channels, we expect the second leg to receive the 2833 packets
+      and our server to emit events indicating the DTMF on the first channel.
+    */
+    this.timeout( 3000 )
+    this.slow( 2000 )
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+
+    const receivedmessages = []
+
+    let endpointapkcount = 0
+    let endpointbpkcount = 0
+    let dtmfpkcount = 0
+
+    endpointa.on( "message", function( msg ) {
+      endpointapkcount++
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+    } )
+
+    endpointb.on( "message", function( msg ) {
+      endpointbpkcount++
+      if( 101 == ( 0x7f & msg [ 1 ] ) ) {
+        dtmfpkcount++
+      } else {
+        expect( msg.length ).to.equal( 172 )
+        expect( 0x7f & msg [ 1 ] ).to.equal( 8 )
+        endpointb.send( msg, channelb.local.port, "localhost" )
+      }
+    } )
+
+    endpointa.bind()
+    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+
+    endpointb.bind()
+    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0, "rfc2833pt": 127 } }, function( d ) {
+      receivedmessages.push( d )
+
+      if( "close" === d.action ) channelb.close()
+    } )
+
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8, "rfc2833pt": 101 } }, function( d ) {
+      if( "close" === d.action ) done()
+    } )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+
+    /* send a packet every 20mS x 50 */
+    sendpk( 0, 0, 0, channela.local.port, endpointa )
+    sendpk( 1, 1*160, 1*20, channela.local.port, endpointa )
+    sendpk( 2, 2*160, 2*20, channela.local.port, endpointa )
+    sendpk( 3, 3*160, 3*20, channela.local.port, endpointa )
+    sendpk( 4, 4*160, 4*20, channela.local.port, endpointa )
+    sendpk( 5, 5*160, 5*20, channela.local.port, endpointa )
+    sendpk( 6, 6*160, 6*20, channela.local.port, endpointa )
+    sendpk( 7, 7*160, 7*20, channela.local.port, endpointa )
+    sendpk( 8, 8*160, 8*20, channela.local.port, endpointa )
+    sendpk( 9, 9*160, 9*20, channela.local.port, endpointa )
+    sendpk( 10, 10*160, 10*20, channela.local.port, endpointa )
+    sendpk( 11, 11*160, 11*20, channela.local.port, endpointa )
+    sendpk( 12, 12*160, 12*20, channela.local.port, endpointa )
+
+    senddtmf( 13, 13*160, 13*20, channela.local.port, endpointa, false, "4", 127 )
+    sendpk( 14, 13*160, 13*20, channela.local.port, endpointa, 0 )
+    sendpk( 15, 14*160, 14*20, channela.local.port, endpointa, 0 )
+    senddtmf( 16, (15*160)+10, (15*20)+10, channela.local.port, endpointa, false, "4", 127 )
+    sendpk( 17, 15*160, 15*20, channela.local.port, endpointa, 0 )
+    sendpk( 18, 16*160, 16*20, channela.local.port, endpointa, 0 )
+    senddtmf( 19, (17*160)+20, (17*20)+20, channela.local.port, endpointa, true, "4", 127 )
+    sendpk( 20, 17*160, 17*20, channela.local.port, endpointa, 0 )
+    sendpk( 21, 18*160, 18*20, channela.local.port, endpointa, 0 )
+    senddtmf( 22, (18*160)+30, (18*20)+30, channela.local.port, endpointa, true, "4", 127 )
+    sendpk( 23, 19*160, 19*20, channela.local.port, endpointa, 0 )
+    sendpk( 24, 20*160, 20*20, channela.local.port, endpointa, 0 )
+    sendpk( 25, 21*160, 21*20, channela.local.port, endpointa, 0 )
+    sendpk( 26, 22*160, 22*20, channela.local.port, endpointa, 0 )
+    sendpk( 27, 23*160, 23*20, channela.local.port, endpointa, 0 )
+    sendpk( 28, 24*160, 24*20, channela.local.port, endpointa, 0 )
+    sendpk( 29, 25*160, 25*20, channela.local.port, endpointa, 0 )
+
+    senddtmf( 30, 26*160, 26*20, channela.local.port, endpointa, false, "5", 127 )
+    sendpk( 31, 26*160, 26*20, channela.local.port, endpointa, 0 )
+    sendpk( 32, 27*160, 27*20, channela.local.port, endpointa, 0 )
+    senddtmf( 33, (27*160)+10, (27*20)+10, channela.local.port, endpointa, false, "5", 127 )
+    sendpk( 34, 28*160, 28*20, channela.local.port, endpointa, 0 )
+    sendpk( 35, 29*160, 28*20, channela.local.port, endpointa, 0 )
+    senddtmf( 36, (28*160)+20, (28*20)+20, channela.local.port, endpointa, true, "5", 127 )
+    sendpk( 37, 30*160, 29*20, channela.local.port, endpointa, 0 )
+    sendpk( 38, 31*160, 30*20, channela.local.port, endpointa, 0 )
+
+    senddtmf( 39, (38*160)+30, (30*20)+30, channela.local.port, endpointa, true, "5", 127 )
+    sendpk( 40, 32*160, 31*20, channela.local.port, endpointa, 0 )
+    sendpk( 41, 33*160, 32*20, channela.local.port, endpointa, 0 )
+
+    sendpk( 42, 34*160, 33*20, channela.local.port, endpointa, 0 )
+    sendpk( 43, 35*160, 34*20, channela.local.port, endpointa, 0 )
+    sendpk( 44, 36*160, 35*20, channela.local.port, endpointa, 0 )
+    sendpk( 45, 37*160, 36*20, channela.local.port, endpointa, 0 )
+    sendpk( 46, 38*160, 37*20, channela.local.port, endpointa, 0 )
+    sendpk( 47, 39*160, 38*20, channela.local.port, endpointa, 0 )
+    sendpk( 48, 40*160, 39*20, channela.local.port, endpointa, 0 )
+    sendpk( 49, 51*160, 40*20, channela.local.port, endpointa, 0 )
+
+    await new Promise( ( r ) => { setTimeout( () => r(), 1400 ) } )
+
+    channela.close()
+    endpointa.close()
+    endpointb.close()
+
+    await finished
+
+    expect( endpointapkcount ).to.be.within( 30, 51 )
+    expect( endpointbpkcount ).to.be.within( 30, 51 )
+
+    expect( receivedmessages.length ).to.equal( 5 )
+
+    expect( dtmfpkcount ).to.be.within( 4, 8 )
 
     expect( receivedmessages[ 0 ].action ).to.equal( "mix" )
     expect( receivedmessages[ 1 ].action ).to.equal( "telephone-event" )
