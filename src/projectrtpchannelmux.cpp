@@ -325,8 +325,8 @@ void projectchannelmux::postrtpdata( projectrtpchannelptr srcchan, projectrtpcha
     return;
   }
 
-  if( src->getpayloadtype() == srcchan->rfc2833pt ) {
-    dst->setpayloadtype( srcchan->rfc2833pt );
+  if( src->getpayloadtype() == RFC2833PAYLOADTYPE ) {
+    dst->setpayloadtype( dstchan->rfc2833pt );
     dst->copy( src );
   } else {
     srcchan->incodec << codecx::next;
