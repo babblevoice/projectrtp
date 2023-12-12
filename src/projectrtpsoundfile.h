@@ -119,6 +119,7 @@ private:
   int blocksize;
   bool badheader;
   bool headerread;
+  bool bodyread;
   long initseekmseconds;
   int ploadtype;
 };
