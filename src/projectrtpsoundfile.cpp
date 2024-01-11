@@ -152,8 +152,7 @@ soundfilereader::~soundfilereader() {
 # create
 Shared pointer version of us.
 */
-soundfilereader::pointer soundfilereader::create( std::string url )
-{
+soundfilereader::pointer soundfilereader::create( std::string url ) {
   return pointer( new soundfilereader( url ) );
 }
 
@@ -274,7 +273,7 @@ bool soundfilereader::read( rawsound &out ) {
 
   uint8_t *current = ( uint8_t * ) this->cbwavblock[ this->currentcbindex ].aio_buf;
   out = rawsound( current, this->blocksize, this->ploadtype, this->ourwavheader.sample_rate );
-  
+
   if( numbytes < this->blocksize ) {
     this->bodyread = true;
     /* TODO if we get a partial read we probably should not zero that part */
@@ -308,7 +307,6 @@ bool soundfilereader::read( rawsound &out ) {
 Have we completed reading the file.
 */
 bool soundfilereader::complete( void ) {
-
   if( this->badheader ) return true;
   if( !this->headerread ) return false;
   if( -1 == this->file ) return true;
@@ -332,32 +330,31 @@ void soundfilereader::setposition( long mseconds ) {
     this->headerread = true;
   }
 
-
-  if( this->headerread ) {
-    while( AIO_NOTCANCELED == aio_cancel( this->file, NULL ) );
-
-    this->bodyread = false;
-
-    this->currentcbindex = ( this->currentcbindex + 1 ) % SOUNDFILENUMBUFFERS;
-
-    off_t our_aio_offset = ( this->ourwavheader.bit_depth /*16*/ / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * mseconds; /* bytes per sample */
-    our_aio_offset = ( our_aio_offset / this->blocksize ) * this->blocksize; /* realign to the nearest block */
-    our_aio_offset += sizeof( wavheader );
-
-    for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
-      this->cbwavblock[ ( this->currentcbindex + i ) % SOUNDFILENUMBUFFERS ].aio_offset = sizeof( wavheader ) + our_aio_offset + ( i * L16WIDEBANDBYTES );
-    }
-
-    /* read ahead */
-    this->currentcbindex = 0;
-    if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
-      this->bodyread = true;
-    }
-
-    this->initseekmseconds = 0;
-  } else {
+  if( !this->headerread ) {
     this->initseekmseconds = mseconds;
+    return;
   }
+
+  this->bodyread = false;
+  while( AIO_NOTCANCELED == aio_cancel( this->file, NULL ) );
+
+  this->currentcbindex = ( this->currentcbindex + 1 ) % SOUNDFILENUMBUFFERS;
+
+  off_t our_aio_offset = ( this->ourwavheader.bit_depth /*16*/ / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * mseconds; /* bytes per sample */
+  our_aio_offset = ( our_aio_offset / this->blocksize ) * this->blocksize; /* realign to the nearest block */
+  our_aio_offset += sizeof( wavheader );
+
+  for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
+    this->cbwavblock[ ( this->currentcbindex + i ) % SOUNDFILENUMBUFFERS ].aio_offset = our_aio_offset + ( i * L16WIDEBANDBYTES );
+  }
+
+  /* read ahead */
+  if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
+    this->bodyread = true;
+  }
+
+  this->initseekmseconds = 0;
+
 }
 
 long soundfilereader::offtomsecs( void ) {
@@ -437,8 +434,7 @@ soundfilewriter::~soundfilewriter() {
 # create
 Shared pointer for writing.
 */
-soundfilewriter::pointer soundfilewriter::create( std::string &url, int16_t numchannels, int32_t samplerate )
-{
+soundfilewriter::pointer soundfilewriter::create( std::string &url, int16_t numchannels, int32_t samplerate ) {
   return pointer( new soundfilewriter( url, numchannels, samplerate ) );
 }
 
