@@ -811,7 +811,8 @@ void projectrtpchannel::correctaddress( void ) {
  */
 void projectrtpchannel::correctssrc( uint32_t ssrc ) {
   if( !this->receivedrtp ) {
-    this->receivedrtp = true;
+    /* allow settling */
+    if( this->inbuff->getpushed() > 5 )this->receivedrtp = true;
     this->ssrcin = ssrc;
   }
 }
