@@ -5,6 +5,7 @@ const dgram = require( "dgram" )
 const projectrtp = require( "../../index" ).projectrtp
 const node = require( "../../lib/node" ).interface
 const server = require( "../../lib/server" ).interface
+const rtputil = require( "../util/rtp" )
 
 /**
  * Common channel tester
@@ -360,15 +361,9 @@ describe( "rtpchannel", function() {
     let totalsndiff = 0
     let totaltsdiff = 0
     server.on( "message", function( msg ) {
-      let sn = 0
-      sn = msg[ 2 ] << 8
-      sn = sn | msg[ 3 ]
-
-      let ts = 0
-      ts = msg[ 4 ] << 24
-      ts = ts | ( msg[ 5 ] << 16 )
-      ts = ts | ( msg[ 6 ] << 8 )
-      ts = ts | msg[ 7 ]
+      const pk = rtputil.parsepk( msg )
+      const sn = pk.sn
+      const ts = pk.ts
 
       if( -1 !== lastsn ) {
         totalsndiff += sn - lastsn - 1
