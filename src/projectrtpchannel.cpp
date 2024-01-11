@@ -886,7 +886,12 @@ void projectrtpchannel::readsomertp( void ) {
         this->tickswithnortpcount = 0;
 
         this->correctaddress();
+
+        /*
+        after speaking with Magrathea - more streams are changing ssrc without notice mid-stream
+        for now do not check.
         this->correctssrc( buf->getssrc() );
+        */
         
         if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint ) {
           /* After the first packet - we only accept data from the verified source */
@@ -894,10 +899,12 @@ void projectrtpchannel::readsomertp( void ) {
           goto readsomemore;
         }
 
+        /*
         if( buf->getssrc() != this->ssrcin ) {
           this->receivedpkskip++;
           goto readsomemore;
         }
+        */
 
         /* dynamic payload types */
         auto pt = buf->getpayloadtype();
