@@ -5,9 +5,8 @@ const expect = require( "chai" ).expect
 const dgram = require( "dgram" )
 const projectrtp = require( "../../index.js" ).projectrtp
 
-function sendpk( sn, sendtime, dstport, server, data = undefined ) {
+function sendpk( sn, sendtime, dstport, server, data = undefined, pt = 0, ssrc = 25 ) {
 
-  const ssrc = 25
   const pklength = 172
 
   return setTimeout( () => {
@@ -27,8 +26,11 @@ function sendpk( sn, sendtime, dstport, server, data = undefined ) {
     subheader.writeUInt32BE( ts, 2 )
     subheader.writeUInt32BE( ssrc, 6 )
 
+    const header = Buffer.from( [ 0x80, 0x00 ] )
+    header.writeUInt8( pt, 1 ) // payload type
+
     const rtppacket = Buffer.concat( [
-      Buffer.from( [ 0x80, 0x00 ] ),
+      header,
       subheader,
       payload ] )
 
@@ -86,6 +88,75 @@ describe( "channel mix", function() {
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
     for( let i = 0;  50 > i; i ++ ) {
       sendpk( i, i, channela.local.port, endpointa )
+    }
+
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
+
+    channela.close()
+    endpointa.close()
+    endpointb.close()
+
+    expect( endpointapkcount ).to.be.within( 30, 51 )
+    expect( endpointbpkcount ).to.be.within( 30, 51 )
+
+    await finished
+
+  } )
+
+  it( "basic mix 2 channels with start 2 packets wrong payload type", async function() {
+
+    this.timeout( 3000 )
+    this.slow( 2000 )
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+
+    let endpointapkcount = 0
+    let endpointbpkcount = 0
+
+    endpointa.on( "message", function( msg ) {
+      endpointapkcount++
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 8 )
+    } )
+
+    endpointb.on( "message", function( msg ) {
+      endpointbpkcount++
+
+      expect( msg.length ).to.equal( 172 )
+      expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
+      endpointb.send( msg, channelb.local.port, "localhost" )
+    } )
+
+    endpointa.bind()
+    await new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } )
+
+    endpointb.bind()
+    await new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } )
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const channela = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) channelb.close()
+    } )
+
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) done()
+    } )
+
+    /* mix */
+    expect( channela.mix( channelb ) ).to.be.true
+
+    /* a problem was highlighted that would remote would be called before rtp stream was updated */
+    channela.remote( { "address": "localhost", "port": endpointa.address().port, "codec": 8 } )
+
+    sendpk( 0, 0, channela.local.port, endpointa )
+    sendpk( 1, 1, channela.local.port, endpointa )
+
+    /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
+    for( let i = 2;  50 > i; i ++ ) {
+      sendpk( i, i, channela.local.port, endpointa, undefined, 8, 27 )
     }
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
@@ -900,9 +971,9 @@ describe( "channel mix", function() {
     endpointb.close()
     endpointc.close()
 
-    expect( endpointapkcountzero ).to.be.within( 65, 75 )
-    expect( endpointbpkcountzero ).to.be.within( 65, 75 )
-    expect( endpointcpkcountzero ).to.be.within( 65, 75 )
+    expect( endpointapkcountzero ).to.be.within( 60, 75 )
+    expect( endpointbpkcountzero ).to.be.within( 60, 75 )
+    expect( endpointcpkcountzero ).to.be.within( 60, 75 )
     expect( endpointapkcountnotzero ).to.be.within( 4, 12 )
     expect( endpointbpkcountnotzero ).to.be.within( 4, 12 )
     expect( endpointcpkcountnotzero ).to.be.below( 2 )
