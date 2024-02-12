@@ -872,20 +872,18 @@ void projectrtpchannel::readsomertp( void ) {
           goto readsomemore;
         }
 
-        if( !this->recv ) {
-          this->receivedpkskip++;
-          goto readsomemore;
-        }
-
         /* TODO ZRTP? */
         if( buf->getpacketextension() ) {
           this->receivedpkskip++;
           goto readsomemore;
         }
 
-        this->tickswithnortpcount = 0;
-
         this->correctaddress();
+
+        if( !this->recv ) {
+          this->receivedpkskip++;
+          goto readsomemore;
+        }
 
         /*
         after speaking with Magrathea - more streams are changing ssrc without notice mid-stream
@@ -905,6 +903,8 @@ void projectrtpchannel::readsomertp( void ) {
           goto readsomemore;
         }
         */
+
+        this->tickswithnortpcount = 0;
 
         /* dynamic payload types */
         auto pt = buf->getpayloadtype();
