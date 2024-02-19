@@ -69,13 +69,14 @@ static const uint8_t alaw_to_ulaw_table[256] =
 };
 
 void gen711convertdata( void ) {
-  for( int32_t i = 0; i != 65535; i++ ) {
+  int32_t i;
+  for( i = 0; i != 65536; i++ ) {
     int16_t l16val = i - 32768;
     _l16topcmu[ i ] = linear_to_ulaw( l16val );
     _l16topcma[ i ] = linear_to_alaw( l16val );
   }
 
-  for( uint8_t i = 0; i != 255; i++ ) {
+  for( i = 0; i != 256; i++ ) {
     _pcmatol16[ i ] = alaw_to_linear( i );
     _pcmutol16[ i ] = ulaw_to_linear( i );
   }
