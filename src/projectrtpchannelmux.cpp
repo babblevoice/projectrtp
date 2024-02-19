@@ -93,7 +93,12 @@ void projectchannelmux::mixall( void ) {
 
   /* Now we subtract this channel to send to this channel. */
   for( auto& chan: this->channels ) {
-    if( !chan->send ) continue;
+    if( !chan->send ) {
+      AQUIRESPINLOCK( chan->rtpbufferlock );
+      chan->inbuff->poppeeked();
+      RELEASESPINLOCK( chan->rtpbufferlock );
+      continue;
+    }
 
     rtppacket *dst = chan->gettempoutbuf();
 
