@@ -220,6 +220,9 @@ private:
   static bool recordercompleted( const channelrecorder::pointer& value );
   void dounmix( void );
 
+  void badsocketopen( const char *err );
+  void returnavailableport( void );
+
   std::atomic_bool mixerlock;
   projectchannelmuxptr mixer;
   std::atomic_bool mixing;
