@@ -19,7 +19,49 @@
 extern boost::asio::io_context workercontext;
 std::queue < unsigned short >availableports;
 std::atomic_bool availableportslock( false );
-uint32_t channelscreated = 0;
+
+std::atomic< std::uint32_t > channelscreated{ 0 };
+
+/**
+ * Get the next available port.
+ */
+unsigned short getavailableport( void ) {
+  AQUIRESPINLOCK( availableportslock );
+  auto ourport = availableports.front();
+  availableports.pop();
+  RELEASESPINLOCK( availableportslock );
+
+  channelscreated.fetch_add( 1 );
+
+  return ourport;
+}
+
+/**
+ * Returns the number of ports we still have available.
+ * @returns { size_t }
+ */
+auto getvailableportsize() {
+  AQUIRESPINLOCK( availableportslock );
+  auto availableportssize = availableports.size();
+  RELEASESPINLOCK( availableportslock );
+
+  return availableportssize;
+}
+
+/**
+ * Return a port number to the available list (to the back) and clear our value
+ * so we cannot return it twice.
+ */
+void projectrtpchannel::returnavailableport( void ) {
+
+  if( 0 == this->port ) return;
+  AQUIRESPINLOCK( availableportslock );
+  availableports.push( this->port );
+  this->port = 0;
+  RELEASESPINLOCK( availableportslock );
+
+  channelscreated.fetch_sub( 1 );
+}
 
 /* useful for random string generation */
 const char alphanumsecret[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
@@ -106,8 +148,6 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   queuddigitslock( false ),
   lastdtmfsn( 0 ),
   tickstarttime() {
-
-  channelscreated++;
 
   gnutls_rnd( GNUTLS_RND_RANDOM, &this->ssrcout, 4 );
 
@@ -265,28 +305,62 @@ uint32_t projectrtpchannel::requestopen( void ) {
 }
 
 /**
+ * handle errors on socket open
+*/
+void projectrtpchannel::badsocketopen( const char *err ) {
+
+  fprintf( stderr, "Socket issue - refusing a new channel: %s\n", err );
+
+  if( this->rtpsocket.is_open()  ) {
+    this->rtpsocket.close();
+  }
+
+  if( !this->rtcpsocket.is_open() ) {
+    this->rtcpsocket.close();
+  }
+
+  this->returnavailableport();
+
+  postdatabacktojsfromthread( shared_from_this(), "close", "error.nosocket" );
+}
+
+/**
  * Must be called in the workercontext.
  */
 void projectrtpchannel::doopen( void ) {
 
+  boost::system::error_code ec;
+
   this->outcodec.reset();
   this->incodec.reset();
 
-  boost::asio::socket_base::reuse_address reuseoption( true );
-  this->rtpsocket.open( boost::asio::ip::udp::v4() );
-  this->rtpsocket.set_option( reuseoption );
+  this->rtpsocket.open( boost::asio::ip::udp::v4(), ec );
+
+  if( ec ) {
+    this->badsocketopen( "failed to open rtp socket" );
+    return;
+  }
+
   this->rtpsocket.bind( boost::asio::ip::udp::endpoint(
-      boost::asio::ip::udp::v4(), this->port ) );
+      boost::asio::ip::udp::v4(), this->port ), ec );
 
-  this->rtcpsocket.open( boost::asio::ip::udp::v4() );
-  this->rtcpsocket.set_option( reuseoption );
+  if( ec ) {
+    this->badsocketopen( "failed to bind rtp socket" );
+    return;
+  }
+
+  this->rtcpsocket.open( boost::asio::ip::udp::v4(), ec );
+
+  if( ec ) {
+    this->badsocketopen( "failed to open rtcp socket" );
+    return;
+  }
+
   this->rtcpsocket.bind( boost::asio::ip::udp::endpoint(
-      boost::asio::ip::udp::v4(), this->port + 1 ) );
+      boost::asio::ip::udp::v4(), this->port + 1 ), ec );
 
-  if( !this->rtpsocket.is_open() || !this->rtcpsocket.is_open() ) {
-    fprintf( stderr, "No more sockets available - refusing a new channel\n" );
-    this->requestclose( "error.nosocket" );
-    this->doclose();
+  if( ec ) {
+    this->badsocketopen( "failed to bind rtcp socket" );
     return;
   }
 
@@ -333,11 +407,15 @@ void projectrtpchannel::requestecho( bool e ) {
   this->doecho = e;
 }
 
+/**
+ * Worker thread to perform teh close. It will only run if the channel has
+ * been active (i.e. the sockets have been opened sucsessfully)
+ */
 void projectrtpchannel::doclose( void ) {
 
   if( !this->active ) return;
-
   this->active = false;
+
   this->tick.cancel();
 
   if( nullptr != this->player ) {
@@ -365,11 +443,7 @@ void projectrtpchannel::doclose( void ) {
   this->rtpsocket.close();
   this->rtcpsocket.close();
 
-  AQUIRESPINLOCK( availableportslock );
-  availableports.push( this->getport() );
-  RELEASESPINLOCK( availableportslock );
-
-  channelscreated--;
+  this->returnavailableport();
 
   postdatabacktojsfromthread( shared_from_this(), "close", this->closereason );
 }
@@ -1928,10 +2002,6 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   napi_value nremote;
 
   napi_value result;
-  AQUIRESPINLOCK( availableportslock );
-  auto ourport = availableports.front();
-  availableports.pop();
-  RELEASESPINLOCK( availableportslock );
 
   size_t bytescopied;
 
@@ -1949,7 +2019,7 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
     return NULL;
   }
 
-  projectrtpchannel::pointer p = projectrtpchannel::create( ourport );
+  projectrtpchannel::pointer p = projectrtpchannel::create( getavailableport() );
 
   /* optional - remote */
   dtlssession::mode dtlsmode = dtlssession::none;
@@ -2196,7 +2266,7 @@ nodtls:
   if( napi_ok != napi_create_object( env, &nlocal ) ||
       napi_ok != napi_set_named_property( env, result, "local", nlocal ) ||
 
-      napi_ok != napi_create_int32( env, ourport, &nourport ) ||
+      napi_ok != napi_create_int32( env, p->getport(), &nourport ) ||
       napi_ok != napi_set_named_property( env, nlocal, "port", nourport ) ||
 
       napi_ok != napi_create_uint32( env, ssrc, &nssrc ) ||
@@ -2227,12 +2297,8 @@ void getchannelstats( napi_env env, napi_value &result ) {
 
   napi_value av, chcount;
 
-  AQUIRESPINLOCK( availableportslock );
-  auto availableportssize = availableports.size();
-  RELEASESPINLOCK( availableportslock );
-
-  if( napi_ok != napi_create_double( env, availableportssize, &av ) ) return;
-  if( napi_ok != napi_create_double( env, channelscreated, &chcount ) ) return;
+  if( napi_ok != napi_create_double( env, getvailableportsize(), &av ) ) return;
+  if( napi_ok != napi_create_double( env, channelscreated.load(), &chcount ) ) return;
 
   if( napi_ok != napi_set_named_property( env, channel, "available", av ) ) return;
   if( napi_ok != napi_set_named_property( env, channel, "current", chcount ) ) return;
