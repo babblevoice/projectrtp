@@ -451,13 +451,16 @@ void projectrtpchannel::doclose( void ) {
 bool projectrtpchannel::checkidlerecv( void ) {
   if( this->recv && this->active ) {
     this->tickswithnortpcount++;
-    if( this->tickswithnortpcount > ( 50 * 20 ) ) { /* 50 (@20mS ptime)/S = 20S */
+    if( this->tickswithnortpcount > ( 50 * 20 ) && this->remoteconfirmed ) { /* 50 (@20mS ptime)/S = 20S */
+      this->closereason = "idle";
+      this->doclose();
+      return true;
+    } else if( this->tickswithnortpcount > ( 50 * 60 * 60 ) ) { /* 1hr hard timeout */
       this->closereason = "idle";
       this->doclose();
       return true;
     }
   }
-
   return false;
 }
 
