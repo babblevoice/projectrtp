@@ -133,6 +133,7 @@ public:
   std::atomic_uint64_t totalticktime;
   std::atomic_uint64_t totaltickcount;
   std::atomic_uint16_t tickswithnortpcount;
+  std::atomic_uint16_t hardtickswithnortpcount;
 
   std::atomic_uint64_t outpkwritecount;
   std::atomic_uint64_t outpkcount;
