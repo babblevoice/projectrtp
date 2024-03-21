@@ -95,6 +95,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   totalticktime( 0 ),
   totaltickcount( 0 ),
   tickswithnortpcount( 0 ),
+  hardtickswithnortpcount( 0 ),
   outpkwritecount( 0 ),
   outpkcount( 0 ),
   outpkskipcount( 0 ),
@@ -450,12 +451,18 @@ void projectrtpchannel::doclose( void ) {
 
 bool projectrtpchannel::checkidlerecv( void ) {
   if( this->recv && this->active ) {
-    this->tickswithnortpcount++;
-    if( this->tickswithnortpcount > ( 50 * 20 ) && this->remoteconfirmed ) { /* 50 (@20mS ptime)/S = 20S */
-      this->closereason = "idle";
-      this->doclose();
-      return true;
-    } else if( this->tickswithnortpcount > ( 50 * 60 * 60 ) ) { /* 1hr hard timeout */
+
+    this->hardtickswithnortpcount++;
+    if( this->remoteconfirmed ) {
+      
+      this->tickswithnortpcount++;
+      if( this->tickswithnortpcount > ( 50 * 20 ) ) { /* 50 (@20mS ptime)/S = 20S */
+        this->closereason = "idle";
+        this->doclose();
+        return true;
+        }
+    
+    } else if( this->hardtickswithnortpcount > ( 50 * 60 * 60 ) ) { /* 1hr hard timeout */
       this->closereason = "idle";
       this->doclose();
       return true;
@@ -982,6 +989,7 @@ void projectrtpchannel::readsomertp( void ) {
         */
 
         this->tickswithnortpcount = 0;
+        this->hardtickswithnortpcount = 0;
 
         /* dynamic payload types */
         auto pt = buf->getpayloadtype();
