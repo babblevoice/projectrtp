@@ -282,6 +282,7 @@ void projectrtpchannel::handleremoteresolve (
 
   this->confirmedrtpsenderendpoint = *it;
   this->remoteconfirmed = true;
+  this->hardtickswithnortpcount = 0;
 
   /* allow us to re-auto correct */
   this->autoadjust = true;
@@ -454,7 +455,7 @@ bool projectrtpchannel::checkidlerecv( void ) {
 
     this->hardtickswithnortpcount++;
     if( this->remoteconfirmed ) {
-      
+
       this->tickswithnortpcount++;
       if( this->tickswithnortpcount > ( 50 * 20 ) ) { /* 50 (@20mS ptime)/S = 20S */
         this->closereason = "idle";
@@ -886,6 +887,7 @@ void projectrtpchannel::correctaddress( void ) {
   if( this->autoadjust ) {
     this->confirmedrtpsenderendpoint = this->rtpsenderendpoint;
     this->remoteconfirmed = true;
+    this->hardtickswithnortpcount = 0;
     this->autoadjust = false;
   }
 }
