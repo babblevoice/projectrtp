@@ -12,6 +12,7 @@ channelrecorder::channelrecorder( std::string file ) :
   file( file ),
   poweraveragepackets( 50 ),
   startabovepower( 0 ),
+  maxsincestartpower( 0 ),
   finishbelowpower( 0 ),
   minduration( 0 ),
   maxduration( 0 ),
