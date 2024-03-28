@@ -30,6 +30,7 @@ public:
   /* must have started for this to kick in */
   uint16_t startabovepower;
   /* must have started for this to kick in */
+  uint16_t maxsincestartpower;
   uint16_t finishbelowpower;
   /* used in conjunction with finishbelowpower */
   uint32_t minduration; /* mSeconds */
