@@ -149,7 +149,7 @@ describe( "dtmf", function() {
 
 
   it( "single channel and request rtp server to send 2833", function( done ) {
-
+    /* TODO - check tre fuller structure of an RTP event (duration, volume, etc) */
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
     let dtmfpkcount = 0
@@ -182,7 +182,7 @@ describe( "dtmf", function() {
 
         if( "close" === d.action ) {
           server.close()
-          expect( dtmfpkcount ).to.equal( 2*3 )
+          expect( dtmfpkcount ).to.equal( 2*6 )
           done()
         }
       } )
@@ -263,7 +263,7 @@ describe( "dtmf", function() {
     clienta.close()
     clientb.close()
 
-    expect( dtmfpkcount ).to.equal( 3*3 )
+    expect( dtmfpkcount ).to.equal( 3*6 )
   } )
 
   it( "2 channels mixing and request rtp server to send 2833 to one with dynamic payloadtype", async function() {
@@ -331,7 +331,7 @@ describe( "dtmf", function() {
     clienta.close()
     clientb.close()
 
-    expect( dtmfpkcount ).to.equal( 3*3 )
+    expect( dtmfpkcount ).to.equal( 3*6 )
   } )
 
   it( "3 channels mixing and request rtp server to send 2833 to one", async function() {
@@ -414,7 +414,7 @@ describe( "dtmf", function() {
     clientb.close()
     clientc.close()
 
-    expect( dtmfpkcount ).to.equal( 5*3 )
+    expect( dtmfpkcount ).to.equal( 5*6 )
 
     await finished
   } )
