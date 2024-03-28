@@ -1262,15 +1262,18 @@ void projectrtpchannel::senddtmf( void ) {
     return;
   }
 
+  const char volume = 15;
+  const char endofevent = 0x80;
+
   rtppacket *dst = this->gettempoutbuf();
   dst->setpayloadtype( this->rfc2833pt );
-  dst->setmarker();
   dst->setpayloadlength( 4 );
   uint8_t *pl =  dst->getpayload();
   pl[ 0 ] = tosend;
-  pl[ 1 ] = 10; /* end of event & reserved & volume */
-  pl[ 2 ] = 0; /* event duration high */
-  pl[ 3 ] = 160; /* event duration */
+  pl[ 1 ] = volume; /* end of event & reserved & volume */
+  uint16_t *tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
+  *tmp = htons( 160 );
+
   this->writepacket( dst );
 
   dst = this->gettempoutbuf();
@@ -1278,9 +1281,10 @@ void projectrtpchannel::senddtmf( void ) {
   dst->setpayloadlength( 4 );
   pl =  dst->getpayload();
   pl[ 0 ] = tosend;
-  pl[ 1 ] = 10; /* end of event & reserved & volume */
-  pl[ 2 ] = 0; /* event duration high */
-  pl[ 3 ] = 160; /* event duration */
+  pl[ 1 ] = volume; /* end of event & reserved & volume */
+  tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
+  *tmp = htons( 320 );
+
   this->writepacket( dst );
 
   dst = this->gettempoutbuf();
@@ -1288,9 +1292,44 @@ void projectrtpchannel::senddtmf( void ) {
   dst->setpayloadlength( 4 );
   pl =  dst->getpayload();
   pl[ 0 ] = tosend;
-  pl[ 1 ] = 0x80 | 10; /* end of event & reserved & volume */
-  pl[ 2 ] = 0; /* event duration high */
-  pl[ 3 ] = 160; /* event duration */
+  pl[ 1 ] = volume; /* end of event & reserved & volume */
+  tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
+  *tmp = htons( 480 );
+
+  this->writepacket( dst );
+
+  dst = this->gettempoutbuf();
+  dst->setpayloadtype( this->rfc2833pt );
+  dst->setmarker();
+  dst->setpayloadlength( 4 );
+  pl =  dst->getpayload();
+  pl[ 0 ] = tosend;
+  pl[ 1 ] = endofevent | volume; /* end of event & reserved & volume */
+  tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
+  *tmp = htons( 640 );
+
+  this->writepacket( dst );
+
+  dst = this->gettempoutbuf();
+  dst->setpayloadtype( this->rfc2833pt );
+  dst->setpayloadlength( 4 );
+  pl =  dst->getpayload();
+  pl[ 0 ] = tosend;
+  pl[ 1 ] = endofevent | volume; /* end of event & reserved & volume */
+  tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
+  *tmp = htons( 640 );
+
+  this->writepacket( dst );
+
+  dst = this->gettempoutbuf();
+  dst->setpayloadtype( this->rfc2833pt );
+  dst->setpayloadlength( 4 );
+  pl =  dst->getpayload();
+  pl[ 0 ] = tosend;
+  pl[ 1 ] = endofevent | volume; /* end of event & reserved & volume */
+  tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
+  *tmp = htons( 640 );
+
   this->writepacket( dst );
 
   this->lastdtmfsn = this->snout;
