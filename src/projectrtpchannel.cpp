@@ -685,20 +685,27 @@ void projectrtpchannel::removeoldrecorders( void ) {
 
       if( rec->requestfinish ) {
         rec->completed = true;
+        rec->maxsincestartpower = 0;
         postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.requested" );
         continue;
       }
 
-      if( rec->finishbelowpower > 0 ) {
-        if( rec->lastpowercalc < rec->finishbelowpower ) {
-          rec->completed = true;
-          postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.belowpower" );
-          continue;
-        }
+      if( rec->lastpowercalc > rec->maxsincestartpower ) {
+        rec->maxsincestartpower = rec->lastpowercalc;
+      }
+
+      if( rec->finishbelowpower > 0 &&
+          rec->maxsincestartpower > rec->finishbelowpower &&
+          rec->lastpowercalc < rec->finishbelowpower ) {
+        rec->completed = true;
+        rec->maxsincestartpower = 0;
+        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.belowpower" );
+        continue;
       }
 
       if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
         rec->completed = true;
+        rec->maxsincestartpower = 0;
         postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.timeout" );
         continue;
       }
