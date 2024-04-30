@@ -53,7 +53,21 @@ Returns the next packet in order - does not modify our structure.
 rtppacket* rtpbuffer::peek( void ) {
   if( nullptr != this->peekedpopped ) return this->peekedpopped;
   uint16_t bufindex = this->outsn % this->buffercount;
-  this->peekedpopped = this->orderedrtpdata.at( bufindex );
+  rtppacket *out = this->orderedrtpdata.at( bufindex );
+
+  if( out == nullptr ) {
+    this->outsn++;
+    return nullptr;
+  }
+
+  if( out->getsequencenumber() != this->outsn ) {
+    this->orderedrtpdata.at( this->outsn % this->buffercount ) = nullptr;
+    this->availablertpdata.push( out );
+    this->badsn++;
+    return nullptr;
+  }
+
+  this->peekedpopped = out;
   return this->peekedpopped;
 }
 
@@ -72,7 +86,7 @@ rtppacket* rtpbuffer::poppeeked( void ) {
     this->availablertpdata.push( out );
   }
 
-  if( out->getsequencenumber() != oldsn ) return nullptr;
+  this->popped++;
   return out;
 }
 
@@ -81,25 +95,9 @@ Returns the next packet in order.
 */
 rtppacket* rtpbuffer::pop( void ) {
   rtppacket *out = this->peek();
-  uint16_t oldsn = this->outsn;
-  this->outsn++;
-
-  this->peekedpopped = nullptr;
   if( nullptr == out ) return nullptr;
+  this->poppeeked();
 
-  uint16_t bufindex = oldsn % this->buffercount;
-  if( nullptr != this->orderedrtpdata.at( bufindex ) ) {
-    this->orderedrtpdata.at( bufindex ) = nullptr;
-    this->availablertpdata.push( out );
-  }
-
-  auto outsn = out->getsequencenumber();
-  if( outsn != oldsn ) {
-    this->badsn++;
-    return nullptr;
-  }
-
-  this->popped++;
   return out;
 }
 
