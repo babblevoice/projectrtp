@@ -60,6 +60,8 @@ void projectchannelmux::mixall( void ) {
       src = chan->inbuff->peek();
       RELEASESPINLOCK( chan->rtpbufferlock );
 
+      if( nullptr == src ) break;
+
       AQUIRESPINLOCK( chan->rtpdtlslock );
       dtlssession::pointer currentdtlssession = chan->rtpdtls;
       RELEASESPINLOCK( chan->rtpdtlslock );
@@ -68,6 +70,11 @@ void projectchannelmux::mixall( void ) {
         if( !currentdtlssession->unprotect( src ) ) {
           chan->receivedpkskip++;
           src = nullptr;
+          
+          AQUIRESPINLOCK( chan->rtpbufferlock );
+          chan->inbuff->poppeeked();
+          RELEASESPINLOCK( chan->rtpbufferlock );
+          break;
         }
       }
 
@@ -107,7 +114,7 @@ void projectchannelmux::mixall( void ) {
 
     if( chan->recv ) {
       AQUIRESPINLOCK( chan->rtpbufferlock );
-      rtppacket *src = chan->inbuff->peek();
+      rtppacket *src = chan->inbuff->peeked();
       RELEASESPINLOCK( chan->rtpbufferlock );
       if( nullptr != src ) {
         this->subtracted -= chan->incodec;
@@ -141,6 +148,8 @@ void projectchannelmux::mix2( void ) {
     src = chan1->inbuff->pop();
     RELEASESPINLOCK( chan1->rtpbufferlock );
 
+    if( nullptr == src ) break;
+
     AQUIRESPINLOCK( chan1->rtpdtlslock );
     dtlssession::pointer currentdtlssession = chan1->rtpdtls;
     RELEASESPINLOCK( chan1->rtpdtlslock );
@@ -149,6 +158,7 @@ void projectchannelmux::mix2( void ) {
       if( !currentdtlssession->unprotect( src ) ) {
         chan1->receivedpkskip++;
         src = nullptr;
+        break;
       }
     }
 
@@ -162,6 +172,8 @@ void projectchannelmux::mix2( void ) {
     src = chan2->inbuff->pop();
     RELEASESPINLOCK( chan2->rtpbufferlock );
 
+    if( nullptr == src ) break;
+
     AQUIRESPINLOCK( chan2->rtpdtlslock );
     dtlssession::pointer currentdtlssession = chan2->rtpdtls;
     RELEASESPINLOCK( chan2->rtpdtlslock );
@@ -170,6 +182,7 @@ void projectchannelmux::mix2( void ) {
       if( !currentdtlssession->unprotect( src ) ) {
         chan2->receivedpkskip++;
         src = nullptr;
+        break;
       }
     }
 
