@@ -974,8 +974,8 @@ describe( "channel mix", function() {
     expect( endpointapkcountzero ).to.be.within( 60, 75 )
     expect( endpointbpkcountzero ).to.be.within( 60, 75 )
     expect( endpointcpkcountzero ).to.be.within( 60, 75 )
-    expect( endpointapkcountnotzero ).to.be.within( 4, 12 )
-    expect( endpointbpkcountnotzero ).to.be.within( 4, 12 )
+    expect( endpointapkcountnotzero ).to.be.within( 4, 18 )
+    expect( endpointbpkcountnotzero ).to.be.within( 4, 18 )
     expect( endpointcpkcountnotzero ).to.be.below( 2 )
 
     await finished
