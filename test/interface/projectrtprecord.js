@@ -67,11 +67,13 @@ describe( "record", function() {
     this.timeout( 1500 )
     this.slow( 1200 )
 
+    let endclose = 0
     server.bind()
     server.on( "listening", async function() {
 
       channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) {
+          endclose = Date.now()
           server.close()
         }
       } )
@@ -89,6 +91,7 @@ describe( "record", function() {
     } )
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
+    const startclose = Date.now()
     channel.close()
     await new Promise( resolve => { server.on( "close", resolve ) } )
 
@@ -102,6 +105,7 @@ describe( "record", function() {
     expect( wavinfo.chunksize ).to.be.within( 28000, 33000 )
     expect( wavinfo.fmtchunksize ).to.equal( 16 )
     expect( wavinfo.subchunksize ).to.be.within( 28000, 33000 )
+    expect( endclose - startclose ).to.be.below( 100 )
 
     const ourfile = await fspromises.open( "/tmp/ourrecording.wav", "r" )
     const buffer = Buffer.alloc( 28204 )
