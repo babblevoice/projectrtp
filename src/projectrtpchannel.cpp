@@ -347,7 +347,8 @@ void projectrtpchannel::doopen( void ) {
       boost::asio::ip::udp::v4(), this->port ), ec );
 
   if( ec ) {
-    this->badsocketopen( "failed to bind rtp socket" );
+    auto err = std::string( "failed to bind rtp socket: " ) + std::to_string( this->port ) + std::string( ": " ) + ec.message();
+    this->badsocketopen( err.c_str() );
     return;
   }
 
@@ -362,7 +363,8 @@ void projectrtpchannel::doopen( void ) {
       boost::asio::ip::udp::v4(), this->port + 1 ), ec );
 
   if( ec ) {
-    this->badsocketopen( "failed to bind rtcp socket" );
+    auto err = std::string( "failed to bind rtcp socket: " ) + std::to_string( this->port + 1 ) + std::string( ": " ) + ec.message();
+    this->badsocketopen( err.c_str() );
     return;
   }
 
@@ -2366,10 +2368,12 @@ void getchannelstats( napi_env env, napi_value &result ) {
 void initrtpchannel( napi_env env, napi_value &result, int32_t startport, int32_t endport ) {
   napi_value ccreate;
 
+  AQUIRESPINLOCK( availableportslock );
   while(!availableports.empty()) availableports.pop();
   for( int i = (int) startport; i < (int) endport; i = i + 2 ) {
     availableports.push( i );
   }
+  RELEASESPINLOCK( availableportslock );
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelcreate, nullptr, &ccreate ) ) return;
   if( napi_ok != napi_set_named_property( env, result, "openchannel", ccreate ) ) return;
