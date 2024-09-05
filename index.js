@@ -31,13 +31,13 @@ function gencerts() {
     const combined = keypath + "dtls-srtp.pem"
 
     const openssl = spawnSync( "openssl", [ "genrsa", "-out", serverkey, "4096" ] )
-    if( 0 !== openssl.status ) throw "Failed to genrsa: " + openssl.status
+    if( 0 !== openssl.status ) throw new Error( "Failed to genrsa: " + openssl.status )
 
     const request = spawnSync( "openssl", [ "req", "-new", "-key", serverkey , "-out", servercsr, "-subj", "/C=GB/CN=projectrtp" ] )
-    if( 0 !== request.status ) throw "Failed to generate csr: " + request.status
+    if( 0 !== request.status ) throw new Error( "Failed to generate csr: " + request.status )
 
     const sign = spawnSync( "openssl", [ "x509", "-req", "-in", servercsr, "-signkey", serverkey, "-out", servercert ] )
-    if( 0 !== sign.status ) throw "Failed to sign key: " + sign.status
+    if( 0 !== sign.status ) throw new Error( "Failed to sign key: " + sign.status )
 
     const serverkeydata = fs.readFileSync( serverkey )
     const servercertdata = fs.readFileSync( servercert )
@@ -407,9 +407,9 @@ class projectrtp {
   run( params ) {
 
     if( "win32" == process.platform && "x64" == process.arch ) {
-      throw "Platform not currently supported"
+      throw new Error( "Platform not currently supported" )
     } else if( "win32" == process.platform && "ia32" == process.arch ) {
-      throw "Platform not currently supported"
+      throw new Error( "Platform not currently supported" )
     }
 
     if( actualprojectrtp ) return
@@ -445,7 +445,6 @@ class projectrtp {
     if( !params.forcelocal && server.interface.get() ) {
       return server.interface.get().openchannel( params, cb )
     } else {
-      /* use local */
       const chan = actualprojectrtp.openchannel( params, ( d ) => {
         try{
           if( chan.em ) {
@@ -471,7 +470,7 @@ class projectrtp {
 
       /* ensure we are identicle to the node version of this object */
       chan.openchannel = this.openchannel.bind( this )
-      
+
       return chan
     }
   }
