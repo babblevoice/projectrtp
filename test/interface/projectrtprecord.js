@@ -312,8 +312,8 @@ describe( "record", function() {
 
       expect( channel.record( {
         "file": "/tmp/ourpowerrecording.wav",
-        "startabovepower": 250,
-        "finishbelowpower": 200,
+        "startabovepower": 40,
+        "finishbelowpower": 80,
         "minduration": 2000,
         "maxduration": 15000,
         "poweraveragepackets": 20
@@ -382,8 +382,8 @@ describe( "record", function() {
 
       expect( channel.record( {
         "file": "/tmp/ourtimeoutpowerrecording.wav",
-        "startabovepower": 250,
-        "finishbelowpower": 200,
+        "startabovepower": 40,
+        "finishbelowpower": 80,
         "minduration": 200,
         "maxduration": 500,
         "poweraveragepackets": 50
@@ -449,8 +449,8 @@ describe( "record", function() {
 
       expect( channel.record( {
         "file": "/tmp/dualrecordingpower.wav",
-        "startabovepower": 200,
-        "finishbelowpower": 180,
+        "startabovepower": 40,
+        "finishbelowpower": 200,
         "minduration": 200,
         "maxduration": 3500,
         "poweraveragepackets": 10 /* faster response */
@@ -470,7 +470,7 @@ describe( "record", function() {
     server.close()
 
     let stats = fs.statSync( "/tmp/dualrecordingpower.wav" )
-    expect( stats.size ).to.be.within( 40000, 52000 )
+    expect( stats.size ).to.be.within( 30000 , 40000 )
 
     stats = fs.statSync( "/tmp/dualrecording.wav" )
     expect( stats.size ).to.be.within( 110000, 190000 )
