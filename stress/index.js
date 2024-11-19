@@ -46,6 +46,18 @@ const run = async () => {
     await node.listen( projectrtp, "127.0.0.1", 9002 )
   } else console.log( "Mode: server as listener" )
 
+  let currentstatsquery = 0
+  const intervaletimers = [
+    setInterval( () => {
+      currentstatsquery++
+      const prtpstats = projectrtp.stats()
+      currentstatsquery--
+    }, 100 ),
+    setInterval( () => {
+      if( currentstatsquery > 3 ) utils.log( "Problem with stats not completing" )
+    }, 100 )
+  ]
+
   while ( rununtil > Math.floor( Date.now() / 1000 ) ) {
     if( utils.currentchannelcount() < maxnumberofsessions ) {
       scenarios[ utils.between( 0, scenarios.length ) ]( utils.between( minmscalllength, maxmscalllength ) )
@@ -56,6 +68,9 @@ const run = async () => {
 
   /* It is safe to call shutdown before we are complete - it will just shutdown after all the work is done */
   projectrtp.shutdown()
+
+  clearInterval( intervaletimers[ 0 ] )
+  clearInterval( intervaletimers[ 1 ] )
 }
 
 run()
