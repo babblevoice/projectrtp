@@ -50,8 +50,19 @@ private:
   std::shared_ptr< void > d; // Copied from Request
 };
 
-/* useful macros for use with std::atomic_bool */
-#define AQUIRESPINLOCK( l ) while( l.exchange( true, std::memory_order_acquire ) )
-#define RELEASESPINLOCK( l ) l.store( false, std::memory_order_release )
+/* Use spin locks for effiencent protection and ensure unlock */
+struct SpinLockGuard {
+  std::atomic_bool& lock;
+
+  SpinLockGuard( std::atomic_bool& l ) : lock( l ) {
+    while( lock.exchange( true, std::memory_order_acquire ) ) {
+      // Spin until the lock is acquired
+    }
+  }
+
+  ~SpinLockGuard() {
+    lock.store(false, std::memory_order_release);
+  }
+};
 
 #endif /* PROJECTRTPGLOBALS_H */
