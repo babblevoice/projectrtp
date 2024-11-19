@@ -26,10 +26,10 @@ std::atomic< std::uint32_t > channelscreated{ 0 };
  * Get the next available port.
  */
 unsigned short getavailableport( void ) {
-  AQUIRESPINLOCK( availableportslock );
+  SpinLockGuard guard( availableportslock );
+
   auto ourport = availableports.front();
   availableports.pop();
-  RELEASESPINLOCK( availableportslock );
 
   channelscreated.fetch_add( 1 );
 
@@ -41,11 +41,8 @@ unsigned short getavailableport( void ) {
  * @returns { size_t }
  */
 auto getvailableportsize() {
-  AQUIRESPINLOCK( availableportslock );
-  auto availableportssize = availableports.size();
-  RELEASESPINLOCK( availableportslock );
-
-  return availableportssize;
+  SpinLockGuard guard( availableportslock );
+  return availableports.size();
 }
 
 /**
@@ -55,10 +52,10 @@ auto getvailableportsize() {
 void projectrtpchannel::returnavailableport( void ) {
 
   if( 0 == this->port ) return;
-  AQUIRESPINLOCK( availableportslock );
+  SpinLockGuard guard( availableportslock );
+
   availableports.push( this->port );
   this->port = 0;
-  RELEASESPINLOCK( availableportslock );
 
   channelscreated.fetch_sub( 1 );
 }
@@ -230,9 +227,10 @@ void projectrtpchannel::remote( std::string address,
         }
       } );
 
-      AQUIRESPINLOCK( this->rtpdtlslock );
-      this->rtpdtls = newsession;
-      RELEASESPINLOCK( this->rtpdtlslock );
+      {
+        SpinLockGuard guard( this->rtpdtlslock );
+        this->rtpdtls = newsession;
+      }
     }
     
     this->receivedrtp = false;
@@ -426,15 +424,17 @@ void projectrtpchannel::doclose( void ) {
     postdatabacktojsfromthread( shared_from_this(), "play", "end", "channelclosed" );
   }
 
-  AQUIRESPINLOCK( this->newplaylock );
-  this->player = nullptr;
-  this->newplaydef = nullptr;
-  RELEASESPINLOCK( this->newplaylock );
+  {
+    SpinLockGuard guard( this->newplaylock );
+    this->player = nullptr;
+    this->newplaydef = nullptr;
+  }
 
   /* close our session if we have one */
-  AQUIRESPINLOCK( this->rtpdtlslock );
-  this->rtpdtls = nullptr;
-  RELEASESPINLOCK( this->rtpdtlslock );
+  {
+    SpinLockGuard dtlsguard( this->rtpdtlslock );
+    this->rtpdtls = nullptr;
+  }
 
   /* close up any remaining recorders */
   for( auto& rec: this->recorders ) {
@@ -499,7 +499,7 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   if( this->mixing ) {
     this->setnexttick();
     return;
-  };
+  }
 
   this->startticktimer();
 
@@ -517,14 +517,16 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
 
   rtppacket *src;
   do {
-    AQUIRESPINLOCK( this->rtpbufferlock );
-    src = this->inbuff->pop();
-    RELEASESPINLOCK( this->rtpbufferlock );
+    {
+      SpinLockGuard guard( this->rtpbufferlock );
+      src = this->inbuff->pop();
+    }
 
-    AQUIRESPINLOCK( this->rtpdtlslock );
-    dtlssession::pointer currentdtlssession = this->rtpdtls;
-    RELEASESPINLOCK( this->rtpdtlslock );
-
+    dtlssession::pointer currentdtlssession;
+    {
+      SpinLockGuard guarddtls( this->rtpdtlslock );
+      currentdtlssession = this->rtpdtls;
+    }
 
     if( nullptr != currentdtlssession &&
         !currentdtlssession->rtpdtlshandshakeing ) {
@@ -545,19 +547,20 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   {
     bool playerreplaced = false;
     bool playernew = false;
-    AQUIRESPINLOCK( this->newplaylock );
-    if( nullptr != this->newplaydef ) {
-      this->doecho = false;
+    {
+      SpinLockGuard guard( this->newplaylock );
+      if( nullptr != this->newplaydef ) {
+        this->doecho = false;
 
-      if( nullptr != this->player ) {
-        playerreplaced = true;
+        if( nullptr != this->player ) {
+          playerreplaced = true;
+        }
+
+        this->player = this->newplaydef;
+        this->newplaydef = nullptr;
+        playernew = true;
       }
-
-      this->player = this->newplaydef;
-      this->newplaydef = nullptr;
-      playernew = true;
     }
-    RELEASESPINLOCK( this->newplaylock );
 
     if( playerreplaced ) {
       postdatabacktojsfromthread( shared_from_this(), "play", "end", "replaced" );
@@ -625,9 +628,8 @@ void projectrtpchannel::setnexttick( void ) {
 }
 
 void projectrtpchannel::requestplay( soundsoup::pointer newdef ) {
-  AQUIRESPINLOCK( this->newplaylock );
+  SpinLockGuard guard( this->newplaylock );
   this->newplaydef = newdef;
-  RELEASESPINLOCK( this->newplaylock );
 }
 
 /*
@@ -635,9 +637,8 @@ Post a request to record (or modify a param of a record). This function is typic
 called from a control thread (i.e. node).
 */
 void projectrtpchannel::requestrecord( channelrecorder::pointer rec ) {
-  AQUIRESPINLOCK( this->newrecorderslock );
+  SpinLockGuard guard( this->newrecorderslock );
   this->newrecorders.push_back( rec );
-  RELEASESPINLOCK( this->newrecorderslock );
 }
 
 /*
@@ -646,10 +647,9 @@ to requestrecord.
 */
 void projectrtpchannel::checkfornewrecorders( void ) {
   channelrecorder::pointer rec;
-  AQUIRESPINLOCK( this->newrecorderslock );
+  SpinLockGuard guard( this->newrecorderslock );
 
   for ( auto const& newrec : this->newrecorders ) {
-
     for( auto& currentrec: this->recorders ) {
       if( currentrec->file == newrec->file ) {
         currentrec->pause = newrec->pause;
@@ -669,8 +669,6 @@ endofwhileloop:;
   }
 
   this->newrecorders.clear();
-
-  RELEASESPINLOCK( this->newrecorderslock );
 }
 
 void projectrtpchannel::removeoldrecorders( void ) {
@@ -832,17 +830,14 @@ void projectrtpchannel::writerecordings( void ) {
 }
 
 bool projectrtpchannel::dtlsnegotiate( void ) {
+  SpinLockGuard guard( this->rtpdtlslock );
 
-  AQUIRESPINLOCK( this->rtpdtlslock );
   dtlssession::pointer oursession = this->rtpdtls;
-  RELEASESPINLOCK( this->rtpdtlslock );
 
   if( nullptr == oursession ) return false;
   if( !oursession->rtpdtlshandshakeing ) return false;
 
-  AQUIRESPINLOCK( this->rtpdtlslock );
   auto dtlsstate = oursession->handshake();
-  RELEASESPINLOCK( this->rtpdtlslock );
 
   if( GNUTLS_E_SUCCESS != dtlsstate && 0 != gnutls_error_is_fatal( dtlsstate ) ) {
     oursession->bye();
@@ -929,9 +924,12 @@ void projectrtpchannel::readsomertp( void ) {
   if( !this->active || this->_requestclose ) return;
 
   /* Grab a buffer */
-  AQUIRESPINLOCK( this->rtpbufferlock );
-  rtppacket* buf = this->inbuff->reserve();
-  RELEASESPINLOCK( this->rtpbufferlock );
+  rtppacket* buf;
+  {
+    SpinLockGuard guard( this->rtpbufferlock );
+    buf = this->inbuff->reserve();
+  }
+  
 
   if( nullptr == buf ) {
     fprintf( stderr, "Error no buffer\n" );
@@ -954,15 +952,19 @@ void projectrtpchannel::readsomertp( void ) {
         if( this->handlestun( buf->pk, bytesrecvd ) )
           goto readsomemore;
 
-        AQUIRESPINLOCK( this->rtpdtlslock );
-        dtlssession::pointer currentdtlssession = this->rtpdtls;
-        RELEASESPINLOCK( this->rtpdtlslock );
+        dtlssession::pointer currentdtlssession;
+        {
+          SpinLockGuard guard( this->rtpdtlslock );
+          currentdtlssession = this->rtpdtls;
+        }
 
         if( nullptr != currentdtlssession &&
             currentdtlssession->rtpdtlshandshakeing ) {
-          AQUIRESPINLOCK( this->rtpdtlslock );
-          currentdtlssession->write( buf->pk, bytesrecvd );
-          RELEASESPINLOCK( this->rtpdtlslock );
+          {
+            SpinLockGuard guard( this->rtpdtlslock );
+            currentdtlssession->write( buf->pk, bytesrecvd );
+          }
+
           this->dtlsnegotiate();
           goto readsomemore;
         }
@@ -1010,9 +1012,10 @@ void projectrtpchannel::readsomertp( void ) {
           buf->setpayloadtype( RFC2833PAYLOADTYPE );
         }
 
-        AQUIRESPINLOCK( this->rtpbufferlock );
-        this->inbuff->push();
-        RELEASESPINLOCK( this->rtpbufferlock );
+        {
+          SpinLockGuard guard( this->rtpbufferlock );
+          this->inbuff->push();
+        }
       }
 
 readsomemore:
@@ -1079,9 +1082,11 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
 
   if( !this->active ) return;
 
-  AQUIRESPINLOCK( this->rtpdtlslock );
-  dtlssession::pointer currentdtlssession = this->rtpdtls;
-  RELEASESPINLOCK( this->rtpdtlslock );
+  dtlssession::pointer currentdtlssession;
+  {
+    SpinLockGuard guard( this->rtpdtlslock );
+    currentdtlssession = this->rtpdtls;
+  }
 
   if( nullptr != currentdtlssession &&
       currentdtlssession->rtpdtlshandshakeing ) {
@@ -1143,7 +1148,7 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
     return true;
   }
 
-  AQUIRESPINLOCK( this->mixerlock );
+  SpinLockGuard guard( this->mixerlock );
 
   if( nullptr == this->mixer && nullptr != other->mixer ) {
     this->mixer = other->mixer;
@@ -1162,12 +1167,9 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
     this->mixer->go();
   } else {
     /* If we get here this and other are already mixing and should be cleaned up first */
-    RELEASESPINLOCK( this->mixerlock );
     postdatabacktojsfromthread( shared_from_this(), "mix", "busy" );
     return false;
   }
-
-  RELEASESPINLOCK( this->mixerlock );
 
   postdatabacktojsfromthread( shared_from_this(), "mix", "start" );
   postdatabacktojsfromthread( other, "mix", "start" );
@@ -1181,11 +1183,9 @@ Add the other to a mixer - both channels have access to the same mixer.
 n way relationship. Adds to queue for when our main thread calls into us.
 */
 bool projectrtpchannel::unmix( void ) {
+  SpinLockGuard guard( this->mixerlock );
 
-  AQUIRESPINLOCK( this->mixerlock );
   if( nullptr != this->mixer ) this->removemixer = true;
-  RELEASESPINLOCK( this->mixerlock );
-
   return true;
 }
 
@@ -1196,9 +1196,10 @@ bool projectrtpchannel::unmix( void ) {
 void projectrtpchannel::dounmix( void ) {
   this->mixing = false;
   this->removemixer = false;
-  AQUIRESPINLOCK( this->mixerlock );
+
+  SpinLockGuard guard( this->mixerlock );
+
   this->mixer = nullptr;
-  RELEASESPINLOCK( this->mixerlock );
 
   postdatabacktojsfromthread( shared_from_this(), "mix", "finished" );
 
@@ -1212,9 +1213,8 @@ void projectrtpchannel::dounmix( void ) {
 Queue digits to send as RFC 2833.
 */
 void projectrtpchannel::dtmf( std::string digits ) {
-  AQUIRESPINLOCK( this->queuddigitslock );
+  SpinLockGuard guard( this->queuddigitslock );
   this->queueddigits += digits;
-  RELEASESPINLOCK( this->queuddigitslock );
 }
 
 /*
@@ -1227,12 +1227,13 @@ void projectrtpchannel::senddtmf( void ) {
   }
 
   uint8_t tosend = 0;
-  AQUIRESPINLOCK( this->queuddigitslock );
-  if( this->queueddigits.size() > 0 ) {
-    tosend = this->queueddigits[ 0 ];
-    this->queueddigits.erase( this->queueddigits.begin() );
+  {
+    SpinLockGuard guard( this->queuddigitslock );
+    if( this->queueddigits.size() > 0 ) {
+      tosend = this->queueddigits[ 0 ];
+      this->queueddigits.erase( this->queueddigits.begin() );
+    }
   }
-  RELEASESPINLOCK( this->queuddigitslock );
 
   if( 0 == tosend ) {
     return;
@@ -2368,12 +2369,14 @@ void getchannelstats( napi_env env, napi_value &result ) {
 void initrtpchannel( napi_env env, napi_value &result, int32_t startport, int32_t endport ) {
   napi_value ccreate;
 
-  AQUIRESPINLOCK( availableportslock );
-  while(!availableports.empty()) availableports.pop();
-  for( int i = (int) startport; i < (int) endport; i = i + 2 ) {
-    availableports.push( i );
+  {
+    SpinLockGuard guard( availableportslock );
+
+    while(!availableports.empty()) availableports.pop();
+    for( int i = (int) startport; i < (int) endport; i = i + 2 ) {
+      availableports.push( i );
+    }
   }
-  RELEASESPINLOCK( availableportslock );
 
   if( napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelcreate, nullptr, &ccreate ) ) return;
   if( napi_ok != napi_set_named_property( env, result, "openchannel", ccreate ) ) return;

@@ -56,24 +56,30 @@ void projectchannelmux::mixall( void ) {
 
     rtppacket *src;
     while( true ) {
-      AQUIRESPINLOCK( chan->rtpbufferlock );
-      src = chan->inbuff->peek();
-      RELEASESPINLOCK( chan->rtpbufferlock );
+      {
+        SpinLockGuard guard( chan->rtpbufferlock );
+        src = chan->inbuff->peek();
+      }
 
       if( nullptr == src ) break;
 
-      AQUIRESPINLOCK( chan->rtpdtlslock );
-      dtlssession::pointer currentdtlssession = chan->rtpdtls;
-      RELEASESPINLOCK( chan->rtpdtlslock );
+      dtlssession::pointer currentdtlssession;
+      {
+        SpinLockGuard guard( chan->rtpdtlslock );
+        currentdtlssession = chan->rtpdtls;
+      }
+
       if( nullptr != currentdtlssession &&
           !currentdtlssession->rtpdtlshandshakeing ) {
         if( !currentdtlssession->unprotect( src ) ) {
           chan->receivedpkskip++;
           src = nullptr;
-          
-          AQUIRESPINLOCK( chan->rtpbufferlock );
-          chan->inbuff->poppeeked();
-          RELEASESPINLOCK( chan->rtpbufferlock );
+
+          {
+            SpinLockGuard guard( chan->rtpbufferlock );
+            chan->inbuff->poppeeked();
+          }
+
           break;
         }
       }
@@ -86,9 +92,10 @@ void projectchannelmux::mixall( void ) {
         }
       }
       /* remove the DTMF packet */
-      AQUIRESPINLOCK( chan->rtpbufferlock );
-      chan->inbuff->poppeeked();
-      RELEASESPINLOCK( chan->rtpbufferlock );
+      {
+        SpinLockGuard guard( chan->rtpbufferlock );
+        chan->inbuff->poppeeked();
+      }
     }
 
     if( nullptr != src ) {
@@ -101,9 +108,8 @@ void projectchannelmux::mixall( void ) {
   /* Now we subtract this channel to send to this channel. */
   for( auto& chan: this->channels ) {
     if( !chan->send ) {
-      AQUIRESPINLOCK( chan->rtpbufferlock );
+      SpinLockGuard guard( chan->rtpbufferlock );
       chan->inbuff->poppeeked();
-      RELEASESPINLOCK( chan->rtpbufferlock );
       continue;
     }
 
@@ -113,15 +119,20 @@ void projectchannelmux::mixall( void ) {
     this->subtracted.copy( this->added );
 
     if( chan->recv ) {
-      AQUIRESPINLOCK( chan->rtpbufferlock );
-      rtppacket *src = chan->inbuff->peeked();
-      RELEASESPINLOCK( chan->rtpbufferlock );
+      rtppacket *src;
+      {
+        SpinLockGuard guard( chan->rtpbufferlock );
+        src = chan->inbuff->peeked();
+      }
+
       if( nullptr != src ) {
         this->subtracted -= chan->incodec;
       }
-      AQUIRESPINLOCK( chan->rtpbufferlock );
-      chan->inbuff->poppeeked();
-      RELEASESPINLOCK( chan->rtpbufferlock );
+
+      {
+        SpinLockGuard guard( chan->rtpbufferlock );
+        chan->inbuff->poppeeked();
+      }
     }
 
     chan->outcodec << codecx::next;
@@ -144,15 +155,20 @@ void projectchannelmux::mix2( void ) {
   rtppacket *src;
 
   while( true ) {
-    AQUIRESPINLOCK( chan1->rtpbufferlock );
-    src = chan1->inbuff->pop();
-    RELEASESPINLOCK( chan1->rtpbufferlock );
+    {
+      SpinLockGuard guard( chan1->rtpbufferlock );
+      src = chan1->inbuff->pop();
+    }
 
     if( nullptr == src ) break;
 
-    AQUIRESPINLOCK( chan1->rtpdtlslock );
-    dtlssession::pointer currentdtlssession = chan1->rtpdtls;
-    RELEASESPINLOCK( chan1->rtpdtlslock );
+    dtlssession::pointer currentdtlssession;
+    {
+      SpinLockGuard guard( chan1->rtpdtlslock );
+      currentdtlssession = chan1->rtpdtls;
+    }
+
+
     if( nullptr != currentdtlssession &&
         !currentdtlssession->rtpdtlshandshakeing ) {
       if( !currentdtlssession->unprotect( src ) ) {
@@ -168,15 +184,20 @@ void projectchannelmux::mix2( void ) {
   this->postrtpdata( chan1, chan2, src );
 
   while( true ) {
-    AQUIRESPINLOCK( chan2->rtpbufferlock );
-    src = chan2->inbuff->pop();
-    RELEASESPINLOCK( chan2->rtpbufferlock );
+    {
+      SpinLockGuard guard( chan2->rtpbufferlock );
+      src = chan2->inbuff->pop();
+    }
 
     if( nullptr == src ) break;
 
-    AQUIRESPINLOCK( chan2->rtpdtlslock );
-    dtlssession::pointer currentdtlssession = chan2->rtpdtls;
-    RELEASESPINLOCK( chan2->rtpdtlslock );
+
+    dtlssession::pointer currentdtlssession;    
+    {
+      SpinLockGuard guard( chan2->rtpdtlslock );
+      currentdtlssession = chan2->rtpdtls;
+    }
+
     if( nullptr != currentdtlssession &&
         !currentdtlssession->rtpdtlshandshakeing ) {
       if( !currentdtlssession->unprotect( src ) ) {
@@ -299,8 +320,7 @@ static bool underlyingpointercmp( projectrtpchannelptr l, projectrtpchannelptr r
 Check for new channels to add to the mix in our own thread.
 */
 void projectchannelmux::checkfornewmixes( void ) {
-
-  AQUIRESPINLOCK( this->newchannelslock );
+  SpinLockGuard guard( this->newchannelslock );
 
   for ( auto const& newchan : this->newchannels ) {
     this->channels.push_back( newchan );
@@ -309,24 +329,22 @@ void projectchannelmux::checkfornewmixes( void ) {
 
   this->channels.sort( underlyingpointercmp );
   this->channels.unique( underlyingpointerequal );
-
-  RELEASESPINLOCK( this->newchannelslock );
 }
 
 void projectchannelmux::addchannel( projectrtpchannelptr chan ) {
-  AQUIRESPINLOCK( this->newchannelslock );
+  SpinLockGuard guard( this->newchannelslock );
+
   chan->mixing = true;
   this->newchannels.push_back( chan );
-  RELEASESPINLOCK( this->newchannelslock );
 }
 
 void projectchannelmux::addchannels( projectrtpchannelptr chana, projectrtpchannelptr chanb ) {
-  AQUIRESPINLOCK( this->newchannelslock );
+  SpinLockGuard guard( this->newchannelslock );
+
   chana->mixing = true;
   chanb->mixing = true;
   this->newchannels.push_back( chana );
   this->newchannels.push_back( chanb );
-  RELEASESPINLOCK( this->newchannelslock );
 }
 
 /*
