@@ -1,7 +1,7 @@
 
 # docker build . -t <your username>/projectrtp
 # I have tied this to version alpine 3.16 as 3.17 has an exception symbol dynamic linking issue.
-FROM alpine:3.16 as builder
+FROM alpine:3.20 AS builder
 
 
 WORKDIR /usr/src/
@@ -20,7 +20,7 @@ COPY . .
 RUN npm ci --no-optional --production;\
     rm -fr src/build/Release/obj.target
 
-FROM alpine:3.16 as app
+FROM alpine:3.20 AS app
 
 RUN apk add --no-cache \
     spandsp tiff gnutls libsrtp libc6-compat openssl ca-certificates nodejs npm
