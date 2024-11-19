@@ -680,7 +680,6 @@ describe( "rtpproxy server", function() {
     const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
     const ournode = await prtp.node.connect( ourport, "127.0.0.1" )
 
-
     const chnl = await prtp.openchannel()
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
     await chnl.close()
