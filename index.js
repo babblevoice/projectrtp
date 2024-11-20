@@ -10,7 +10,7 @@ const { spawnSync } = require( "child_process" )
 
 let localaddress = "127.0.0.1"
 let privateaddress = "127.0.0.1"
-const bin = "./src/build/Release/projectrtp"
+const bin = "./build/Release/projectrtp"
 
 
 /**
