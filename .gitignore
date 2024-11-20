@@ -1,6 +1,6 @@
 # Config
 config/
-src/build
+build
 _tmpbuild/
 
 .vscode/
