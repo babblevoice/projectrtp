@@ -14,14 +14,14 @@
     "check": "tsc --checkJs --noEmit --target es6 --module commonjs --skipLibCheck *.js test/**/*.js; ./node_modules/eslint/bin/eslint.js ./",
     "docs": "jsdoc -c jsdoc.conf.json ./README.md",
     "stress": "node stress/index.js",
-    "build:dev": "cd src; node-gyp build --debug",
-    "build": "cd src; node-gyp build",
-    "configure:dev": "cd src; node-gyp configure --debug",
-    "configure": "cd src; node-gyp configure",
-    "rebuild:dev": "cd src; node-gyp configure --debug; node-gyp rebuild --debug",
-    "rebuild": "cd src; node-gyp configure; node-gyp rebuild",
-    "clean": "cd src; node-gyp clean",
-    "install": "npm run rebuild"
+    "configure:dev": "node-gyp configure --debug",
+    "configure": "node-gyp configure",
+    "rebuild:dev": "node-gyp configure --debug; node-gyp rebuild --debug",
+    "clean": "node-gyp clean",
+    "build:dev": "node-gyp configure build --debug",
+    "build": "node-gyp configure build",
+    "rebuild": "node-gyp rebuild",
+    "install": "node-gyp rebuild"
   },
   "repository": {
     "type": "git",
@@ -34,6 +34,7 @@
   },
   "homepage": "https://github.com/babblevoice/projectrtp#readme",
   "dependencies": {
+    "node-addon-api": "^8.2.2",
     "uuid": "^9.0.0"
   },
   "keywords": [
