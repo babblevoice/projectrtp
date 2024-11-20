@@ -28,12 +28,6 @@ static std::atomic_bool warningissued( false );
 int32_t startport = 10000;
 int32_t endport = 20000;
 
-void boost::throw_exception( std::exception const & e ) {
-  std::string err = boost::diagnostic_information( e );
-  fprintf( stderr, "%s", err.c_str() );
-  exit( EXIT_FAILURE );
-}
-
 /* our work queue requires some work to not exit */
 static ourhighrestimer periodictimer( workercontext );
 
@@ -203,33 +197,35 @@ void initserver( napi_env env, napi_value &result ) {
   if( napi_ok != napi_set_named_property( env, result, "stats", cstats ) ) return;
 }
 
-NAPI_MODULE_INIT() {
-  napi_value result;
+/* Initialize the module */
+napi_value initprtp(napi_env env, napi_value exports) {
+    std::atomic_bool test;
+    if (!test.is_lock_free()) {
+        fprintf(stderr, "Warning - performance will be poor as atomic variables are not available\n");
+    }
 
-  std::atomic_bool test;
-  if( !test.is_lock_free() ) {
-    fprintf( stderr, "Warning - performance will be poor as atomic variables are not available\n" );
-  }
+    srand(time(NULL));
 
-  srand( time( NULL ) );
+    /* Initialize DTLS or other dependencies */
+    dtlsinit();
 
-  dtlsinit();
+    /* Initialize the exported module object */
+    initserver(env, exports);
+    initrtpbuffer(env, exports);
+    initrtpchannel(env, exports, startport, endport);
+    initrtpsoundfile(env, exports);
+    initrtpcodecx(env, exports);
+    initfilter(env, exports);
+    inittonegen(env, exports);
+    initsrtp(env, exports);
 
-  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+    /* Generate G.711 conversion data */
+    gen711convertdata();
 
-  /* Init our modules */
-  initserver( env, result );
-  initrtpbuffer( env, result );
-  initrtpchannel( env, result, startport, endport );
-  initrtpsoundfile( env, result );
-  initrtpcodecx( env, result );
-  initfilter( env, result );
-  inittonegen( env, result );
-  initsrtp( env, result );
-
-  gen711convertdata();
-
-  return result;
+    return exports;
 }
+
+/* Register the module */
+NAPI_MODULE(NODE_GYP_MODULE_NAME, initprtp)
 
 #endif /* NODE_MODULE */
