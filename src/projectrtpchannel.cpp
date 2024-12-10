@@ -1265,7 +1265,7 @@ void projectrtpchannel::senddtmf( void ) {
     return;
   }
 
-  const char volume = 15;
+  const char volume = 10;
   const char endofevent = 0x80;
 
   rtppacket *dst = this->gettempoutbuf();
