@@ -1148,28 +1148,41 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
     return true;
   }
 
-  SpinLockGuard guard( this->mixerlock );
+  {
+    SpinLockGuard guard( this->mixerlock );
 
-  if( nullptr == this->mixer && nullptr != other->mixer ) {
-    this->mixer = other->mixer;
-    this->mixer->addchannel( shared_from_this() );
+    if( nullptr == this->mixer && nullptr != other->mixer ) {
+      this->mixer = other->mixer;
+      this->mixer->addchannel( shared_from_this() );
 
-  } else if ( nullptr != this->mixer && nullptr == other->mixer ) {
-    other->mixer = this->mixer;
-    this->mixer->addchannel( other );
+    } else if ( nullptr != this->mixer && nullptr == other->mixer ) {
+      other->mixer = this->mixer;
+      this->mixer->addchannel( other );
 
-  } else if( nullptr == this->mixer && nullptr == other->mixer  ) {
-    this->mixer = projectchannelmux::create( workercontext );
-    other->mixer = this->mixer;
+    } else if( nullptr == this->mixer && nullptr == other->mixer  ) {
+      this->mixer = projectchannelmux::create( workercontext );
+      other->mixer = this->mixer;
 
-    this->mixer->addchannels( shared_from_this(), other );
+      this->mixer->addchannels( shared_from_this(), other );
 
-    this->mixer->go();
-  } else {
-    /* If we get here this and other are already mixing and should be cleaned up first */
-    postdatabacktojsfromthread( shared_from_this(), "mix", "busy" );
-    return false;
+      this->mixer->go();
+    } else {
+      /* If we get here this and other are already mixing and should be cleaned up first */
+      postdatabacktojsfromthread( shared_from_this(), "mix", "busy" );
+      return false;
+    }
   }
+
+  {
+    SpinLockGuard guard( this->newplaylock );
+    if( nullptr != this->player ) {
+      postdatabacktojsfromthread( shared_from_this(), "play", "end", "channelmixing" );
+    }
+
+    this->newplaydef = nullptr;
+    this->player = nullptr;
+  }
+
 
   postdatabacktojsfromthread( shared_from_this(), "mix", "start" );
   postdatabacktojsfromthread( other, "mix", "start" );
