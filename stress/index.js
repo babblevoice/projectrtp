@@ -14,6 +14,7 @@ scenarios.push( require( "./echodualrecordpower.scenario.js" ) )
 scenarios.push( require( "./echodualrecordpausestop.scenario.js" ) )
 scenarios.push( require( "./mix2.scenario.js" ) )
 scenarios.push( require( "./mixunmix.scenario.js" ) )
+scenarios.push( require( "./playbackthenmix.scenario.js" ) )
 
 /*
 The purpose of this script is to load up projectrtp to expose any issues with timing.
@@ -23,7 +24,7 @@ folder is for.
 We have a problem with "we should never get here - we have no more buffer available on port"
 */
 
-const maxnumberofsessions = 200
+const maxnumberofsessions = 1000
 const secondsruntime = 3600*12
 const minmscalllength = 50
 const maxmscalllength = 1000 * 60 * 10 /* 1000 mS per second 60 seconds per minute , n minutes */

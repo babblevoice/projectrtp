@@ -128,8 +128,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   outcodec(),
   incodec(),
   player( nullptr ),
-  newplaydef( nullptr ),
-  newplaylock( false ),
+  playerlock( false ),
   doecho( false ),
   tick( workercontext ),
   nexttick( std::chrono::high_resolution_clock::now() ),
@@ -418,16 +417,17 @@ void projectrtpchannel::doclose( void ) {
   if( !this->active ) return;
   this->active = false;
 
+  auto self = shared_from_this();
+
   this->tick.cancel();
 
-  if( nullptr != this->player ) {
-    postdatabacktojsfromthread( shared_from_this(), "play", "end", "channelclosed" );
-  }
-
   {
-    SpinLockGuard guard( this->newplaylock );
+    SpinLockGuard guard( this->playerlock );
+    if( nullptr != this->player ) {
+      postdatabacktojsfromthread( self, "play", "end", "channelclosed" );
+    }
+
     this->player = nullptr;
-    this->newplaydef = nullptr;
   }
 
   /* close our session if we have one */
@@ -438,7 +438,7 @@ void projectrtpchannel::doclose( void ) {
 
   /* close up any remaining recorders */
   for( auto& rec: this->recorders ) {
-    postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.channelclosed" );
+    postdatabacktojsfromthread( self, "record", rec->file, "finished.channelclosed" );
   }
 
   this->recorders.clear();
@@ -449,7 +449,7 @@ void projectrtpchannel::doclose( void ) {
 
   this->returnavailableport();
 
-  postdatabacktojsfromthread( shared_from_this(), "close", this->closereason );
+  postdatabacktojsfromthread( self, "close", this->closereason );
 }
 
 bool projectrtpchannel::checkidlerecv( void ) {
@@ -485,6 +485,8 @@ Our timer to send data - use this for when we are a single channel. Mixing tick 
 void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   if( error == boost::asio::error::operation_aborted ) return;
   if( !this->active ) return;
+
+  auto self = shared_from_this();
 
   if( this->_requestclose ) {
     this->doclose();
@@ -543,36 +545,16 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
     this->incodec << *src;
   }
 
-  /* check for new players */
+  soundsoup::pointer ourplayer = nullptr;
   {
-    bool playerreplaced = false;
-    bool playernew = false;
-    {
-      SpinLockGuard guard( this->newplaylock );
-      if( nullptr != this->newplaydef ) {
-        this->doecho = false;
-
-        if( nullptr != this->player ) {
-          playerreplaced = true;
-        }
-
-        this->player = this->newplaydef;
-        this->newplaydef = nullptr;
-        playernew = true;
-      }
-    }
-
-    if( playerreplaced ) {
-      postdatabacktojsfromthread( shared_from_this(), "play", "end", "replaced" );
-    }
-    if( playernew ) {
-      postdatabacktojsfromthread( shared_from_this(), "play", "start", "new" );
-    }
+    SpinLockGuard guard( this->playerlock );
+    ourplayer = this->player;
   }
 
   if( this->doecho ) {
-    if( this->player ) {
-      postdatabacktojsfromthread( shared_from_this(), "play", "end", "doecho" );
+    if( ourplayer ) {
+      postdatabacktojsfromthread( self, "play", "end", "doecho" );
+      SpinLockGuard guard( this->playerlock );
       this->player = nullptr;
     }
 
@@ -583,18 +565,19 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
       dst << this->outcodec;
       this->writepacket( dst );
     }
-  } else if( this->player ) {
+  } else if( ourplayer ) {
     rtppacket *out = this->gettempoutbuf();
     rawsound r;
-    if( this->player->read( r ) ) {
+    if( ourplayer->read( r ) ) {
       if( r.size() > 0 ) {
         this->outcodec << r;
         out << this->outcodec;
         this->writepacket( out );
       }
     } else {
+      postdatabacktojsfromthread( self, "play", "end", "completed" );
+      SpinLockGuard guard( this->playerlock );
       this->player = nullptr;
-      postdatabacktojsfromthread( shared_from_this(), "play", "end", "completed" );
     }
   } 
 
@@ -628,8 +611,18 @@ void projectrtpchannel::setnexttick( void ) {
 }
 
 void projectrtpchannel::requestplay( soundsoup::pointer newdef ) {
-  SpinLockGuard guard( this->newplaylock );
-  this->newplaydef = newdef;
+  SpinLockGuard guard( this->playerlock );
+
+  auto self = shared_from_this();
+
+  this->doecho = false;
+
+  if( nullptr != this->player ) {
+    postdatabacktojsfromthread( self, "play", "end", "replaced" );
+  }
+
+  postdatabacktojsfromthread( self, "play", "start", "new" );
+  this->player = newdef;
 }
 
 /*
@@ -725,12 +718,15 @@ bool projectrtpchannel::recordercompleted( const channelrecorder::pointer& rec )
  */
 static char dtmfchars[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '#', 'A', 'B', 'C', 'D', 'F' };
 void projectrtpchannel::sendtelevent( void ) {
+  auto self = shared_from_this();
+  SpinLockGuard guard( this->playerlock );
+
   if( this->player && this->player->doesinterupt() ) {
-    postdatabacktojsfromthread( shared_from_this(), "play", "end", "telephone-event" );
+    postdatabacktojsfromthread( self, "play", "end", "telephone-event" );
     this->player = nullptr;
   }
 
-  postdatabacktojsfromthread( shared_from_this(), "telephone-event", std::string( 1, dtmfchars[ this->lasttelephoneevent ] ) );
+  postdatabacktojsfromthread( self, "telephone-event", std::string( 1, dtmfchars[ this->lasttelephoneevent ] ) );
 }
 /*
 ## checkfordtmf
@@ -785,6 +781,7 @@ If our codecs (in and out) have data then write to recorded files.
 */
 void projectrtpchannel::writerecordings( void ) {
 
+  auto self = shared_from_this();
   if( 0 == this->recorders.size() ) return;
   uint16_t power = 0;
 
@@ -812,11 +809,11 @@ void projectrtpchannel::writerecordings( void ) {
     if( !rec->isactive() ) {
       if( 0 == rec->startabovepower ) {
         rec->active();
-        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording" );
+        postdatabacktojsfromthread( self, "record", rec->file, "recording" );
       } else {
         if( pav > rec->startabovepower ) {
           rec->active();
-          postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "recording.abovepower" );
+          postdatabacktojsfromthread( self, "record", rec->file, "recording.abovepower" );
         }
       }
     }
@@ -1148,12 +1145,14 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
     return true;
   }
 
+  auto self = shared_from_this();
+
   {
     SpinLockGuard guard( this->mixerlock );
 
     if( nullptr == this->mixer && nullptr != other->mixer ) {
       this->mixer = other->mixer;
-      this->mixer->addchannel( shared_from_this() );
+      this->mixer->addchannel( self );
 
     } else if ( nullptr != this->mixer && nullptr == other->mixer ) {
       other->mixer = this->mixer;
@@ -1163,28 +1162,27 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
       this->mixer = projectchannelmux::create( workercontext );
       other->mixer = this->mixer;
 
-      this->mixer->addchannels( shared_from_this(), other );
+      this->mixer->addchannels( self, other );
 
       this->mixer->go();
     } else {
       /* If we get here this and other are already mixing and should be cleaned up first */
-      postdatabacktojsfromthread( shared_from_this(), "mix", "busy" );
+      postdatabacktojsfromthread( self, "mix", "busy" );
       return false;
     }
   }
 
   {
-    SpinLockGuard guard( this->newplaylock );
+    SpinLockGuard guard( this->playerlock );
     if( nullptr != this->player ) {
-      postdatabacktojsfromthread( shared_from_this(), "play", "end", "channelmixing" );
+      postdatabacktojsfromthread( self, "play", "end", "channelmixing" );
     }
 
-    this->newplaydef = nullptr;
     this->player = nullptr;
   }
 
 
-  postdatabacktojsfromthread( shared_from_this(), "mix", "start" );
+  postdatabacktojsfromthread( self, "mix", "start" );
   postdatabacktojsfromthread( other, "mix", "start" );
 
   return true;

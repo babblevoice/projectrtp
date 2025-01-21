@@ -234,8 +234,7 @@ private:
   codecx incodec;
 
   soundsoup::pointer player;
-  soundsoup::pointer newplaydef;
-  std::atomic_bool newplaylock;
+  std::atomic_bool playerlock;
 
   std::atomic_bool doecho;
   boost::asio::steady_timer tick;
