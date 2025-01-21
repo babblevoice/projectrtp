@@ -5,6 +5,6 @@
     "moduleResolution": "node",
     "checkJs": true
   },
-  "include": [ "index.js", "lib/*.js", "test/interface/*.js", "test/mock/*.js" ],
+  "include": [ "index.js", "lib/*.js", "test/interface/*.js", "test/mock/*.js", "stress/*.js" ],
   "exclude": [ "node_modules" ]
 }
