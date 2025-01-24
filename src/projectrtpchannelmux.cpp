@@ -243,7 +243,6 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
 
   for( auto& chan: this->channels ) {
     chan->startticktimer();
-    chan->checkfornewrecorders();
     chan->incrtsout();
   }
 
