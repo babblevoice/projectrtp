@@ -132,8 +132,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   doecho( false ),
   tick( workercontext ),
   nexttick( std::chrono::high_resolution_clock::now() ),
-  newrecorders(),
-  newrecorderslock( false ),
+  recorderslock( false ),
   recorders(),
   rtpdtls( nullptr ),
   rtpdtlslock( false ),
@@ -437,11 +436,15 @@ void projectrtpchannel::doclose( void ) {
   }
 
   /* close up any remaining recorders */
-  for( auto& rec: this->recorders ) {
-    postdatabacktojsfromthread( self, "record", rec->file, "finished.channelclosed" );
+  {
+    SpinLockGuard guard( this->recorderslock );
+    for( auto& rec: this->recorders ) {
+      postdatabacktojsfromthread( self, "record", rec->file, "finished.channelclosed" );
+    }
+
+    this->recorders.clear();
   }
 
-  this->recorders.clear();
   this->resolver.cancel();
 
   this->rtpsocket.close();
@@ -511,8 +514,6 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
     this->endticktimer();
     return;
   }
-
-  this->checkfornewrecorders();
 
   this->incodec << codecx::next;
   this->outcodec << codecx::next;
@@ -629,42 +630,30 @@ void projectrtpchannel::requestplay( soundsoup::pointer newdef ) {
 Post a request to record (or modify a param of a record). This function is typically
 called from a control thread (i.e. node).
 */
-void projectrtpchannel::requestrecord( channelrecorder::pointer rec ) {
-  SpinLockGuard guard( this->newrecorderslock );
-  this->newrecorders.push_back( rec );
-}
+void projectrtpchannel::requestrecord( channelrecorder::pointer newrec ) {
+  SpinLockGuard guard( this->recorderslock );
 
-/*
-Check for new channels to add to the mix in our own thread. This will be a different thread
-to requestrecord.
-*/
-void projectrtpchannel::checkfornewrecorders( void ) {
-  channelrecorder::pointer rec;
-  SpinLockGuard guard( this->newrecorderslock );
-
-  for ( auto const& newrec : this->newrecorders ) {
-    for( auto& currentrec: this->recorders ) {
-      if( currentrec->file == newrec->file ) {
-        currentrec->pause = newrec->pause;
-        currentrec->requestfinish = newrec->requestfinish;
-        goto endofwhileloop;
-      }
+  for( auto& currentrec: this->recorders ) {
+    if( currentrec->file == newrec->file ) {
+      currentrec->pause.store( newrec->pause );
+      currentrec->requestfinish.store( newrec->requestfinish );
+      return;
     }
-
-    newrec->sfile = soundfilewriter::create(
-        newrec->file,
-        newrec->numchannels,
-        soundfile::getsampleratefrompt( this->codec ) );
-
-    this->recorders.push_back( newrec );
-
-endofwhileloop:;
   }
 
-  this->newrecorders.clear();
+  newrec->sfile = soundfilewriter::create(
+      newrec->file,
+      newrec->numchannels,
+      soundfile::getsampleratefrompt( this->codec ) );
+
+
+  this->recorders.push_back( newrec );
 }
 
 void projectrtpchannel::removeoldrecorders( void ) {
+
+  auto self = shared_from_this();
+  SpinLockGuard guard( this->recorderslock );
 
   for ( auto const& rec : this->recorders ) {
     if( rec->isactive() ) {
@@ -679,7 +668,7 @@ void projectrtpchannel::removeoldrecorders( void ) {
       if( rec->requestfinish ) {
         rec->completed = true;
         rec->maxsincestartpower = 0;
-        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.requested" );
+        postdatabacktojsfromthread( self, "record", rec->file, "finished.requested" );
         continue;
       }
 
@@ -692,14 +681,14 @@ void projectrtpchannel::removeoldrecorders( void ) {
           rec->lastpowercalc < rec->finishbelowpower ) {
         rec->completed = true;
         rec->maxsincestartpower = 0;
-        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.belowpower" );
+        postdatabacktojsfromthread( self, "record", rec->file, "finished.belowpower" );
         continue;
       }
 
       if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
         rec->completed = true;
         rec->maxsincestartpower = 0;
-        postdatabacktojsfromthread( shared_from_this(), "record", rec->file, "finished.timeout" );
+        postdatabacktojsfromthread( self, "record", rec->file, "finished.timeout" );
         continue;
       }
     }
@@ -782,11 +771,19 @@ If our codecs (in and out) have data then write to recorded files.
 void projectrtpchannel::writerecordings( void ) {
 
   auto self = shared_from_this();
-  if( 0 == this->recorders.size() ) return;
+
+  chanrecptrlist worklist;
+  {
+    SpinLockGuard guard( this->recorderslock );
+    worklist = this->recorders;
+  }
+
+  if( 0 == worklist.size() ) return;
+
   uint16_t power = 0;
 
   /* Decide if we need to calc power as it is expensive */
-  for( auto& rec: this->recorders ) {
+  for( auto& rec: worklist ) {
     if( ( !rec->isactive() && 0 != rec->startabovepower ) || 0 != rec->finishbelowpower ) {
       power = this->incodec.power();
       break;
@@ -794,7 +791,7 @@ void projectrtpchannel::writerecordings( void ) {
   }
 
   /* Check if we need to trigger the start of any recordings and write */
-  for( auto& rec: this->recorders ) {
+  for( auto& rec: worklist ) {
 
     if( rec->completed ) continue;
 
@@ -823,6 +820,7 @@ void projectrtpchannel::writerecordings( void ) {
     }
   }
 
+  /* this function is also protected by this->recorderslock - so ensure it is free before calling */
   this->removeoldrecorders();
 }
 
