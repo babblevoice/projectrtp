@@ -196,7 +196,6 @@ private:
   void incrtsout( void );
 
   bool checkidlerecv( void );
-  void checkfornewrecorders( void );
   void removeoldrecorders( void );
   void writerecordings( void );
 
@@ -240,8 +239,7 @@ private:
   boost::asio::steady_timer tick;
   std::chrono::high_resolution_clock::time_point nexttick;
 
-  chanrecptrlist newrecorders;
-  std::atomic_bool newrecorderslock;
+  std::atomic_bool recorderslock;
   chanrecptrlist recorders;
 
   /* DTLS Session */
