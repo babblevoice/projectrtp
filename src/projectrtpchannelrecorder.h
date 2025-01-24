@@ -43,15 +43,15 @@ public:
   boost::posix_time::ptime created;
   boost::posix_time::ptime activeat;
 
-  bool pause;
-  bool requestfinish;
-  bool completed; /* indicate clean up required */
+  std::atomic_bool pause;
+  std::atomic_bool requestfinish;
+  std::atomic_bool completed; /* indicate clean up required */
 
 private:
 
   /* Rolling average of power reads */
   ma_filter powerfilter;
-  bool _active;
+  std::atomic_bool _active;
 
 };
 
