@@ -473,6 +473,13 @@ bool projectrtpchannel::checkidlerecv( void ) {
       this->doclose();
       return true;
     }
+  } else if( this->active ) {
+    /* active but not receiving ie on hold or similar - but there are limits! */
+    if( this->hardtickswithnortpcount > ( 50 * 60 * 60 * 2 ) ) { /* 2hr hard timeout */
+      this->closereason = "idle";
+      this->doclose();
+      return true;
+    }
   }
   return false;
 }
@@ -650,9 +657,8 @@ void projectrtpchannel::requestrecord( channelrecorder::pointer newrec ) {
   this->recorders.push_back( newrec );
 }
 
-void projectrtpchannel::removeoldrecorders( void ) {
+void projectrtpchannel::removeoldrecorders( pointer self ) {
 
-  auto self = shared_from_this();
   SpinLockGuard guard( this->recorderslock );
 
   for ( auto const& rec : this->recorders ) {
@@ -770,6 +776,8 @@ If our codecs (in and out) have data then write to recorded files.
 */
 void projectrtpchannel::writerecordings( void ) {
 
+  if( !this->active ) return;
+
   auto self = shared_from_this();
 
   chanrecptrlist worklist;
@@ -821,7 +829,8 @@ void projectrtpchannel::writerecordings( void ) {
   }
 
   /* this function is also protected by this->recorderslock - so ensure it is free before calling */
-  this->removeoldrecorders();
+  /* pass in sefl to ensure no gap in destruction/auto ptr destruction */
+  this->removeoldrecorders( self );
 }
 
 bool projectrtpchannel::dtlsnegotiate( void ) {
