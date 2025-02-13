@@ -44,6 +44,7 @@ const run = async () => {
   if ( "node" === process.argv.slice(2)[0] ) {
     console.log( "Mode: node as listener" )
     projectrtp.proxy.addnode( { host: "127.0.0.1", port: 9002 } )
+    // @ts-ignore
     await node.listen( projectrtp, "127.0.0.1", 9002 )
   } else console.log( "Mode: server as listener" )
 
