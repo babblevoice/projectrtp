@@ -65,4 +65,6 @@ struct SpinLockGuard {
   }
 };
 
+#define releasespinlock( x ) x.store( false, std::memory_order_release );
+
 #endif /* PROJECTRTPGLOBALS_H */
