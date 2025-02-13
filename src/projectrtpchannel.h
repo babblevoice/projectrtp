@@ -196,7 +196,7 @@ private:
   void incrtsout( void );
 
   bool checkidlerecv( void );
-  void removeoldrecorders( void );
+  void removeoldrecorders( pointer );
   void writerecordings( void );
 
   bool checkfordtmf( rtppacket *src );
