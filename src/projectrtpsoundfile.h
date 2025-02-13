@@ -22,7 +22,7 @@
 #include "projectrtpcodecx.h"
 
 /* number of soundfile async buffers */
-#define SOUNDFILENUMBUFFERS 8
+#define SOUNDFILENUMBUFFERS 16
 #define MAXNUMBEROFCHANNELS 2
 
 typedef struct {
@@ -83,12 +83,14 @@ protected:
   wavheader ourwavheader;
 
   /* asynchronous variables */
-  int currentcbindex;
+  u_int8_t currentcbindex;
   aiocb cbwavheader;
   aiocb cbwavblock[ SOUNDFILENUMBUFFERS ];
 
   /* buffer for data */
   uint8_t *buffer;
+
+  std::atomic_bool filelock;
 };
 
 
