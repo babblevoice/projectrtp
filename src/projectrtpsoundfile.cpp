@@ -4,6 +4,8 @@
 #include "projectrtpsoundfile.h"
 #include "globals.h"
 
+#define MAXBUFFERBYTESIZE ( L16WIDEBANDBYTES * MAXNUMBEROFCHANNELS * SOUNDFILENUMBUFFERS * 2 /* 16 bit */ )
+
 /*
 soundfile
 */
@@ -13,13 +15,14 @@ soundfile::soundfile( int fromfile ) :
   ourwavheader(),
   currentcbindex( 0 ),
   cbwavheader(),
-  buffer( nullptr ) {
+  buffer( nullptr ),
+  filelock( true /* initialised as locked */ ) {
 
   /*
     Soundfile blindly reads the format and passes to the codec - so it must be in a format we support - or there will be silence.
     Our macro player (to be written) will choose the most appropriate file to play based on the codec of the channel.
   */
-  this->buffer = new uint8_t[ L16WIDEBANDBYTES * MAXNUMBEROFCHANNELS * SOUNDFILENUMBUFFERS * 2 /* 16 bit */ ];
+  this->buffer = new uint8_t[ MAXBUFFERBYTESIZE ];
 
   /* As it is asynchronous - we read wav header + ahead */
   memset( &this->cbwavheader, 0, sizeof( aiocb ) );
@@ -44,15 +47,20 @@ soundfile::soundfile( int fromfile ) :
 }
 
 soundfile::~soundfile() {
+
+  SpinLockGuard guard( this->filelock );
+
   if ( -1 != this->file ) {
     /* Is there a better way? Not waiting for the cancel can can cause the async
     opperation to write to our buffer which is much worse */
     while( AIO_NOTCANCELED == aio_cancel( this->file, NULL ) );
     close( this->file );
+    this->file = -1;
   }
 
   if( nullptr != this->buffer ) {
     delete[] this->buffer;
+    this->buffer = nullptr;
   }
 }
 
@@ -107,6 +115,7 @@ soundfilereader::soundfilereader( std::string &url ) :
 
   if ( -1 == this->file ) {
     /* Not much more we can do */
+    releasespinlock( this->filelock );
     return;
   }
 
@@ -129,15 +138,18 @@ soundfilereader::soundfilereader( std::string &url ) :
   if ( aio_read( &this->cbwavheader ) == -1 ) {
     fprintf( stderr, "aio_read read of header failed in soundfile\n" );
     this->badheader = true;
+    releasespinlock( this->filelock );
     return;
   }
 
   if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
     fprintf( stderr, "aio_read read of block failed in soundfile" );
     this->bodyread = true;
+    releasespinlock( this->filelock );
     return;
   }
 
+  releasespinlock( this->filelock );
 	return;
 }
 
@@ -167,9 +179,17 @@ We only support 1 channel. Anything else we need to look at.
 */
 bool soundfilereader::read( rawsound &out ) {
 
+  SpinLockGuard guard( this->filelock );
+
   /* check */
   if ( -1 == this->file ) {
     fprintf( stderr, "No file for open wav sound\n" );
+    return false;
+  }
+
+  if( nullptr == this->buffer ) {
+    fprintf( stderr, "No buffer\n" );
+    out.zero();
     return false;
   }
 
@@ -254,7 +274,8 @@ bool soundfilereader::read( rawsound &out ) {
     return true;
   }
 
-  if( aio_error( &this->cbwavblock[ this->currentcbindex ] ) == EINPROGRESS ) {
+  aiocb *thisblock = &this->cbwavblock[ this->currentcbindex % SOUNDFILENUMBUFFERS];
+  if( aio_error( thisblock ) == EINPROGRESS ) {
     fprintf( stderr, "Read of soundfile wav block has not completed\n" );
     /* return some silence */
     out.zero();
@@ -262,7 +283,7 @@ bool soundfilereader::read( rawsound &out ) {
   }
 
   /* success? */
-  int numbytes = aio_return( &this->cbwavblock[ this->currentcbindex ] );
+  int numbytes = aio_return( thisblock );
 
   if( -1 == numbytes ) {
     fprintf( stderr, "Bad call to aio_return\n" );
@@ -271,7 +292,7 @@ bool soundfilereader::read( rawsound &out ) {
     return true;
   }
 
-  uint8_t *current = ( uint8_t * ) this->cbwavblock[ this->currentcbindex ].aio_buf;
+  uint8_t *current = ( uint8_t * ) thisblock->aio_buf;
   out = rawsound( current, this->blocksize, this->ploadtype, this->ourwavheader.sample_rate );
 
   if( numbytes < this->blocksize ) {
@@ -281,19 +302,20 @@ bool soundfilereader::read( rawsound &out ) {
   }
 
   /* Get the next block reading */
-  auto lastreadoffset = this->cbwavblock[ this->currentcbindex ].aio_offset;
+  auto lastreadoffset = thisblock->aio_offset;
   this->currentcbindex = ( this->currentcbindex + 1 ) % SOUNDFILENUMBUFFERS;
+  thisblock = &this->cbwavblock[ this->currentcbindex % SOUNDFILENUMBUFFERS];
 
-  if( this->cbwavblock[ this->currentcbindex ].aio_offset > this->ourwavheader.chunksize ) {
-    this->cbwavblock[ this->currentcbindex ].aio_offset = sizeof( wavheader );
+  if( thisblock->aio_offset > this->ourwavheader.chunksize ) {
+    thisblock->aio_offset = sizeof( wavheader );
   } else {
-    this->cbwavblock[ this->currentcbindex ].aio_offset = lastreadoffset + this->blocksize;
+    thisblock->aio_offset = lastreadoffset + this->blocksize;
   }
   
-  this->cbwavblock[ this->currentcbindex ].aio_nbytes = this->blocksize;
+  thisblock->aio_nbytes = this->blocksize;
 
   /* read next block */
-  if ( !this->bodyread && aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
+  if ( !this->bodyread && aio_read( thisblock ) == -1 ) {
     this->bodyread = true;
     out.zero();
     return true;
@@ -307,9 +329,12 @@ bool soundfilereader::read( rawsound &out ) {
 Have we completed reading the file.
 */
 bool soundfilereader::complete( void ) {
+  SpinLockGuard guard( this->filelock );
+
   if( this->badheader ) return true;
   if( !this->headerread ) return false;
   if( -1 == this->file ) return true;
+  if( nullptr == this->buffer ) return true;
   return this->bodyread;
 }
 
@@ -317,11 +342,14 @@ bool soundfilereader::complete( void ) {
 # setposition and getposition
 Gets and sets the position in terms of mS. This can only be called after the header
 has been read.
+I haven't included te file lock in this function as it is called from read - so the structure is 
+bad for a lock - which needs correcting. But, there should not be an issue here
+given the structure nd careful calling that is in place.
 */
 void soundfilereader::setposition( long mseconds ) {
 
   /* check */
-  if ( -1 == this->file ) {
+  if ( -1 == this->file || nullptr == this->buffer ) {
     this->initseekmseconds = mseconds;
     return;
   }
@@ -339,6 +367,7 @@ void soundfilereader::setposition( long mseconds ) {
   while( AIO_NOTCANCELED == aio_cancel( this->file, NULL ) );
 
   this->currentcbindex = ( this->currentcbindex + 1 ) % SOUNDFILENUMBUFFERS;
+  aiocb *thisblock = &this->cbwavblock[ this->currentcbindex % SOUNDFILENUMBUFFERS];
 
   off_t our_aio_offset = ( this->ourwavheader.bit_depth /*16*/ / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) * mseconds; /* bytes per sample */
   our_aio_offset = ( our_aio_offset / this->blocksize ) * this->blocksize; /* realign to the nearest block */
@@ -349,7 +378,7 @@ void soundfilereader::setposition( long mseconds ) {
   }
 
   /* read ahead */
-  if ( aio_read( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
+  if ( aio_read( thisblock ) == -1 ) {
     this->bodyread = true;
   }
 
@@ -358,12 +387,15 @@ void soundfilereader::setposition( long mseconds ) {
 }
 
 long soundfilereader::offtomsecs( void ) {
-  off_t position = this->cbwavblock[ this->currentcbindex ].aio_offset - sizeof( wavheader );
+  off_t position = this->cbwavblock[ this->currentcbindex % SOUNDFILENUMBUFFERS ].aio_offset - sizeof( wavheader );
   return position / ( ( this->ourwavheader.bit_depth / 8 ) * ( this->ourwavheader.sample_rate / 1000 ) );
 }
 
 long soundfilereader::getposition( void ) {
-  if( this->cbwavblock[ this->currentcbindex ].aio_offset <= ( off_t ) sizeof( wavheader ) ) {
+
+  SpinLockGuard guard( this->filelock );
+
+  if( this->cbwavblock[ this->currentcbindex % SOUNDFILENUMBUFFERS ].aio_offset <= ( off_t ) sizeof( wavheader ) ) {
     return 0;
   }
 
@@ -389,6 +421,7 @@ soundfilewriter::soundfilewriter( std::string &url, int16_t numchannels, int32_t
 
   if ( -1 == this->file ) {
     /* Not much more we can do */
+    releasespinlock( this->filelock );
     return;
   }
 
@@ -400,8 +433,12 @@ soundfilewriter::soundfilewriter( std::string &url, int16_t numchannels, int32_t
     blocknumbytes = L16WIDEBANDBYTES;
   }
 
+  if( numchannels != 2 ) {
+    numchannels = 1;
+  }
+
   this->ourwavheader.fmt_chunk_size = 16;
-  this->ourwavheader.num_channels = numchannels; /* or 2 */
+  this->ourwavheader.num_channels = numchannels; /* 1 or 2 */
   this->ourwavheader.sample_rate = samplerate;
   this->ourwavheader.byte_rate = samplerate * numchannels * this->ourwavheader.bit_depth / 8;
   this->ourwavheader.chunksize = 0;
@@ -417,9 +454,11 @@ soundfilewriter::soundfilewriter( std::string &url, int16_t numchannels, int32_t
     std::cerr << "soundfile unable to write wav header to file " << url << std::endl;
     close( this->file );
     this->file = -1;
+    releasespinlock( this->filelock );
     return;
   }
 
+  releasespinlock( this->filelock );
 	return;
 }
 
@@ -448,42 +487,11 @@ This should be called on our tick - 20mS should be ample to complete an async wr
 We maintain SOUNDFILENUMBUFFERS to ensure previous writes have an oppertunity to write.
 */
 bool soundfilewriter::write( codecx &in, codecx &out ) {
-  int16_t *inbuf = nullptr;
-  int16_t *outbuf = nullptr;
-  size_t bufsize = 0;
-  int bytespersample = 1;
 
-  if( in.hasdata() ) {
-    rawsound &inref = in.getref( this->getwavformattopt() );
-    if( !inref.isdirty() ) {
-      inbuf = ( int16_t * ) inref.c_str();
-      bufsize = inref.size();
-      bytespersample = inref.getbytespersample();
-    }
-  }
+  SpinLockGuard guard( this->filelock );
 
-  if( out.hasdata() ) {
-    rawsound &outref = out.getref( this->getwavformattopt() );
-    if( !outref.isdirty() ) {
-      outbuf = ( int16_t * ) outref.c_str();
-      bufsize = outref.size();
-      bytespersample = outref.getbytespersample();
-    }
-  }
-
-  if( ( nullptr == inbuf && nullptr == outbuf ) || 0 == bufsize ) {
-    return false;
-  }
-
-  size_t buffbytesize = ( bufsize / bytespersample );
-  if( buffbytesize > this->cbwavblock[ this->currentcbindex ].aio_nbytes ) {
-    /* this shouldn't happen */
-    fprintf( stderr, "Trying to save larger block than expected - capping\n" );
-    bufsize = this->cbwavblock[ this->currentcbindex ].aio_nbytes / bytespersample;
-  }
-
-  if( aio_error( &this->cbwavblock[ this->currentcbindex ] ) == EINPROGRESS ) {
-    fprintf( stderr, "soundfile trying to write a packet whilst last is still in progress\n" );
+  if( -1 == this->file ) {
+    fprintf( stderr, "soundfile calling write with no open file!\n" );
     return false;
   }
 
@@ -492,41 +500,105 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
     return false;
   }
 
-  this->cbwavblock[ this->currentcbindex ].aio_offset = sizeof( wavheader ) +
-            ( this->tickcount * this->cbwavblock[ this->currentcbindex ].aio_nbytes );
+  int16_t *inbuf = nullptr;
+  int16_t *outbuf = nullptr;
+  size_t inbufsize = 0; /* count of int16 vals */
+  size_t outbufsize = 0;
+  int inbytespersample = 1;
+  int outbytespersample = 1;
 
-  int16_t *buf = ( int16_t * ) this->cbwavblock[ this->currentcbindex ].aio_buf;
-  memset( buf, 0, this->cbwavblock[ this->currentcbindex ].aio_nbytes );
+  auto format = this->getwavformattopt();
 
-  if( nullptr != inbuf ) {
-    for( size_t i = 0; i < bufsize; i++ ) {
-      *buf = *inbuf;
-      inbuf++;
-      buf += this->ourwavheader.num_channels;
+  if( in.hasdata() ) {
+    rawsound &inref = in.getref( format );
+    if( !inref.isdirty() ) {
+      inbuf = ( int16_t * ) inref.c_str();
+      inbufsize = inref.size();
+      inbytespersample = inref.getbytespersample();
     }
   }
 
-  buf = ( int16_t * ) this->cbwavblock[ this->currentcbindex ].aio_buf;
-  /* only works up to 2 channels - which is all we support */
-  if( this->ourwavheader.num_channels > 1 ) {
-    buf++;
-  }
-
-  if( nullptr != outbuf ) {
-    for( size_t i = 0; i < bufsize; i++ ) {
-      *buf += *outbuf;
-      outbuf ++;
-      buf += this->ourwavheader.num_channels;
+  if( out.hasdata() ) {
+    rawsound &outref = out.getref( format );
+    if( !outref.isdirty() ) {
+      outbuf = ( int16_t * ) outref.c_str();
+      outbufsize = outref.size();
+      outbytespersample = outref.getbytespersample();
     }
   }
 
-  if ( aio_write( &this->cbwavblock[ this->currentcbindex ] ) == -1 ) {
-    fprintf( stderr, "soundfile unable to write wav block to file %s\n", this->url.c_str() );
+  /* nothing to do */
+  if( nullptr == inbuf && nullptr == outbuf ) {
     return false;
   }
 
+  if( inbytespersample != 2 ) {
+    inbytespersample = 1;
+  }
+
+  if( outbytespersample != 2 ) {
+    outbytespersample = 1;
+  }
+
+  aiocb *thisblock = &this->cbwavblock[ this->currentcbindex % SOUNDFILENUMBUFFERS];
+
+  if( ( inbufsize / inbytespersample ) > thisblock->aio_nbytes ) {
+    /* this shouldn't happen */
+    fprintf( stderr, "Trying to save larger block for l than expected - capping\n" );
+    inbufsize = thisblock->aio_nbytes / inbytespersample;
+  }
+
+  if( ( outbufsize / outbytespersample ) > thisblock->aio_nbytes ) {
+    /* this shouldn't happen */
+    fprintf( stderr, "Trying to save larger block for r than expected - capping\n" );
+    outbufsize = thisblock->aio_nbytes / outbytespersample;
+  }
+
+  if( aio_error( thisblock ) == EINPROGRESS ) {
+    fprintf( stderr, "soundfile trying to write a packet whilst last is still in progress\n" );
+    return false;
+  }
+
+  thisblock->aio_offset = sizeof( wavheader ) +
+            ( this->tickcount * thisblock->aio_nbytes );
+
+  int16_t *buf = ( int16_t * ) thisblock->aio_buf;
+  memset( buf, 0, thisblock->aio_nbytes );
+
+  auto endstop = ( int16_t * ) ( this->buffer + MAXBUFFERBYTESIZE );
+  auto numchannels = this->ourwavheader.num_channels;
+  if( numchannels != 2 ) {
+    numchannels = 1;
+  }
+
+  if( inbufsize > 0 && nullptr != inbuf ) {
+    for (size_t i = 0; i < inbufsize && buf < endstop; i++) {
+      *buf = *inbuf;
+      inbuf++;
+      buf += numchannels;
+    }
+  }
+
+  if( outbufsize > 0 && nullptr != outbuf ) {
+    buf = ( int16_t * ) thisblock->aio_buf;
+    /* only works up to 2 channels - which is all we support */
+    if( numchannels == 2 ) buf++;
+
+    /* TODO - endstop could be improved by bringing outside of the loop */
+    for (size_t i = 0; i < outbufsize && buf < endstop; i++) {
+      *buf += *outbuf; /////////////////// this is our crash
+      outbuf ++;
+      buf += numchannels;
+    }
+
+    if ( aio_write( thisblock ) == -1 ) {
+      fprintf( stderr, "soundfile unable to write wav block to file %s\n", this->url.c_str() );
+      return false;
+    }
+  }
+
   uint32_t maxbasedonthischunk = 0;
-  maxbasedonthischunk = this->cbwavblock[ this->currentcbindex ].aio_offset + this->cbwavblock[ this->currentcbindex ].aio_nbytes;
+  maxbasedonthischunk = thisblock->aio_offset + thisblock->aio_nbytes;
   if( maxbasedonthischunk > this->ourwavheader.subchunksize ) {
     this->ourwavheader.subchunksize = maxbasedonthischunk;
     this->ourwavheader.chunksize = maxbasedonthischunk + 36;
