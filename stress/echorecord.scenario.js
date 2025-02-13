@@ -41,8 +41,11 @@ module.exports = async ( mstimeout ) => {
   channela.echo()
 
   await utils.waitbetween( 0, 500 )
+  /* include settings which terminate the recording before OR after the channel closes */
   channela.record( {
-    "file": recording
+    "file": recording,
+    "maxduration": utils.waitbetween( 50, mstimeout * 2 ),
+    "finishbelowpower": 200
   } )
 
 }
