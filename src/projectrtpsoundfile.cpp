@@ -4,7 +4,7 @@
 #include "projectrtpsoundfile.h"
 #include "globals.h"
 
-#define MAXBUFFERBYTESIZE ( L16WIDEBANDBYTES * MAXNUMBEROFCHANNELS * SOUNDFILENUMBUFFERS * 2 /* 16 bit */ )
+#define MAXBUFFERBYTESIZE ( L1616PAYLOADSAMPLES * MAXNUMBEROFCHANNELS * SOUNDFILENUMBUFFERS )
 
 /*
 soundfile
@@ -19,10 +19,9 @@ soundfile::soundfile( int fromfile ) :
   filelock( true /* initialised as locked */ ) {
 
   /*
-    Soundfile blindly reads the format and passes to the codec - so it must be in a format we support - or there will be silence.
-    Our macro player (to be written) will choose the most appropriate file to play based on the codec of the channel.
+    Be careful about data alignment
   */
-  this->buffer = new uint8_t[ MAXBUFFERBYTESIZE ];
+  this->buffer = new uint16_t[ MAXBUFFERBYTESIZE ];
 
   /* As it is asynchronous - we read wav header + ahead */
   memset( &this->cbwavheader, 0, sizeof( aiocb ) );
@@ -37,12 +36,12 @@ soundfile::soundfile( int fromfile ) :
     this->cbwavblock[ i ].aio_fildes = this->file;
 
     /* These 2 values are modified depending on format and num channels */
-    this->cbwavblock[ i ].aio_nbytes = L16WIDEBANDBYTES;
+    this->cbwavblock[ i ].aio_nbytes = L1616PAYLOADSAMPLES * MAXNUMBEROFCHANNELS;
     this->cbwavblock[ i ].aio_offset = fileoffset;
-    fileoffset += L16WIDEBANDBYTES;
+    fileoffset += this->cbwavblock[ i ].aio_nbytes;
 
     /* this value should never be modified */
-    this->cbwavblock[ i ].aio_buf = this->buffer + ( i * L16WIDEBANDBYTES * MAXNUMBEROFCHANNELS * 2 );
+    this->cbwavblock[ i ].aio_buf = this->buffer + ( i * L1616PAYLOADSAMPLES * MAXNUMBEROFCHANNELS );
   }
 }
 
@@ -562,10 +561,10 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
   thisblock->aio_offset = sizeof( wavheader ) +
             ( this->tickcount * thisblock->aio_nbytes );
 
-  int16_t *buf = ( int16_t * ) thisblock->aio_buf;
+  auto buf = ( int16_t * ) thisblock->aio_buf;
   memset( buf, 0, thisblock->aio_nbytes );
 
-  auto endstop = ( int16_t * ) ( this->buffer + MAXBUFFERBYTESIZE );
+  auto endstop = ( int16_t * ) this->buffer + MAXBUFFERBYTESIZE;
   auto numchannels = this->ourwavheader.num_channels;
   if( numchannels != 2 ) {
     numchannels = 1;
@@ -580,6 +579,7 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
   }
 
   if( outbufsize > 0 && nullptr != outbuf ) {
+    /* start at the beggining again */
     buf = ( int16_t * ) thisblock->aio_buf;
     /* only works up to 2 channels - which is all we support */
     if( numchannels == 2 ) buf++;
