@@ -88,7 +88,7 @@ protected:
   aiocb cbwavblock[ SOUNDFILENUMBUFFERS ];
 
   /* buffer for data */
-  uint8_t *buffer;
+  uint16_t *buffer;
 
   std::atomic_bool filelock;
 };
