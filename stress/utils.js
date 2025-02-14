@@ -72,6 +72,14 @@ module.exports.waitbetween = async ( min, max ) => {
   await new Promise( ( resolve ) => { setTimeout( () => resolve(), module.exports.between( min, max ) ) } )
 }
 
+/**
+ * 
+ * @param { number } ms 
+ */
+module.exports.wait = async ( ms ) => {
+  await new Promise( ( resolve ) => { setTimeout( () => resolve(), ms ) } )
+}
+
 const possiblecodecs = [ 0, 8, 9, 97 ]
 /**
  * Returns random supported CODEC
