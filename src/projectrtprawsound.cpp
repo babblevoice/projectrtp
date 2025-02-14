@@ -225,7 +225,31 @@ void rawsound::malloc( size_t samplecount, size_t bytespersample, int format ) {
 
     delete[] this->data;
   }
-  this->data = new uint8_t[ requiredsize ];
+
+  /* make sure data is aligned as ARM and others can throw SIGSEGV on misalignment */
+  switch( bytespersample ) {
+    case 1:
+    {
+      this->data = new uint8_t[ samplecount ];
+      break;
+    }
+    case 2:
+    {
+      this->data = ( uint8_t * ) new uint16_t[ samplecount ];
+      break;
+    }
+    case 4:
+    {
+      this->data = ( uint8_t * ) new uint32_t[ samplecount ];
+      break;
+    }
+    default:
+    {
+      /* this shouldn't happen - in fact - please avoid */
+      this->data = new uint8_t[ requiredsize ];
+    }
+  }
+  
   this->allocatedlength = requiredsize;
 }
 
