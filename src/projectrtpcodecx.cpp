@@ -223,11 +223,11 @@ bool codecx::g711tol16( void )
     return false;
   }
 
-  this->l168kref.malloc( G711PAYLOADSAMPLES, sizeof( int16_t ), L168KPAYLOADTYPE );
+  this->l168kref.malloc( L16PAYLOADSAMPLES, sizeof( int16_t ), L168KPAYLOADTYPE );
 
   int16_t *out = ( int16_t * ) this->l168kref.c_str();
 
-  for( size_t i = 0; i < G711PAYLOADSAMPLES; i++ ) {
+  for( size_t i = 0; i < L16PAYLOADSAMPLES; i++ ) {
     *out = convert[ *in ];
     in++;
     out++;
