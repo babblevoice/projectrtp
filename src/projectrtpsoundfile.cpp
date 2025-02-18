@@ -1,10 +1,14 @@
 
 #include <iostream>
+#include <algorithm>
 
 #include "projectrtpsoundfile.h"
 #include "globals.h"
 
-#define MAXBUFFERBYTESIZE ( L1616PAYLOADSAMPLES * MAXNUMBEROFCHANNELS * SOUNDFILENUMBUFFERS )
+
+constexpr size_t AIOCBSINGLECHANBUFFNUMSAMPLES = L1616PAYLOADSAMPLES;
+constexpr size_t AIOCBBUFFERNUMSAMPLES = ( AIOCBSINGLECHANBUFFNUMSAMPLES * MAXNUMBEROFCHANNELS );
+constexpr size_t TOTALAIOCBBUFFERSAMPLES = ( AIOCBBUFFERNUMSAMPLES * SOUNDFILENUMBUFFERS );
 
 /*
 soundfile
@@ -21,7 +25,7 @@ soundfile::soundfile( int fromfile ) :
   /*
     Be careful about data alignment
   */
-  this->buffer = new uint16_t[ MAXBUFFERBYTESIZE ];
+  this->buffer = new uint16_t[ TOTALAIOCBBUFFERSAMPLES ];
 
   /* As it is asynchronous - we read wav header + ahead */
   memset( &this->cbwavheader, 0, sizeof( aiocb ) );
@@ -36,12 +40,12 @@ soundfile::soundfile( int fromfile ) :
     this->cbwavblock[ i ].aio_fildes = this->file;
 
     /* These 2 values are modified depending on format and num channels */
-    this->cbwavblock[ i ].aio_nbytes = L1616PAYLOADSAMPLES * MAXNUMBEROFCHANNELS;
+    this->cbwavblock[ i ].aio_nbytes = AIOCBBUFFERNUMSAMPLES * sizeof(uint16_t);
     this->cbwavblock[ i ].aio_offset = fileoffset;
     fileoffset += this->cbwavblock[ i ].aio_nbytes;
 
     /* this value should never be modified */
-    this->cbwavblock[ i ].aio_buf = this->buffer + ( i * L1616PAYLOADSAMPLES * MAXNUMBEROFCHANNELS );
+    this->cbwavblock[ i ].aio_buf = this->buffer + ( i * AIOCBBUFFERNUMSAMPLES );
   }
 }
 
@@ -541,17 +545,8 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
 
   aiocb *thisblock = &this->cbwavblock[ this->currentcbindex % SOUNDFILENUMBUFFERS];
 
-  if( ( inbufsize / inbytespersample ) > thisblock->aio_nbytes ) {
-    /* this shouldn't happen */
-    fprintf( stderr, "Trying to save larger block for l than expected - capping\n" );
-    inbufsize = thisblock->aio_nbytes / inbytespersample;
-  }
-
-  if( ( outbufsize / outbytespersample ) > thisblock->aio_nbytes ) {
-    /* this shouldn't happen */
-    fprintf( stderr, "Trying to save larger block for r than expected - capping\n" );
-    outbufsize = thisblock->aio_nbytes / outbytespersample;
-  }
+  inbufsize = std::min( inbufsize, AIOCBSINGLECHANBUFFNUMSAMPLES );
+  outbufsize = std::min( outbufsize, AIOCBSINGLECHANBUFFNUMSAMPLES );
 
   if( aio_error( thisblock ) == EINPROGRESS ) {
     fprintf( stderr, "soundfile trying to write a packet whilst last is still in progress\n" );
@@ -564,14 +559,13 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
   auto buf = ( int16_t * ) thisblock->aio_buf;
   memset( buf, 0, thisblock->aio_nbytes );
 
-  auto endstop = ( int16_t * ) this->buffer + MAXBUFFERBYTESIZE;
   auto numchannels = this->ourwavheader.num_channels;
   if( numchannels != 2 ) {
     numchannels = 1;
   }
 
   if( inbufsize > 0 && nullptr != inbuf ) {
-    for (size_t i = 0; i < inbufsize && buf < endstop; i++) {
+    for (size_t i = 0; i < inbufsize; i++) {
       *buf = *inbuf;
       inbuf++;
       buf += numchannels;
@@ -584,17 +578,17 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
     /* only works up to 2 channels - which is all we support */
     if( numchannels == 2 ) buf++;
 
-    /* TODO - endstop could be improved by bringing outside of the loop */
-    for (size_t i = 0; i < outbufsize && buf < endstop; i++) {
-      *buf += *outbuf; /////////////////// this is our crash
-      outbuf ++;
+    for (size_t i = 0; i < outbufsize; i++) {
+      auto outval = *outbuf;
+      *buf += outval; /////////////////// this is our crash
+      outbuf++;
       buf += numchannels;
     }
+  }
 
-    if ( aio_write( thisblock ) == -1 ) {
-      fprintf( stderr, "soundfile unable to write wav block to file %s\n", this->url.c_str() );
-      return false;
-    }
+  if ( aio_write( thisblock ) == -1 ) {
+    fprintf( stderr, "soundfile unable to write wav block to file %s\n", this->url.c_str() );
+    return false;
   }
 
   uint32_t maxbasedonthischunk = 0;
