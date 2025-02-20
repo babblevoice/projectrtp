@@ -98,7 +98,6 @@ void projectchannelmux::mixall( void ) {
     }
 
     if( nullptr != src ) {
-      chan->incodec << codecx::next;
       chan->incodec << *src;
       this->added += chan->incodec;
     }
@@ -134,7 +133,6 @@ void projectchannelmux::mixall( void ) {
       }
     }
 
-    chan->outcodec << codecx::next;
     chan->outcodec << this->subtracted;
     dst << chan->outcodec;
     chan->writepacket( dst );
@@ -248,6 +246,15 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
   }
 
   for( auto& chan: workingchannels ) {
+    chan->outcodec << codecx::next;
+    chan->incodec << codecx::next;
+
+    {
+      SpinLockGuard guard( chan->playerlock );
+      /* preserve any players during mix */
+      chan->playerstash = chan->player;
+    }
+    
     chan->startticktimer();
     chan->incrtsout();
   }
@@ -263,6 +270,8 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
     chan->writerecordings();  //////////////////// crash here -> channel -> soundfile - there is a problem with the CODEC - this can remove recorders from channel
     chan->checkidlerecv();    // this can call doclose() - recorders might be destroyed now
     chan->endticktimer();
+
+    chan->playerstash = nullptr;
   }
 
   /* The last thing we do */
@@ -357,9 +366,7 @@ void projectchannelmux::postrtpdata( projectrtpchannelptr srcchan, projectrtpcha
     dst->setpayloadtype( dstchan->rfc2833pt );
     dst->copy( src );
   } else {
-    srcchan->incodec << codecx::next;
     srcchan->incodec << *src;
-    dstchan->outcodec << codecx::next;
     dstchan->outcodec << *src;
     dst << dstchan->outcodec;
   }
