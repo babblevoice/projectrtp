@@ -93,21 +93,13 @@ void rawsound::frompt( int payloadtype )
     case L168KPAYLOADTYPE:
     {
       this->samplerate = 8000;
-      if( 1 == this->bytespersample )
-      {
-        this->bytespersample = 2;
-        this->samples = this->samples / 2;
-      }
+      this->bytespersample = 2;
       break;
     }
     case L1616KPAYLOADTYPE:
     {
       this->samplerate = 16000;
-      if( 1 == this->bytespersample )
-      {
-        this->bytespersample = 2;
-        this->samples = this->samples / 2;
-      }
+      this->bytespersample = 2;
       break;
     }
   }
