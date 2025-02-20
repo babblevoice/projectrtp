@@ -128,6 +128,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   outcodec(),
   incodec(),
   player( nullptr ),
+  playerstash( nullptr ),
   playerlock( false ),
   doecho( false ),
   tick( workercontext ),
@@ -525,6 +526,12 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   this->incodec << codecx::next;
   this->outcodec << codecx::next;
 
+  soundsoup::pointer ourplayer = nullptr;
+  {
+    SpinLockGuard guard( this->playerlock );
+    ourplayer = this->player;
+  }
+
   rtppacket *src;
   do {
     {
@@ -551,12 +558,6 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
 
   if( nullptr != src ) {
     this->incodec << *src;
-  }
-
-  soundsoup::pointer ourplayer = nullptr;
-  {
-    SpinLockGuard guard( this->playerlock );
-    ourplayer = this->player;
   }
 
   if( this->doecho ) {
@@ -587,7 +588,7 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
       SpinLockGuard guard( this->playerlock );
       this->player = nullptr;
     }
-  } 
+  }
 
   this->writerecordings();
 
@@ -1155,6 +1156,21 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
   auto self = shared_from_this();
 
   {
+    SpinLockGuard guard( this->playerlock );
+    if( nullptr != this->player ) {
+      postdatabacktojsfromthread( self, "play", "end", "channelmixing" );
+    }
+    this->player = nullptr;
+  }
+  {
+    SpinLockGuard guard( other->playerlock );
+    if( nullptr != other->player ) {
+      postdatabacktojsfromthread( other, "play", "end", "channelmixing" );
+    }
+    other->player = nullptr;
+  }
+
+  {
     SpinLockGuard guard( this->mixerlock );
 
     if( nullptr == this->mixer && nullptr != other->mixer ) {
@@ -1178,16 +1194,6 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
       return false;
     }
   }
-
-  {
-    SpinLockGuard guard( this->playerlock );
-    if( nullptr != this->player ) {
-      postdatabacktojsfromthread( self, "play", "end", "channelmixing" );
-    }
-
-    this->player = nullptr;
-  }
-
 
   postdatabacktojsfromthread( self, "mix", "start" );
   postdatabacktojsfromthread( other, "mix", "start" );

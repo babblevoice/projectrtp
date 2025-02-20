@@ -233,6 +233,7 @@ private:
   codecx incodec;
 
   soundsoup::pointer player;
+  soundsoup::pointer playerstash;
   std::atomic_bool playerlock;
 
   std::atomic_bool doecho;
