@@ -1,8 +1,6 @@
 
 # docker build . -t <your username>/projectrtp
-# I have tied this to version alpine 3.16 as 3.17 has an exception symbol dynamic linking issue.
 FROM alpine:3.20 AS builder
-
 
 WORKDIR /usr/src/
 
