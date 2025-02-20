@@ -6,6 +6,7 @@
 #include <string>
 
 #include <memory>
+#include <vector>
 
 
 #include <sys/types.h>
@@ -24,6 +25,8 @@
 /* number of soundfile async buffers */
 #define SOUNDFILENUMBUFFERS 16
 #define MAXNUMBEROFCHANNELS 2
+
+typedef std::vector< int16_t > soundbuffer;
 
 typedef struct {
     /* RIFF Header */
@@ -88,7 +91,7 @@ protected:
   aiocb cbwavblock[ SOUNDFILENUMBUFFERS ];
 
   /* buffer for data */
-  uint16_t *buffer;
+  soundbuffer buffer[ SOUNDFILENUMBUFFERS ];
 
   std::atomic_bool filelock;
 };
@@ -118,7 +121,8 @@ public:
 private:
   long offtomsecs( void );
 
-  int blocksize;
+  size_t bytecount;
+  size_t samplecount;
   bool badheader;
   bool headerread;
   bool bodyread;
