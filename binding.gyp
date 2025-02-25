@@ -1,16 +1,43 @@
 {
+  "variables": {
+    "build_type%": "prod"
+  },
   "targets": [
     {
       "target_name": "projectrtp",
       "defines": [ "NODE_MODULE", "BOOST_NO_EXCEPTIONS", "BOOST_EXCEPTION_DISABLE", "NAPI_DISABLE_CPP_EXCEPTIONS" ],
       "cflags_cc!": [ "-fno-rtti" ],
       "cflags_cc": [
-        "-O3",
         "-g",
-        "-Wall",
-        "-fstack-protector-strong",
         "-std=c++20",
         "-Weffc++" ],
+      "conditions": [
+        [
+          "build_type=='dev'", {
+            "cflags": [
+              "-O1",
+              "-fsanitize=address,undefined,bounds",
+              "-fno-omit-frame-pointer",
+              "-D_FORTIFY_SOURCE=2",
+              "-fstack-protector-strong",
+              "-fstack-protector-all",
+              "-Wformat-security",
+              "-Wall",
+              "-Wextra"
+            ],
+            "ldflags": [
+              "-fsanitize=address,undefined,bounds"
+            ]
+          }
+        ],
+        [
+          "build_type=='prod'", {
+            "cflags": [
+              "-O3"
+            ]
+          }
+        ]
+      ],
       "ldflags": [
         "-Wl,-z,relro",
         "-Wl,-z,now",
