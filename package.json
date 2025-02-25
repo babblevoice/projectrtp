@@ -9,18 +9,18 @@
     "test": "test"
   },
   "scripts": {
-    "test": "./node_modules/mocha/bin/_mocha test/**/*.js --check-leaks",
+    "test": "ASAN_OPTIONS=$(cat asan.options) LD_PRELOAD=/usr/lib64/libasan.so.8 ./node_modules/mocha/bin/_mocha test/**/*.js --check-leaks",
     "github:check": "node test/basictests.js; npm update; ./node_modules/mocha/bin/_mocha test/**/*.js --check-leaks --exit",
     "check": "tsc --checkJs --noEmit --target es6 --module commonjs --skipLibCheck *.js test/**/*.js; ./node_modules/eslint/bin/eslint.js ./",
     "docs": "jsdoc -c jsdoc.conf.json ./README.md",
-    "stress": "node stress/index.js",
-    "configure:dev": "node-gyp configure --debug",
+    "stress": "ASAN_OPTIONS=$(cat asan.options) LD_PRELOAD=/usr/lib64/libasan.so.8 node stress/index.js",
+    "configure:dev": "node-gyp configure --build_type=dev",
     "configure": "node-gyp configure",
-    "rebuild:dev": "node-gyp configure --debug; node-gyp rebuild --debug",
     "clean": "node-gyp clean",
-    "build:dev": "node-gyp configure build --debug",
+    "build:dev": "node-gyp configure build --build_type=dev",
     "build": "node-gyp configure build",
     "rebuild": "node-gyp rebuild",
+    "rebuild:dev": "node-gyp configure --build_type=dev; node-gyp rebuild --build_type=dev",
     "install": "node-gyp rebuild"
   },
   "repository": {
