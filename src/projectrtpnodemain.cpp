@@ -1,6 +1,9 @@
 
 #ifdef NODE_MODULE
 
+/* needed to build on ubuntu */
+#include <utility>
+
 #include <node_api.h>
 #include <string>
 #include <vector>
