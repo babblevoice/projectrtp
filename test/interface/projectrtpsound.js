@@ -27,6 +27,22 @@ function gensignal( hz, datalength, magnitude ) {
   return y
 }
 
+function concatint16arrays( arrays ) {
+  const totalLength = arrays.reduce((sum, arr) => sum + arr.length, 0)
+
+  // Step 2: Create a new Int16Array with total length
+  const result = new Int16Array(totalLength)
+
+  // Step 3: Copy each Int16Array into the result
+  let offset = 0
+  for (const arr of arrays) {
+    result.set(arr, offset)
+    offset += arr.length
+  }
+
+  return result
+}
+
 /**
  * 
  * @param { Array< number > } inarray
@@ -36,6 +52,20 @@ function pcmutolinear( inarray ) {
   const out = new Int16Array( inarray.length )
   for( let i = 0; i < inarray.length; i++ ) {
     out[ i ] = prtp.projectrtp.codecx.pcmu2linear16( inarray[ i ] )
+  }
+
+  return out
+}
+
+/**
+ * 
+ * @param { Array< number > } inarray
+ * @returns { Int16Array }
+ */
+function pcmatolinear( inarray ) {
+  const out = new Int16Array( inarray.length )
+  for( let i = 0; i < inarray.length; i++ ) {
+    out[ i ] = prtp.projectrtp.codecx.pcma2linear16( inarray[ i ] )
   }
 
   return out
@@ -403,6 +433,83 @@ describe( "rtpsound", function() {
     expect( receviedpkcount ).to.be.above( 400 )
   } )
 
+  it( "play uk ringing and check duration", async function() {
+    /* create our RTP/UDP endpoint */
+    const server = dgram.createSocket( "udp4" )
+
+    /** @type { prtp.channel } */
+    let channel
+
+    let receivedpcmu = []
+    server.on( "message", function( msg ) {
+      receivedpcmu.push( pcmatolinear( rtputils.parsepk( msg ).payload ) )
+    } )
+
+    this.timeout( 6000 )
+    this.slow( 5000 )
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    server.bind()
+    await new Promise( resolve => server.on( "listening", resolve ) )
+
+    const ourport = server.address().port
+
+    let starttime = 0, endtime = 0
+    let playcount = 0
+    channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 8 } }, function( d ) {
+      //console.log(d)
+      if( "play" === d.action && "start" == d.event ) {
+        playcount++
+        if( playcount >= 1 )
+          starttime = + new Date()
+      }
+      if( "play" === d.action && "end" == d.event && "completed" == d.reason ) {
+        endtime = + new Date()
+        done()
+      }
+    } )
+
+    const justringing = { "loop": false, "files": [
+      { "wav": "/tmp/uksounds.wav", "start": 1000, "stop": 4000 } 
+    ] }
+
+    const flatandringing = { "loop": false, "files": [
+      { "wav": "/tmp/flat2.wav" },
+      { "wav": "/tmp/uksounds.wav", "start": 1000, "stop": 4000 } 
+    ] }
+
+    expect( channel.play( justringing ) ).to.be.true
+    expect( channel.play( flatandringing ) ).to.be.true
+
+    await finished
+
+    channel.close()
+    server.close()
+
+    await new Promise( resolve => setTimeout( resolve, 100 ) )
+
+    const receviedaudio = concatint16arrays( receivedpcmu )
+
+    /* further test - if you want to play the output */
+    if( false ) {
+      
+      console.log( receviedaudio )
+
+      Buffer.from( receviedaudio )
+
+      const filedata = Buffer.concat( [ createwavheader( receviedaudio.length ), Buffer.from( receviedaudio.buffer ) ] )
+      await fs.promises.writeFile("/tmp/testout.wav", filedata )
+    }
+
+    //console.log( endtime - starttime )
+    expect( receviedaudio.length ).to.be.greaterThan( 23000 )
+    expect( endtime - starttime ).to.be.greaterThan( 4000 )
+    expect( endtime - starttime ).to.be.lessThan( 4200 )
+    
+  } )
+
   before( async () => {
 
     const samples = 8000
@@ -432,6 +539,18 @@ describe( "rtpsound", function() {
     const sig = gensignal( 440, 8000, 1000 )
     await fs.promises.writeFile( "/tmp/440sine.wav", Buffer.concat( [ wavheader, sig ] ) )
 
+    const uktones = "/tmp/uksounds.wav"
+    prtp.projectrtp.tone.generate( "350+440*0.5:1000", uktones )
+    prtp.projectrtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000", uktones )
+    prtp.projectrtp.tone.generate( "697+1209*0.5/0/697+1336*0.5/0/697+1477*0.5/0/697+1633*0.5/0:400/100", uktones )
+    prtp.projectrtp.tone.generate( "770+1209*0.5/0/770+1336*0.5/0/770+1477*0.5/0/770+1633*0.5/0:400/100", uktones )
+    prtp.projectrtp.tone.generate( "852+1209*0.5/0/852+1336*0.5/0/852+1477*0.5/0/852+1633*0.5/0:400/100", uktones )
+    prtp.projectrtp.tone.generate( "941+1209*0.5/0/941+1336*0.5/0/941+1477*0.5/0/941+1633*0.5/0:400/100", uktones )
+    prtp.projectrtp.tone.generate( "440*0.5:1000", uktones )
+    prtp.projectrtp.tone.generate( "440/0:375/375", uktones )
+    prtp.projectrtp.tone.generate( "440/0:400/350/225/525", uktones )
+    prtp.projectrtp.tone.generate( "440/0:125/125", uktones )
+
   } )
 
   after( async () => {
@@ -439,5 +558,7 @@ describe( "rtpsound", function() {
     await fs.promises.unlink( "/tmp/flat2.wav" )
     await fs.promises.unlink( "/tmp/flat3.wav" )
     await fs.promises.unlink( "/tmp/440sine.wav" )
+
+    await fs.promises.unlink( "/tmp/uksounds.wav" )
   } )
 } )
