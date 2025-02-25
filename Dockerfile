@@ -1,6 +1,5 @@
 
-# docker build . -t <your username>/projectrtp
-FROM alpine:3.20 AS builder
+FROM alpine:3.21 AS builder
 
 WORKDIR /usr/src/
 
@@ -15,10 +14,11 @@ RUN apk add --no-cache \
 WORKDIR /usr/local/lib/node_modules/@babblevoice/projectrtp/
 COPY . .
 
-RUN npm ci --no-optional --production;\
-    rm -fr src/build/Release/obj.target
+RUN npm ci --no-optional --production && \
+    rm -fr src/build/Release/obj.target && \
+    rm -fr build/Release/obj.target/projectrtp
 
-FROM alpine:3.20 AS app
+FROM alpine:3.21 AS app
 
 RUN apk add --no-cache \
     spandsp tiff gnutls libsrtp libc6-compat openssl ca-certificates nodejs npm
