@@ -23,7 +23,7 @@
 #include "projectrtpcodecx.h"
 
 /* number of soundfile async buffers */
-#define SOUNDFILENUMBUFFERS 16
+#define SOUNDFILENUMBUFFERS 8
 #define MAXNUMBEROFCHANNELS 2
 
 typedef std::vector< int16_t > soundbuffer;
@@ -114,12 +114,17 @@ public:
   bool complete( void );
 
   void setposition( long mseconds );
+  
   long getposition( void );
 
   inline bool isopen( void ) { return this->file != -1; }
 
 private:
   long offtomsecs( void );
+  void parseheader( void );
+
+  /* called by us - so we have a lock */
+  void realsetposition( long mseconds );
 
   size_t bytecount;
   size_t samplecount;
