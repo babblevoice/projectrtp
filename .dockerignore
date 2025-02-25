@@ -6,6 +6,8 @@
 .eslintrc.js
 .gitignore
 
+build
+
 Dockerfile
 
 node_modules
