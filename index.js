@@ -10,7 +10,12 @@ const { spawnSync } = require( "child_process" )
 
 let localaddress = "127.0.0.1"
 let privateaddress = "127.0.0.1"
-const bin = "./build/Release/projectrtp"
+
+let bin = "./build/Release/projectrtp"
+if ( fs.existsSync( "./build/Debug/projectrtp.node" ) ) {
+  console.log( "Dev build exists - using dev build..." )
+  bin = "./build/Debug/projectrtp"
+}
 
 
 /**
