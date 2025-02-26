@@ -15,6 +15,7 @@
 #define L16NARROWBANDBYTES 320
 #define L16WIDEBANDBYTES 640
 #define ILBC20PAYLOADBYTES 38
+#define ILBC20PAYLOADSAMPLES 38 /* correct ? */
 #define ILBC30PAYLOADBYTES 50 /* not needed but for completness */
 
 #define PCMUPAYLOADTYPE 0
@@ -64,5 +65,7 @@ struct SpinLockGuard {
     lock.store(false, std::memory_order_release);
   }
 };
+
+#define releasespinlock( x ) x.store( false, std::memory_order_release );
 
 #endif /* PROJECTRTPGLOBALS_H */

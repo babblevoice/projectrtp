@@ -196,7 +196,7 @@ private:
   void incrtsout( void );
 
   bool checkidlerecv( void );
-  void removeoldrecorders( void );
+  void removeoldrecorders( pointer );
   void writerecordings( void );
 
   bool checkfordtmf( rtppacket *src );
@@ -233,6 +233,7 @@ private:
   codecx incodec;
 
   soundsoup::pointer player;
+  soundsoup::pointer playerstash;
   std::atomic_bool playerlock;
 
   std::atomic_bool doecho;

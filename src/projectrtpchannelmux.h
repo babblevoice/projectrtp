@@ -39,11 +39,10 @@ public:
 
 private:
 
-  void checkfornewmixes( void );
   void mix2( void );
   void mixall( void );
 
-  void setnexttick( void );
+  void setnexttick( pointer );
 
   static bool channelremoverequested( const projectrtpchannelptr& value );
 
@@ -53,8 +52,7 @@ private:
   boost::asio::steady_timer tick;
   std::chrono::high_resolution_clock::time_point nexttick;
 
-  projectchanptrlist newchannels;
-  std::atomic_bool newchannelslock;
+  std::atomic_bool channelslock;
 
   rawsound added;
   rawsound subtracted;

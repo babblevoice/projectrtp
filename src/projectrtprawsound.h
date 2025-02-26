@@ -26,12 +26,14 @@ public:
   void malloc( size_t samplecount, size_t bytespersample, int format );
   void zero( void );
 
+  bool hasdata() { return this->size() != 0 && !this->isdirty(); }
+
   /* needed for << operato on codecx */
   inline int getpayloadtype( void ) { return this->format; }
   inline void setpayloadlength( size_t length ) { this->samples = length; };
   inline void setlength( size_t length ) { this->samples = length; };
   inline bool isdirty( void ) { return this->dirtydata; }
-  inline void dirty( bool d = true ) { this->dirtydata = d; }
+  inline void dirty( bool d = true ) { this->dirtydata = d; if( d && 0 == allocatedlength ) data = nullptr; }
   void copy( uint8_t *src, size_t len );
   void copy( rawsound &other );
 

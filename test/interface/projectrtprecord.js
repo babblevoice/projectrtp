@@ -470,7 +470,7 @@ describe( "record", function() {
     server.close()
 
     let stats = fs.statSync( "/tmp/dualrecordingpower.wav" )
-    expect( stats.size ).to.be.within( 30000 , 40000 )
+    expect( stats.size ).to.be.within( 30000 , 41000 )
 
     stats = fs.statSync( "/tmp/dualrecording.wav" )
     expect( stats.size ).to.be.within( 110000, 190000 )

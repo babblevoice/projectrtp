@@ -15,6 +15,7 @@ scenarios.push( require( "./echodualrecordpausestop.scenario.js" ) )
 scenarios.push( require( "./mix2.scenario.js" ) )
 scenarios.push( require( "./mixunmix.scenario.js" ) )
 scenarios.push( require( "./playbackthenmix.scenario.js" ) )
+scenarios.push( require( "./playbackrecordtoofast.scenario.js" ) )
 
 /*
 The purpose of this script is to load up projectrtp to expose any issues with timing.
@@ -44,6 +45,7 @@ const run = async () => {
   if ( "node" === process.argv.slice(2)[0] ) {
     console.log( "Mode: node as listener" )
     projectrtp.proxy.addnode( { host: "127.0.0.1", port: 9002 } )
+    // @ts-ignore
     await node.listen( projectrtp, "127.0.0.1", 9002 )
   } else console.log( "Mode: server as listener" )
 

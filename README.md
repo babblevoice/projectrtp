@@ -46,6 +46,12 @@ We now have 3 different sets of tests.
 
 ### `npm test`
 
+If you are using an image - that doesn't have dev deps installed then theses might need to be added:
+
+```sh
+npm install --omit=prod --ignore-scripts
+```
+
 All tests are run from NodeJS. From the root directory, run the `npm test`. These test all our interfaces and should test expected outputs. These tests use mocha.
 
 The folder is separated out into interface, unit and mock. The mock folder contains mock objects/functions required for testing. Unit tests are to help test internal functions. Interface tests are used to guarantee a stable interface for a specific version number. If these tests require changing (other than bug fixing i.e. a material API change), then a major version update will happen.
@@ -60,7 +66,18 @@ If you wish to build outsode of a Docker image, there are npm target scripts for
 
 ```bash
 docker buildx prune
-docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.5.36 . --push
+docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.5.37_beta22 . --push
+```
+
+### Dev build
+
+Some items might need installing.
+```sh
+sudo dnf install libasan libubsan
+```
+
+```sh
+npm run build:dev
 ```
 
 ## Example scripts

@@ -12,8 +12,7 @@ projectchannelmux::projectchannelmux( boost::asio::io_context &iocontext ):
   iocontext( iocontext ),
   tick( iocontext ),
   nexttick( std::chrono::high_resolution_clock::now() ),
-  newchannels(),
-  newchannelslock( false ),
+  channelslock( false ),
   added(),
   subtracted(),
   active( false ) {
@@ -99,7 +98,6 @@ void projectchannelmux::mixall( void ) {
     }
 
     if( nullptr != src ) {
-      chan->incodec << codecx::next;
       chan->incodec << *src;
       this->added += chan->incodec;
     }
@@ -135,7 +133,6 @@ void projectchannelmux::mixall( void ) {
       }
     }
 
-    chan->outcodec << codecx::next;
     chan->outcodec << this->subtracted;
     dst << chan->outcodec;
     chan->writepacket( dst );
@@ -214,12 +211,12 @@ void projectchannelmux::mix2( void ) {
 }
 
 bool projectchannelmux::channelremoverequested( const projectrtpchannelptr& chan ) {
-  if( chan->removemixer ) {
+  if( chan->removemixer || chan->_requestclose || (!chan->active) ) {
     chan->dounmix();
     return true;
   }
 
-  return false; 
+  return false;
 }
 
 /*
@@ -228,51 +225,65 @@ Our timer handler.
 void projectchannelmux::handletick( const boost::system::error_code& error ) {
   if ( error == boost::asio::error::operation_aborted ) return;
 
+  /* ensure we are not destroyed  during tick */
+  auto self = shared_from_this();
+
   if( !this->active ) return;
 
-  this->checkfornewmixes();
+  projectchanptrlist workingchannels;
+  {
+    SpinLockGuard guard( this->channelslock );
+    /* Check for channels which have request removal */
+    this->channels.remove_if( channelremoverequested );
+    /* ensure we have a local copy to maintain life of all objects */
+    workingchannels = this->channels;
+  }
 
-  /* Check for channels which have request removal */
-  this->channels.remove_if( channelremoverequested );
-
-  if( 0 == this->channels.size() ) {
+  if( 0 == workingchannels.size() ) {
     /* We're done */
     this->active = false;
     return;
   }
 
-  for( auto& chan: this->channels ) {
+  for( auto& chan: workingchannels ) {
+    chan->outcodec << codecx::next;
+    chan->incodec << codecx::next;
+
+    {
+      SpinLockGuard guard( chan->playerlock );
+      /* preserve any players during mix */
+      chan->playerstash = chan->player;
+    }
+    
     chan->startticktimer();
     chan->incrtsout();
   }
 
-  if( 2 == this->channels.size() ) {
+  if( 2 == workingchannels.size() ) {
     this->mix2();
-  } else if( this->channels.size() > 2 ) {
+  } else if( workingchannels.size() > 2 ) {
     this->mixall();
   }
 
-  for( auto& chan: this->channels ) {
+  for( auto& chan: workingchannels ) {
     chan->senddtmf();
-    chan->writerecordings();
-    chan->checkidlerecv();
+    chan->writerecordings();  //////////////////// crash here -> channel -> soundfile - there is a problem with the CODEC - this can remove recorders from channel
+    chan->checkidlerecv();    // this can call doclose() - recorders might be destroyed now
     chan->endticktimer();
+
+    chan->playerstash = nullptr;
   }
 
   /* The last thing we do */
-  this->setnexttick();
-
-  for( auto& chan: this->channels ) {
-    chan->endticktimer();
-  }
+  this->setnexttick( self );
 }
 
-void projectchannelmux::setnexttick( void ) {
+void projectchannelmux::setnexttick( pointer self ) {
   this->nexttick = this->nexttick + std::chrono::milliseconds( 20 );
 
   this->tick.expires_after( this->nexttick - std::chrono::high_resolution_clock::now() );
   this->tick.async_wait( boost::bind( &projectchannelmux::handletick,
-                                      shared_from_this(),
+                                      self,
                                       boost::asio::placeholders::error ) );
 }
 
@@ -315,35 +326,26 @@ static bool underlyingpointercmp( projectrtpchannelptr l, projectrtpchannelptr r
   return l.get() > r.get();
 }
 
-/*
-Check for new channels to add to the mix in our own thread.
-*/
-void projectchannelmux::checkfornewmixes( void ) {
-  SpinLockGuard guard( this->newchannelslock );
+void projectchannelmux::addchannel( projectrtpchannelptr chan ) {
+  SpinLockGuard guard( this->channelslock );
 
-  for ( auto const& newchan : this->newchannels ) {
-    this->channels.push_back( newchan );
-  }
-  this->newchannels.clear();
+  chan->mixing = true;
+  this->channels.push_back( chan );
 
   this->channels.sort( underlyingpointercmp );
   this->channels.unique( underlyingpointerequal );
 }
 
-void projectchannelmux::addchannel( projectrtpchannelptr chan ) {
-  SpinLockGuard guard( this->newchannelslock );
-
-  chan->mixing = true;
-  this->newchannels.push_back( chan );
-}
-
 void projectchannelmux::addchannels( projectrtpchannelptr chana, projectrtpchannelptr chanb ) {
-  SpinLockGuard guard( this->newchannelslock );
+  SpinLockGuard guard( this->channelslock );
 
   chana->mixing = true;
   chanb->mixing = true;
-  this->newchannels.push_back( chana );
-  this->newchannels.push_back( chanb );
+  this->channels.push_back( chana );
+  this->channels.push_back( chanb );
+
+  this->channels.sort( underlyingpointercmp );
+  this->channels.unique( underlyingpointerequal );
 }
 
 /*
@@ -364,9 +366,7 @@ void projectchannelmux::postrtpdata( projectrtpchannelptr srcchan, projectrtpcha
     dst->setpayloadtype( dstchan->rfc2833pt );
     dst->copy( src );
   } else {
-    srcchan->incodec << codecx::next;
     srcchan->incodec << *src;
-    dstchan->outcodec << codecx::next;
     dstchan->outcodec << *src;
     dst << dstchan->outcodec;
   }

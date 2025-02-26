@@ -3,6 +3,9 @@
 A very (very) simple STUN implimentation.
 */
 
+/* needed to build on ubuntu */
+#include <utility>
+
 /* printf when required */
 #include <cstdio>
 

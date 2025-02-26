@@ -1,4 +1,7 @@
 
+/* needed to build on ubuntu */
+#include <utility>
+
 #include <iostream>
 #include <cstdlib>
 #include <iomanip>
@@ -223,11 +226,11 @@ bool codecx::g711tol16( void )
     return false;
   }
 
-  this->l168kref.malloc( G711PAYLOADSAMPLES, sizeof( int16_t ), L168KPAYLOADTYPE );
+  this->l168kref.malloc( L16PAYLOADSAMPLES, sizeof( int16_t ), L168KPAYLOADTYPE );
 
   int16_t *out = ( int16_t * ) this->l168kref.c_str();
 
-  for( size_t i = 0; i < G711PAYLOADSAMPLES; i++ ) {
+  for( size_t i = 0; i < L16PAYLOADSAMPLES; i++ ) {
     *out = convert[ *in ];
     in++;
     out++;
@@ -384,8 +387,7 @@ bool codecx::l16tog722( void ) {
 As it says.
 */
 bool codecx::g722tol16( void ) {
-  if( 0 == this->g722ref.size() ) return false;
-  if( this->g722ref.isdirty() ) return false;
+  if( !this->g722ref.hasdata() ) return false;
 
   this->l1616kref.malloc( L1616PAYLOADSAMPLES, sizeof( int16_t ), L1616KPAYLOADTYPE );
 
@@ -401,7 +403,7 @@ bool codecx::g722tol16( void ) {
                                 this->g722ref.c_str(),
                                 G722PAYLOADBYTES );
 
-  if( 320 != l1616klength ) return false;
+  if( L1616PAYLOADSAMPLES != l1616klength ) return false;
   
   this->l1616kref.dirty( false );
   return true;
@@ -460,8 +462,7 @@ Downsample our L16 wideband samples to 8K. Pass through filter then grab every o
 */
 bool codecx::l16widetonarrowband( void ) {
 
-  if( 0 == this->l1616kref.size() ) return false;
-  if( this->l1616kref.isdirty() ) return false;
+  if( !this->l1616kref.hasdata() ) return false;
 
   this->l168kref.malloc( L16PAYLOADSAMPLES, sizeof( int16_t ), L168KPAYLOADTYPE );
 
@@ -485,9 +486,9 @@ bool codecx::l16widetonarrowband( void ) {
 Search for the relevent data and convert as necessary.
 */
 bool codecx::requirenarrowband( void ) {
-  if( 0 != this->l168kref.size() && !this->l168kref.isdirty() ) return true;
+  if( this->l168kref.hasdata() ) return true;
 
-  if( 0 != this->l1616kref.size() && !this->l1616kref.isdirty() ) {
+  if( this->l1616kref.hasdata() ) {
     return this->l16widetonarrowband();
   }
 
@@ -501,10 +502,9 @@ bool codecx::requirenarrowband( void ) {
 ## requirel16
 Wide or narrow - it doesn't matter - we just need l16
 */
-rawsound& codecx::requirel16( void )
-{
-  if( 0 != this->l168kref.size() && !this->l168kref.isdirty() ) return this->l168kref;
-  if( 0 != this->l1616kref.size() && !this->l1616kref.isdirty() ) return this->l1616kref;
+rawsound& codecx::requirel16( void ) {
+  if( this->l168kref.hasdata() ) return this->l168kref;
+  if( this->l1616kref.hasdata() ) return this->l1616kref;
 
   if( this->g711tol16() ) return this->l168kref;
   if( this->ilbctol16() ) return this->l168kref;
@@ -513,77 +513,57 @@ rawsound& codecx::requirel16( void )
   return this->l168kref;
 }
 
+rawsound nullref;
 /**
  * Obtain a reference to a rawsound for the codec type pt. i.e. we alrteady have 
  * the input sound and based on the format we want to convert it to that 
  * format.
 */
 rawsound& codecx::getref( int pt ) {
-  /* If we have already have or converted this packet... */
-  if( PCMAPAYLOADTYPE == pt &&  0 != this->pcmaref.size() && !this->pcmaref.isdirty() ) {
-    return this->pcmaref;
-  }
-  else if( PCMUPAYLOADTYPE == pt && 0 != this->pcmuref.size() && !this->pcmuref.isdirty() ) {
-    return this->pcmuref;
-  }
-  else if( ILBCPAYLOADTYPE == pt && 0 != this->ilbcref.size() && !this->ilbcref.isdirty() ) {
-    return this->ilbcref;
-  }
-  else if( G722PAYLOADTYPE == pt && 0 != this->g722ref.size() && !this->g722ref.isdirty() ) {
-    return this->g722ref;
-  }
-  else if( L168KPAYLOADTYPE == pt && 0 != this->l168kref.size() && !this->l168kref.isdirty() ) {
-    return this->l168kref;
-  }
-  else if( L1616KPAYLOADTYPE == pt && 0 != this->l1616kref.size() && !this->l1616kref.isdirty() ) {
-    return this->l1616kref;
-  }
 
-  /* If we get here we may have L16 but at the wrong sample rate so check and resample - then convert */
-  /* narrowband targets */
   switch( pt ) {
-    case ILBCPAYLOADTYPE: {
-      this->requirenarrowband();
-      this->l16toilbc();
-      return this->ilbcref;
-    }
-    case G722PAYLOADTYPE: {
-      this->requirewideband();
-      this->l16tog722();
-
-      return this->g722ref;
-    }
-    case PCMAPAYLOADTYPE: {
-      if( !this->pcmuref.isdirty() && this->pcmuref.size() > 0 ) {
+    case PCMAPAYLOADTYPE:
+      if( this->pcmaref.hasdata() ) return this->pcmaref;
+      if( this->pcmuref.hasdata() ) {
         this->ulaw2alaw();
       } else {
         this->requirenarrowband();
         this->l16topcma();
       }
       return this->pcmaref;
-    }
-    case PCMUPAYLOADTYPE: {
-      if( !this->pcmaref.isdirty() && this->pcmaref.size() > 0 ) {
+    case PCMUPAYLOADTYPE:
+      if( this->pcmuref.hasdata() ) return this->pcmuref;
+      if( this->pcmaref.hasdata() ) {
         this->alaw2ulaw();
       } else {
         this->requirenarrowband();
         this->l16topcmu();
       }
       return this->pcmuref;
-    }
-    case L168KPAYLOADTYPE: {
+    case ILBCPAYLOADTYPE:
+      if( this->ilbcref.hasdata() ) return this->ilbcref;
+      this->requirenarrowband();
+      this->l16toilbc();
+      return this->ilbcref;
+    case G722PAYLOADTYPE:
+      if( this->g722ref.hasdata() ) return this->g722ref;
+      this->requirewideband();
+      this->l16tog722();
+
+      return this->g722ref;
+    case L168KPAYLOADTYPE:
+      if( this->l168kref.hasdata() ) return this->l168kref;
       this->requirenarrowband();
       return this->l168kref;
-    }
-    case L1616KPAYLOADTYPE: {
+    case L1616KPAYLOADTYPE:
+      if( this->l1616kref.hasdata() ) return this->l1616kref;
       this->requirewideband();
       return this->l1616kref;
-    }
   }
 
   /* We should ever get here unless an invalid param has been passed in */
   std::cerr << "codecx::getref call with bad pt: " << pt << std::endl;
-  return this->pcmuref;
+  return nullref;
 }
 
 /*

@@ -21,8 +21,8 @@ module.exports.logclosechannel = ( message, d, mstimeout ) => {
   totalcount++
   module.exports.log( message )
 
-  const score = ( d.stats.in["count"] / mstimeout * 20 ).toFixed( 2 )
-  let scoremsg = ` Score: ${ score }`
+  const score = ( d.stats.in["count"] / mstimeout * 20 )
+  let scoremsg = ` Score: ${ score.toFixed( 2 ) }`
 
   // Colour based on score: red, yellow, green
   if( 0.25 >= score ) scoremsg = "\x1B[31m" + scoremsg
@@ -50,17 +50,41 @@ module.exports.mktempwav = () => {
   return "/tmp/project_" + (Math.random() + 1).toString(36).substring(7) + ".wav"
 }
 
+/**
+ * 
+ * @param { number } min - lower value 
+ * @param { number } max - upper value
+ * @returns { number }
+ */
 module.exports.between = ( min, max ) => {
   return Math.floor(
     Math.random() * ( max - min ) + min
   )
 }
 
+/**
+ * 
+ * @param { number } min - min time mS
+ * @param { number } max - max time mS
+ * @returns { Promise }
+ */
 module.exports.waitbetween = async ( min, max ) => {
-  return new Promise( ( resolve ) => { setTimeout( () => resolve(), module.exports.between( min, max ) ) } )
+  await new Promise( ( resolve ) => { setTimeout( () => resolve(), module.exports.between( min, max ) ) } )
+}
+
+/**
+ * 
+ * @param { number } ms 
+ */
+module.exports.wait = async ( ms ) => {
+  await new Promise( ( resolve ) => { setTimeout( () => resolve(), ms ) } )
 }
 
 const possiblecodecs = [ 0, 8, 9, 97 ]
+/**
+ * Returns random supported CODEC
+ * @returns { number }
+ */
 module.exports.randcodec = () => {
   return possiblecodecs[ module.exports.between( 0, possiblecodecs.length ) ]
 }

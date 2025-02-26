@@ -128,6 +128,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   outcodec(),
   incodec(),
   player( nullptr ),
+  playerstash( nullptr ),
   playerlock( false ),
   doecho( false ),
   tick( workercontext ),
@@ -473,6 +474,13 @@ bool projectrtpchannel::checkidlerecv( void ) {
       this->doclose();
       return true;
     }
+  } else if( this->active ) {
+    /* active but not receiving ie on hold or similar - but there are limits! */
+    if( this->hardtickswithnortpcount > ( 50 * 60 * 60 * 2 ) ) { /* 2hr hard timeout */
+      this->closereason = "idle";
+      this->doclose();
+      return true;
+    }
   }
   return false;
 }
@@ -518,6 +526,12 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   this->incodec << codecx::next;
   this->outcodec << codecx::next;
 
+  soundsoup::pointer ourplayer = nullptr;
+  {
+    SpinLockGuard guard( this->playerlock );
+    ourplayer = this->player;
+  }
+
   rtppacket *src;
   do {
     {
@@ -544,12 +558,6 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
 
   if( nullptr != src ) {
     this->incodec << *src;
-  }
-
-  soundsoup::pointer ourplayer = nullptr;
-  {
-    SpinLockGuard guard( this->playerlock );
-    ourplayer = this->player;
   }
 
   if( this->doecho ) {
@@ -580,7 +588,7 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
       SpinLockGuard guard( this->playerlock );
       this->player = nullptr;
     }
-  } 
+  }
 
   this->writerecordings();
 
@@ -650,9 +658,8 @@ void projectrtpchannel::requestrecord( channelrecorder::pointer newrec ) {
   this->recorders.push_back( newrec );
 }
 
-void projectrtpchannel::removeoldrecorders( void ) {
+void projectrtpchannel::removeoldrecorders( pointer self ) {
 
-  auto self = shared_from_this();
   SpinLockGuard guard( this->recorderslock );
 
   for ( auto const& rec : this->recorders ) {
@@ -770,6 +777,8 @@ If our codecs (in and out) have data then write to recorded files.
 */
 void projectrtpchannel::writerecordings( void ) {
 
+  if( !this->active ) return;
+
   auto self = shared_from_this();
 
   chanrecptrlist worklist;
@@ -821,7 +830,8 @@ void projectrtpchannel::writerecordings( void ) {
   }
 
   /* this function is also protected by this->recorderslock - so ensure it is free before calling */
-  this->removeoldrecorders();
+  /* pass in sefl to ensure no gap in destruction/auto ptr destruction */
+  this->removeoldrecorders( self );
 }
 
 bool projectrtpchannel::dtlsnegotiate( void ) {
@@ -1146,6 +1156,21 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
   auto self = shared_from_this();
 
   {
+    SpinLockGuard guard( this->playerlock );
+    if( nullptr != this->player ) {
+      postdatabacktojsfromthread( self, "play", "end", "channelmixing" );
+    }
+    this->player = nullptr;
+  }
+  {
+    SpinLockGuard guard( other->playerlock );
+    if( nullptr != other->player ) {
+      postdatabacktojsfromthread( other, "play", "end", "channelmixing" );
+    }
+    other->player = nullptr;
+  }
+
+  {
     SpinLockGuard guard( this->mixerlock );
 
     if( nullptr == this->mixer && nullptr != other->mixer ) {
@@ -1169,16 +1194,6 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
       return false;
     }
   }
-
-  {
-    SpinLockGuard guard( this->playerlock );
-    if( nullptr != this->player ) {
-      postdatabacktojsfromthread( self, "play", "end", "channelmixing" );
-    }
-
-    this->player = nullptr;
-  }
-
 
   postdatabacktojsfromthread( self, "mix", "start" );
   postdatabacktojsfromthread( other, "mix", "start" );
