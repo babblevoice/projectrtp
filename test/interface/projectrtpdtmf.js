@@ -38,6 +38,26 @@ function parsepk( packet ) {
   }
 }
 
+/**
+ * Limitation of not parsing ccrc.
+ * @param { Buffer } packet
+ * @return { object }
+ */
+function parse2833pk( packet ) {
+  return {
+    sn: packet.readUInt16BE( 2 ),
+    ts: packet.readUInt32BE( 4 ),
+    pt: packet.readUInt8( 1 ) & 0x7f,
+    ssrc: packet.readUInt32BE( 8 ),
+    event: {
+      id: packet.readUInt8( 12 ),
+      eoe: ( packet.readUInt8( 13 ) & 0x80 ) == 0x80,
+      volume: packet.readUInt8( 13 ) & 0x7f,
+      duration: packet.readUInt16BE( 14 ),
+    }
+  }
+}
+
 /* helper functions */
 function sendpk( sn, ts, sendtime, dstport, server, pt = 0, ssrc ) {
 
@@ -182,7 +202,7 @@ describe( "dtmf", function() {
 
         if( "close" === d.action ) {
           server.close()
-          expect( dtmfpkcount ).to.equal( 2*6 )
+          expect( dtmfpkcount ).to.equal( 2*7 )
           done()
         }
       } )
@@ -206,10 +226,10 @@ describe( "dtmf", function() {
     const clienta = dgram.createSocket( "udp4" )
     const clientb = dgram.createSocket( "udp4" )
 
-    let dtmfpkcount = 0
+    const dtmfpks = []
     clienta.on( "message", function( msg ) {
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
-        dtmfpkcount++
+        dtmfpks.push( parse2833pk( msg ) )
       } else {
         expect( msg.length ).to.equal( 172 )
         expect( 0x7f & msg [ 1 ] ).to.equal( 0 )
@@ -219,7 +239,6 @@ describe( "dtmf", function() {
     clientb.on( "message", function( msg ) {
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         expect( true ).to.equal( false ) //here = bad
-        dtmfpkcount++
       }
       clientb.send( msg, channelb.local.port, "localhost" )
     } )
@@ -263,7 +282,19 @@ describe( "dtmf", function() {
     clienta.close()
     clientb.close()
 
-    expect( dtmfpkcount ).to.equal( 3*6 )
+    expect( dtmfpks.length ).to.equal( 3*7 )
+    expect( dtmfpks[ 0 ].event.id ).to.equal( 10 )
+    expect( dtmfpks[ 0 ].event.duration ).to.equal( 160 )
+    expect( dtmfpks[ 0 ].event.eoe ).to.be.false
+
+    expect( dtmfpks[ 4 ].event.id ).to.equal( 10 )
+    expect( dtmfpks[ 4 ].event.duration ).to.equal( 800 )
+    expect( dtmfpks[ 4 ].event.eoe ).to.be.true
+
+    expect( dtmfpks[ 6 ].event.id ).to.equal( 10 )
+    expect( dtmfpks[ 6 ].event.duration ).to.equal( 800 )
+    expect( dtmfpks[ 6 ].event.eoe ).to.be.true
+
   } )
 
   it( "2 channels mixing and request rtp server to send 2833 to one with dynamic payloadtype", async function() {
@@ -331,7 +362,7 @@ describe( "dtmf", function() {
     clienta.close()
     clientb.close()
 
-    expect( dtmfpkcount ).to.equal( 3*6 )
+    expect( dtmfpkcount ).to.equal( 3*7 )
   } )
 
   it( "3 channels mixing and request rtp server to send 2833 to one", async function() {
@@ -341,11 +372,11 @@ describe( "dtmf", function() {
     const clientb = dgram.createSocket( "udp4" )
     const clientc = dgram.createSocket( "udp4" )
 
-    let dtmfpkcount = 0
+    let dtmfpks = []
     clienta.on( "message", function( msg ) {
       const pk = parsepk( msg )
       if( 101 == pk.pt ) {
-        dtmfpkcount++
+        dtmfpks.push( parse2833pk( msg ) )
       } else {
         expect( msg.length ).to.equal( 172 )
         expect( pk.pt ).to.equal( 0 )
@@ -355,7 +386,6 @@ describe( "dtmf", function() {
     clientb.on( "message", function( msg ) {
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         expect( true ).to.equal( false ) //here = bad
-        dtmfpkcount++
       }
       clientb.send( msg, channelb.local.port, "localhost" )
     } )
@@ -363,7 +393,6 @@ describe( "dtmf", function() {
     clientc.on( "message", function( msg ) {
       if( 101 == ( 0x7f & msg [ 1 ] ) ) {
         expect( true ).to.equal( false ) //here = bad
-        dtmfpkcount++
       }
       clientb.send( msg, channelb.local.port, "localhost" )
     } )
@@ -407,14 +436,14 @@ describe( "dtmf", function() {
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
     channela.dtmf( "*9ABD" )
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 900 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
     channela.close()
 
     clienta.close()
     clientb.close()
     clientc.close()
 
-    expect( dtmfpkcount ).to.equal( 5*6 )
+    expect( dtmfpks.length ).to.equal( 5*7 )
 
     await finished
   } )

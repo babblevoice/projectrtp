@@ -256,6 +256,7 @@ private:
   /* outbound DTMF */
   std::string queueddigits;
   std::atomic_bool queuddigitslock;
+  uint8_t dtmfsendcount;
   uint16_t lastdtmfsn;
 
   boost::posix_time::ptime tickstarttime;
