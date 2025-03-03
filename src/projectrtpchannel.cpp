@@ -143,6 +143,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   remoteport( 0 ),
   queueddigits(),
   queuddigitslock( false ),
+  dtmfsendcount( 0 ),
   lastdtmfsn( 0 ),
   tickstarttime() {
 
@@ -1241,6 +1242,12 @@ void projectrtpchannel::dtmf( std::string digits ) {
   this->queueddigits += digits;
 }
 
+const char volume = 10;
+const char endofevent = 0x80;
+
+const int numevents = 3;
+const int numendevents = 3;
+
 /*
 Now send each digit.
 */
@@ -1255,7 +1262,6 @@ void projectrtpchannel::senddtmf( void ) {
     SpinLockGuard guard( this->queuddigitslock );
     if( this->queueddigits.size() > 0 ) {
       tosend = this->queueddigits[ 0 ];
-      this->queueddigits.erase( this->queueddigits.begin() );
     }
   }
 
@@ -1289,77 +1295,42 @@ void projectrtpchannel::senddtmf( void ) {
     return;
   }
 
-  const char volume = 10;
-  const char endofevent = 0x80;
+  if( this->dtmfsendcount <= numevents ) {
+    rtppacket *dst = this->gettempoutbuf();
+    dst->setpayloadtype( this->rfc2833pt );
+    dst->setpayloadlength( 4 );
+    uint8_t *pl =  dst->getpayload();
+    pl[ 0 ] = tosend;
+    pl[ 1 ] = volume; /* end of event & reserved & volume */
+    uint16_t *tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
+    *tmp = htons( ( this->dtmfsendcount + 1 ) * 160 );
 
-  rtppacket *dst = this->gettempoutbuf();
-  dst->setpayloadtype( this->rfc2833pt );
-  dst->setpayloadlength( 4 );
-  uint8_t *pl =  dst->getpayload();
-  pl[ 0 ] = tosend;
-  pl[ 1 ] = volume; /* end of event & reserved & volume */
-  uint16_t *tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
-  *tmp = htons( 160 );
+    this->writepacket( dst );
+    
+  } else {
+    /* end packet */
+    rtppacket *dst = this->gettempoutbuf();
+    dst->setpayloadtype( this->rfc2833pt );
+    dst->setmarker();
+    dst->setpayloadlength( 4 );
+    uint8_t *pl =  dst->getpayload();
+    pl[ 0 ] = tosend;
+    pl[ 1 ] = endofevent | volume; /* end of event & reserved & volume */
+    uint16_t *tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
+    *tmp = htons( ( numevents + 2 ) * 160 );
 
-  this->writepacket( dst );
+    this->writepacket( dst );
+  }
 
-  dst = this->gettempoutbuf();
-  dst->setpayloadtype( this->rfc2833pt );
-  dst->setpayloadlength( 4 );
-  pl =  dst->getpayload();
-  pl[ 0 ] = tosend;
-  pl[ 1 ] = volume; /* end of event & reserved & volume */
-  tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
-  *tmp = htons( 320 );
+  if( this->dtmfsendcount >= ( numevents + numendevents ) ) {
+    SpinLockGuard guard( this->queuddigitslock );
+    this->queueddigits.erase( this->queueddigits.begin() );
+    this->lastdtmfsn = this->snout;
+    this->dtmfsendcount = 0;
+    return;
+  }
 
-  this->writepacket( dst );
-
-  dst = this->gettempoutbuf();
-  dst->setpayloadtype( this->rfc2833pt );
-  dst->setpayloadlength( 4 );
-  pl =  dst->getpayload();
-  pl[ 0 ] = tosend;
-  pl[ 1 ] = volume; /* end of event & reserved & volume */
-  tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
-  *tmp = htons( 480 );
-
-  this->writepacket( dst );
-
-  dst = this->gettempoutbuf();
-  dst->setpayloadtype( this->rfc2833pt );
-  dst->setmarker();
-  dst->setpayloadlength( 4 );
-  pl =  dst->getpayload();
-  pl[ 0 ] = tosend;
-  pl[ 1 ] = endofevent | volume; /* end of event & reserved & volume */
-  tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
-  *tmp = htons( 640 );
-
-  this->writepacket( dst );
-
-  dst = this->gettempoutbuf();
-  dst->setpayloadtype( this->rfc2833pt );
-  dst->setpayloadlength( 4 );
-  pl =  dst->getpayload();
-  pl[ 0 ] = tosend;
-  pl[ 1 ] = endofevent | volume; /* end of event & reserved & volume */
-  tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
-  *tmp = htons( 640 );
-
-  this->writepacket( dst );
-
-  dst = this->gettempoutbuf();
-  dst->setpayloadtype( this->rfc2833pt );
-  dst->setpayloadlength( 4 );
-  pl =  dst->getpayload();
-  pl[ 0 ] = tosend;
-  pl[ 1 ] = endofevent | volume; /* end of event & reserved & volume */
-  tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
-  *tmp = htons( 640 );
-
-  this->writepacket( dst );
-
-  this->lastdtmfsn = this->snout;
+  this->dtmfsendcount++;
 }
 
 /*
