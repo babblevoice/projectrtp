@@ -140,6 +140,21 @@ class proxy {
     this._server.clearnodes()
   }
 
+  /**
+   * 
+   * @param {*} nodes 
+   */
+  setnodes( nodes ) {
+    this._server.setnodes( nodes )
+  }
+
+  /**
+   * 
+   */
+  getnodes() {
+    return this._server.getnodes()
+  }
+
   get () {
     return server.interface.get()
   }
