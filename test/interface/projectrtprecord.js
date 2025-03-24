@@ -407,11 +407,10 @@ describe( "record", function() {
     this.slow( 7000 )
 
     let done
-    const finished = new Promise( ( r ) => done = r )
+    const finished = new Promise( ( resolve ) => done = resolve )
 
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
-    let channel
 
     /* generate our data */
     const startsilenceseconds = 1
@@ -430,44 +429,41 @@ describe( "record", function() {
     ] )
 
     server.on( "message", function() {} )
-
     server.bind()
+    await new Promise( resolve => server.on( "listening", resolve ) )
+
     const receivedmessages = []
+    const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      receivedmessages.push( d )
+      if( "close" !== d.action ) return
 
-    server.on( "listening", async function() {
-
-      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
-        receivedmessages.push( d )  
-        if( "close" === d.action ) {
-          done()
-        }
-      } )
-
-      expect( channel.record( {
-        "file": "/tmp/dualrecording.wav"
-      } ) ).to.be.true
-
-      expect( channel.record( {
-        "file": "/tmp/dualrecordingpower.wav",
-        "startabovepower": 40,
-        "finishbelowpower": 200,
-        "minduration": 200,
-        "maxduration": 3500,
-        "poweraveragepackets": 10 /* faster response */
-      } ) ).to.be.true
-
-      /* something to record */
-      expect( channel.echo() ).to.be.true
-
-      for( let i = 0;  i < 50*totalseconds; i ++ ) {
-        sendpk( i, i, channel.local.port, server, sendbuffer )
-      }
+      done()
     } )
 
-    setTimeout( () => channel.close(), totalseconds * 1000 )
-    await finished
+    expect( channel.record( {
+      "file": "/tmp/dualrecording.wav"
+    } ) ).to.be.true
 
-    server.close()
+    expect( channel.record( {
+      "file": "/tmp/dualrecordingpower.wav",
+      "startabovepower": 40,
+      "finishbelowpower": 200,
+      "minduration": 200,
+      "maxduration": 3500,
+      "poweraveragepackets": 10 /* faster response */
+    } ) ).to.be.true
+
+    /* something to record */
+    expect( channel.echo() ).to.be.true
+
+    for( let i = 0;  i < 50*totalseconds; i ++ ) {
+      sendpk( i, i, channel.local.port, server, sendbuffer )
+    }
+
+    await new Promise( resolve => setTimeout( resolve, totalseconds * 1000 ) )
+    channel.close()
+    await finished
+    await new Promise( resolve => server.close( () => resolve() ) )
 
     let stats = fs.statSync( "/tmp/dualrecordingpower.wav" )
     expect( stats.size ).to.be.within( 30000 , 41000 )
