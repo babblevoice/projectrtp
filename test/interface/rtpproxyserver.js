@@ -52,10 +52,15 @@ describe( "rtpproxy server", function() {
     } )
 
     let closereceived = false
-    n.setmessagehandler( "close", () => {
+    n.setmessagehandler( "close", ( msg ) => {
+
+      n.sendmessage( {
+        "action": "close",
+        "id": msg.id,
+        "uuid": msg.uuid
+      } )
+
       closereceived = true
-      n.destroy()
-      p.destroy()
     } )
 
     const ourport = getnextport()
@@ -80,9 +85,10 @@ describe( "rtpproxy server", function() {
     expect( channel.uuid ).that.is.a( "string" )
     expect( channel.id ).that.is.a( "string" )
 
-    channel.close()
+    await channel.close()
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 10 ) } )
+    n.destroy()
+    p.destroy()
 
     expect( closereceived ).to.be.true
   } )
@@ -108,12 +114,12 @@ describe( "rtpproxy server", function() {
       receivedecho = true
     } )
 
-    let closeresolve
-    const closereceived = new Promise( resolve => closeresolve = resolve )
-    n.setmessagehandler( "close", () => {
-      n.destroy()
-      p.destroy()
-      closeresolve()
+    n.setmessagehandler( "close", ( msg ) => {
+      n.sendmessage( {
+        "action": "close",
+        "id": msg.id,
+        "uuid": msg.uuid
+      } )
     } )
 
     const ourport = getnextport()
@@ -121,10 +127,11 @@ describe( "rtpproxy server", function() {
     await n.connect( ourport )
     const channel = await prtp.openchannel()
     channel.echo()
-    channel.close()
+    await channel.close()
 
-    /* this will only resolve when close received */
-    await closereceived
+    n.destroy()
+    p.destroy()
+
 
     expect( receivedecho ).to.be.true
   } )
@@ -154,12 +161,12 @@ describe( "rtpproxy server", function() {
       expect( msg ).to.have.property( "digits" ).that.is.a( "string" ).to.equal( "#123" )
     } )
 
-    let closeresolve
-    const closereceived = new Promise( resolve => closeresolve = resolve )
-    n.setmessagehandler( "close", () => {
-      n.destroy()
-      p.destroy()
-      closeresolve()
+    n.setmessagehandler( "close", ( msg ) => {
+      n.sendmessage( {
+        "action": "close",
+        "id": msg.id,
+        "uuid": msg.uuid
+      } )
     } )
 
     const ourport = getnextport()
@@ -167,9 +174,10 @@ describe( "rtpproxy server", function() {
     await n.connect( ourport )
     const channel = await prtp.openchannel()
     channel.dtmf( "#123" )
-    channel.close()
+    await channel.close()
 
-    await closereceived
+    n.destroy()
+    p.destroy()
 
     expect( reveiveddtmf ).to.be.true
   } )
@@ -197,12 +205,12 @@ describe( "rtpproxy server", function() {
     let unmxmsg = {}
     n.setmessagehandler( "unmix", ( msg ) => unmxmsg = msg )
 
-    let closeresolve
-    const closereceived = new Promise( resolve => closeresolve = resolve )
-    n.setmessagehandler( "close", () => {
-      n.destroy()
-      p.destroy()
-      closeresolve()
+    n.setmessagehandler( "close", ( msg ) => {
+      n.sendmessage( {
+        "action": "close",
+        "id": msg.id,
+        "uuid": msg.uuid
+      } )
     } )
 
     const ourport = getnextport()
@@ -213,10 +221,13 @@ describe( "rtpproxy server", function() {
     channela.mix( channelb )
     channela.unmix()
 
-    channela.close()
-    channelb.close()
+    await Promise.all( [
+      channela.close(),
+      channelb.close()
+    ] )
 
-    await closereceived
+    n.destroy()
+    p.destroy()
 
     expect( mxmsg ).to.have.property( "channel" ).that.is.a( "string" ).to.equal( "mix" )
     expect( mxmsg ).to.have.property( "other" ).that.is.a( "object" )
@@ -250,7 +261,13 @@ describe( "rtpproxy server", function() {
       } )
     } )
     
-    n.setmessagehandler( "close", () => {} )
+    n.setmessagehandler( "close", ( msg ) => {
+      n.sendmessage( {
+        "action": "close",
+        "id": msg.id,
+        "uuid": msg.uuid
+      } )
+    } )
 
     n2.setmessagehandler( "open", ( msg ) => {
       n2.sendmessage( {
@@ -266,7 +283,13 @@ describe( "rtpproxy server", function() {
 
     } )
 
-    n2.setmessagehandler( "close", () => {} )
+    n2.setmessagehandler( "close", ( msg ) => {
+      n.sendmessage( {
+        "action": "close",
+        "id": msg.id,
+        "uuid": msg.uuid
+      } )
+    } )
 
     const ourport = getnextport()
     const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
@@ -276,10 +299,11 @@ describe( "rtpproxy server", function() {
     const channel1 = await prtp.openchannel()
     const channel2 = await prtp.openchannel()
 
-    channel1.close()
-    channel2.close()
-
-    await new Promise( ( r ) => { setTimeout( () => r(), 10 ) } )
+    await Promise.all( [
+      channel1.close(),
+      channel2.close()
+    ] )
+    
 
     n.destroy()
     n2.destroy()
@@ -314,12 +338,12 @@ describe( "rtpproxy server", function() {
       remotereceived = true
     } )
 
-    let closeresolve
-    const closereceived = new Promise( resolve => closeresolve = resolve )
-    n.setmessagehandler( "close", () => {
-      n.destroy()
-      p.destroy()
-      closeresolve()
+    n.setmessagehandler( "close", ( msg ) => {
+      n.sendmessage( {
+        "action": "close",
+        "id": msg.id,
+        "uuid": msg.uuid
+      } )
     } )
 
     const ourport = getnextport()
@@ -328,8 +352,9 @@ describe( "rtpproxy server", function() {
     const channel = await prtp.openchannel()
     channel.remote( "wouldbearemoteobject" )
 
-    channel.close()
-    await closereceived
+    await channel.close()
+    n.destroy()
+    p.destroy()
 
     expect( remotereceived ).to.be.true
   } )
@@ -370,11 +395,15 @@ describe( "rtpproxy server", function() {
     let recmsg
     n.setmessagehandler( "record", ( msg ) => {
       recmsg = msg
-      channel.close()
+      done()
     } )
 
-    n.setmessagehandler( "close", () => {
-      done()
+    n.setmessagehandler( "close", ( msg ) => {
+      n.sendmessage( {
+        "action": "close",
+        "id": msg.id,
+        "uuid": msg.uuid
+      } )
     } )
 
     const ourport = getnextport()
@@ -384,6 +413,7 @@ describe( "rtpproxy server", function() {
     channel.play( "wouldbeaplayobject" )
 
     await completed
+    await channel.close()
 
     n.destroy()
     p.destroy()
@@ -400,7 +430,7 @@ describe( "rtpproxy server", function() {
     expect( playmsg ).to.have.property( "uuid" ).that.is.a( "string" )
     expect( playmsg ).to.have.property( "soup" ).that.is.a( "string" ).to.equal( "wouldbeaplayobject" )
 
-    expect( channel.history ).to.be.an( "array" ).to.have.length( 6 )
+    expect( channel.history ).to.be.an( "array" ).to.have.length( 7 )
 
   } )
 
@@ -437,10 +467,15 @@ describe( "rtpproxy server", function() {
         "uuid": msg.uuid
       } )
 
-      setTimeout( () => channel.close(), 10 )
-    } )
-    n.setmessagehandler( "close", () => {
       done()
+    } )
+
+    n.setmessagehandler( "close", ( msg ) => {
+      n.sendmessage( {
+        "action": "close",
+        "id": msg.id,
+        "uuid": msg.uuid
+      } )
     } )
 
     const ourport = getnextport()
@@ -450,6 +485,7 @@ describe( "rtpproxy server", function() {
     channel.direction( { send: false, recv: false } )
 
     await completed
+    await channel.close()
 
     n.destroy()
     p.destroy()
@@ -482,16 +518,12 @@ describe( "rtpproxy server", function() {
       } )
     } )
 
-    let closeresolv
-    const closepromise = new Promise( ( r ) => closeresolv = r )
     n.setmessagehandler( "close", ( msg, sendmessage ) => {
       sendmessage( {
         "action": "close",
         "uuid": msg.uuid,
         "id": msg.id
       } )
-
-      closeresolv()
     } )
     
     const chnl = await prtp.openchannel()
@@ -500,9 +532,7 @@ describe( "rtpproxy server", function() {
     expect( chnl ).to.have.property( "local" ).that.is.a( "object" )
     expect( chnl.local ).to.have.property( "port" ).that.is.a( "number" )
     expect( chnl.local ).to.have.property( "address" ).that.is.a( "string" )
-    chnl.close()
-    
-    await closepromise
+    await chnl.close()
     
     n.destroy()
     
@@ -554,15 +584,13 @@ describe( "rtpproxy server", function() {
       } )
     } )
 
-    let closeresolv
-    const closepromise = new Promise( ( r ) => closeresolv = r )
+
     n.setmessagehandler( "close", ( msg, sendmessage ) => {
       sendmessage( {
         "action": "close",
         "uuid": msg.uuid,
         "id": msg.id
       } )
-      closeresolv()
     } )
 
     n2.setmessagehandler( "close", ( msg, sendmessage ) => {
@@ -571,7 +599,6 @@ describe( "rtpproxy server", function() {
         "uuid": msg.uuid,
         "id": msg.id
       } )
-      closeresolv()
     } )
 
     const chnl = await prtp.openchannel()
@@ -579,10 +606,10 @@ describe( "rtpproxy server", function() {
 
     expect( chnl.connection ).to.be.equal( chnl2.connection )
 
-    chnl.close()
-    chnl2.close()
-
-    await closepromise
+    Promise.all( [
+      chnl.close(),
+      chnl2.close()
+    ] )
 
     n.destroy()
     n2.destroy()
