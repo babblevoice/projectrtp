@@ -85,11 +85,6 @@ void projectchannelmux::mixall( void ) {
 
       if( !chan->checkfordtmf( src ) ) break;
 
-      for( auto& dtmfchan: this->channels ) {
-        if( dtmfchan->recv && chan.get() != dtmfchan.get() ) {
-          this->postrtpdata( chan, dtmfchan, src );
-        }
-      }
       /* remove the DTMF packet */
       {
         SpinLockGuard guard( chan->rtpbufferlock );
@@ -175,8 +170,8 @@ void projectchannelmux::mix2( void ) {
       }
     }
 
+    /* process but ignore and look for next other packet */
     if( !chan1->checkfordtmf( src ) ) break;
-    this->postrtpdata( chan1, chan2, src );
   }
   this->postrtpdata( chan1, chan2, src );
 
@@ -205,9 +200,23 @@ void projectchannelmux::mix2( void ) {
     }
 
     if( !chan2->checkfordtmf( src ) ) break;
-    this->postrtpdata( chan2, chan1, src );
   }
+
   this->postrtpdata( chan2, chan1, src );
+}
+
+/**
+ * Called from a channel which has received DTMF - we forward onto all other channels,
+ * this is likely to have been called from mix2 and mixall. NB this only queues
+ * the digit on the outbound - we have to actuall send them as well.
+ */
+void projectchannelmux::senddtmf( projectrtpchannelptr from, char digit ) {
+  for( auto& chan: this->channels ) {
+    if( chan.get() == from.get() ) continue;
+    if( !chan->recv ) continue;
+
+    chan->dtmf( digit );
+  }
 }
 
 bool projectchannelmux::channelremoverequested( const projectrtpchannelptr& chan ) {
@@ -267,7 +276,7 @@ void projectchannelmux::handletick( const boost::system::error_code& error ) {
 
   for( auto& chan: workingchannels ) {
     chan->senddtmf();
-    chan->writerecordings();  //////////////////// crash here -> channel -> soundfile - there is a problem with the CODEC - this can remove recorders from channel
+    chan->writerecordings();
     chan->checkidlerecv();    // this can call doclose() - recorders might be destroyed now
     chan->endticktimer();
 
