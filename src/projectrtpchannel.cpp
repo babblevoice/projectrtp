@@ -1245,7 +1245,7 @@ void projectrtpchannel::dtmf( std::string digits ) {
 const char volume = 10;
 const char endofevent = 0x80;
 
-const int numevents = 3;
+const int numevents = 6;
 const int numendevents = 3;
 
 /*
@@ -1265,9 +1265,7 @@ void projectrtpchannel::senddtmf( void ) {
     }
   }
 
-  if( 0 == tosend ) {
-    return;
-  }
+  if( 0 == tosend ) return;
 
   /*
     RFC 2833:
@@ -1300,6 +1298,9 @@ void projectrtpchannel::senddtmf( void ) {
     dst->setpayloadtype( this->rfc2833pt );
     dst->setpayloadlength( 4 );
     uint8_t *pl =  dst->getpayload();
+
+    dst->setmarker( 0 == this->dtmfsendcount );
+
     pl[ 0 ] = tosend;
     pl[ 1 ] = volume; /* end of event & reserved & volume */
     uint16_t *tmp = ( uint16_t * ) &pl[ 2 ]; /* event duration */
@@ -1311,7 +1312,6 @@ void projectrtpchannel::senddtmf( void ) {
     /* end packet */
     rtppacket *dst = this->gettempoutbuf();
     dst->setpayloadtype( this->rfc2833pt );
-    dst->setmarker();
     dst->setpayloadlength( 4 );
     uint8_t *pl =  dst->getpayload();
     pl[ 0 ] = tosend;
