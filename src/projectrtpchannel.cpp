@@ -710,20 +710,33 @@ bool projectrtpchannel::recordercompleted( const channelrecorder::pointer& rec )
 }
 
 /**
- * @brief Helper function for checkfordtmf - signal back to our control server that an event has been received.
- * 
+ * Helper function for checkfordtmf - 
+ * 1. stop player if set to stop on event
+ * 2. signal back to our control server that an event has been received.
+ * 3. forward to other channels we are mixing with
  */
 static char dtmfchars[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '#', 'A', 'B', 'C', 'D', 'F' };
 void projectrtpchannel::sendtelevent( void ) {
   auto self = shared_from_this();
-  SpinLockGuard guard( this->playerlock );
 
-  if( this->player && this->player->doesinterupt() ) {
-    postdatabacktojsfromthread( self, "play", "end", "telephone-event" );
-    this->player = nullptr;
+  {
+    SpinLockGuard guard( this->playerlock );
+
+    if( this->player && this->player->doesinterupt() ) {
+      postdatabacktojsfromthread( self, "play", "end", "telephone-event" );
+      this->player = nullptr;
+    }
   }
 
   postdatabacktojsfromthread( self, "telephone-event", std::string( 1, dtmfchars[ this->lasttelephoneevent ] ) );
+
+  if( !this->mixing ) return;
+
+  {
+    SpinLockGuard guard( this->mixerlock );
+    this->mixer->senddtmf( self, dtmfchars[ this->lasttelephoneevent ] );
+  }
+
 }
 /*
 ## checkfordtmf
@@ -1233,13 +1246,20 @@ void projectrtpchannel::dounmix( void ) {
   }
 }
 
-/*
-## dtmf
-Queue digits to send as RFC 2833.
-*/
+/**
+ * Queue digits to send as RFC 2833.
+ */
 void projectrtpchannel::dtmf( std::string digits ) {
   SpinLockGuard guard( this->queuddigitslock );
   this->queueddigits += digits;
+}
+
+/**
+ * Queue digit to send as RFC 2833.
+ */
+void projectrtpchannel::dtmf( char digit ) {
+  SpinLockGuard guard( this->queuddigitslock );
+  this->queueddigits += digit;
 }
 
 const char volume = 10;
