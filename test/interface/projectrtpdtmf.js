@@ -5,6 +5,10 @@ const dgram = require( "dgram" )
 
 const pcap = require( "./pcap" )
 
+const pkcountperdtmfdigit = 10 /* defined in projectrtpchannel::senddtmf */
+const pausebetweendtmfdigits = 200 /* mS 10 pks ref projectrtpchannel::senddtmf */
+const timeperdtmfdigit = ( pkcountperdtmfdigit * 20 /* mS */ ) + pausebetweendtmfdigits
+
 /*
 i.e. the RTP payload
 str = "80 e5 03 b5 00 02 44 a0 1e e3 61 fb 03 0a 00 a0 4c d1"
@@ -202,7 +206,7 @@ describe( "dtmf", function() {
 
         if( "close" === d.action ) {
           server.close()
-          expect( dtmfpkcount ).to.equal( 2*7 )
+          expect( dtmfpkcount ).to.equal( 2*pkcountperdtmfdigit )
           done()
         }
       } )
@@ -274,7 +278,7 @@ describe( "dtmf", function() {
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 400 ) } )
     channela.dtmf( "*9F" )
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 800 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 3 * timeperdtmfdigit ) } )
     channela.close()
 
     await finished
@@ -282,18 +286,14 @@ describe( "dtmf", function() {
     clienta.close()
     clientb.close()
 
-    expect( dtmfpks.length ).to.equal( 3*7 )
+    expect( dtmfpks.length ).to.equal( 3*pkcountperdtmfdigit )
     expect( dtmfpks[ 0 ].event.id ).to.equal( 10 )
     expect( dtmfpks[ 0 ].event.duration ).to.equal( 160 )
     expect( dtmfpks[ 0 ].event.eoe ).to.be.false
 
-    expect( dtmfpks[ 4 ].event.id ).to.equal( 10 )
-    expect( dtmfpks[ 4 ].event.duration ).to.equal( 800 )
-    expect( dtmfpks[ 4 ].event.eoe ).to.be.true
-
-    expect( dtmfpks[ 6 ].event.id ).to.equal( 10 )
-    expect( dtmfpks[ 6 ].event.duration ).to.equal( 800 )
-    expect( dtmfpks[ 6 ].event.eoe ).to.be.true
+    expect( dtmfpks[ 7 ].event.id ).to.equal( 10 )
+    expect( dtmfpks[ 7 ].event.duration ).to.equal( 1280 )
+    expect( dtmfpks[ 7 ].event.eoe ).to.be.true
 
   } )
 
@@ -354,7 +354,7 @@ describe( "dtmf", function() {
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 400 ) } )
     channela.dtmf( "*9F" )
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 800 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 3 * timeperdtmfdigit ) } )
     channela.close()
 
     await finished
@@ -362,7 +362,7 @@ describe( "dtmf", function() {
     clienta.close()
     clientb.close()
 
-    expect( dtmfpkcount ).to.equal( 3*7 )
+    expect( dtmfpkcount ).to.equal( 3*pkcountperdtmfdigit )
   } )
 
   it( "3 channels mixing and request rtp server to send 2833 to one", async function() {
@@ -436,14 +436,14 @@ describe( "dtmf", function() {
 
     await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
     channela.dtmf( "*9ABD" )
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 5 * timeperdtmfdigit ) } )
     channela.close()
 
     clienta.close()
     clientb.close()
     clientc.close()
 
-    expect( dtmfpks.length ).to.equal( 5*7 )
+    expect( dtmfpks.length ).to.equal( 5*pkcountperdtmfdigit )
 
     await finished
   } )
@@ -721,9 +721,9 @@ describe( "dtmf", function() {
 
     await finished
 
+    expect( dtmfpkcount ).to.be.within( 18, 20 ) /* actually 20 but allow loss */
     expect( endpointapkcount ).to.be.within( 30, 51 )
-    expect( endpointbpkcount ).to.be.within( 30, 51 )
-    expect( dtmfpkcount ).to.be.within( 4, 8 )
+    expect( endpointbpkcount - dtmfpkcount ).to.be.within( 30, 51 )
 
     expect( receivedmessages.length ).to.equal( 5 )
 
@@ -742,7 +742,7 @@ describe( "dtmf", function() {
   } )
 
 
-  it( "mix 2 channels - pcmu <-> pcma and send DTMF different 2833 pt", async function() {
+  it( "wefwef mix 2 channels - pcmu <-> pcma and send DTMF different 2833 pt", async function() {
 
     /*
       When mixing 2 channels, we expect the second leg to receive the 2833 packets
@@ -864,11 +864,11 @@ describe( "dtmf", function() {
     await finished
 
     expect( endpointapkcount ).to.be.within( 30, 51 )
-    expect( endpointbpkcount ).to.be.within( 30, 51 )
+    expect( endpointbpkcount - dtmfpkcount ).to.be.within( 30, 51 )
 
     expect( receivedmessages.length ).to.equal( 5 )
 
-    expect( dtmfpkcount ).to.be.within( 4, 8 )
+    expect( dtmfpkcount ).to.be.within( 18, 20 ) /* allow loss sb 20 */
 
     expect( receivedmessages[ 0 ].action ).to.equal( "mix" )
     expect( receivedmessages[ 1 ].action ).to.equal( "telephone-event" )
@@ -936,13 +936,13 @@ describe( "dtmf", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } )
+    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
 
     endpointb.bind()
-    await new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } )
+    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
 
     endpointc.bind()
-    await new Promise( ( r ) => { endpointc.on( "listening", function() { r() } ) } )
+    await new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } )
 
     const receveiedmessages = []
 
@@ -1053,13 +1053,13 @@ describe( "dtmf", function() {
     ] )
 
     expect( endpointapkcount ).to.be.within( 59, 70 )
-    expect( endpointbpkcount ).to.be.within( 59, 70 )
-    expect( endpointcpkcount ).to.be.within( 59, 70 )
+    expect( endpointbpkcount - dtmfbpkcount ).to.be.within( 59, 70 )
+    expect( endpointcpkcount - dtmfcpkcount ).to.be.within( 59, 70 )
 
     // 3 after we return to the event loop and enter the callback with close event.
     expect( dtmfapkcount ).to.equal( 0 )
-    expect( dtmfbpkcount ).to.be.within( 4, 8 )
-    expect( dtmfcpkcount ).to.be.within( 4, 8 )
+    expect( dtmfbpkcount ).to.be.within( 18, 20 )
+    expect( dtmfcpkcount ).to.be.within( 18, 20 )
 
     expect( receveiedmessages[ 0 ].action ).to.equal( "mix" )
     expect( receveiedmessages[ 1 ].action ).to.equal( "mix" )
