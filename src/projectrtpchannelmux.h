@@ -35,6 +35,7 @@ public:
   inline size_t size() { return this->channels.size(); }
   void addchannel( projectrtpchannelptr chan );
   void addchannels( projectrtpchannelptr chana, projectrtpchannelptr chanb );
+  void senddtmf( projectrtpchannelptr from, char digit );
   void go( void );
 
 private:

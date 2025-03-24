@@ -114,6 +114,7 @@ public:
   bool mix( projectrtpchannel::pointer other );
   bool unmix( void );
   void dtmf( std::string digits );
+  void dtmf( char digit );
   rtppacket *gettempoutbuf( void );
 
   std::atomic_uint32_t codec;
