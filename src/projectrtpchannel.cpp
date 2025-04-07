@@ -1265,7 +1265,7 @@ void projectrtpchannel::dtmf( char digit ) {
 const char volume = 10;
 const char endofevent = 0x80;
 
-const int numevents = 6;
+const int numevents = 10;
 const int numendevents = 3;
 
 /*
