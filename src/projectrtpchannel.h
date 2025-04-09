@@ -121,6 +121,7 @@ public:
   uint32_t ssrcin;
   uint32_t ssrcout;
   uint32_t tsout;
+  uint32_t eventtsout;
   uint16_t snout;
 
   /* do we send, do we receive */

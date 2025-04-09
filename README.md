@@ -66,7 +66,7 @@ If you wish to build outsode of a Docker image, there are npm target scripts for
 
 ```bash
 docker buildx prune
-docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.6.1_beta2 . --push
+docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.6.1 . --push
 ```
 
 ### Dev build

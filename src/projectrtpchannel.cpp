@@ -83,6 +83,7 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   ssrcin( 0 ),
   ssrcout( 0 ),
   tsout( 0 ),
+  eventtsout( 0 ),
   snout( 0 ),
   send( true ),
   recv( true ),
@@ -1262,7 +1263,7 @@ void projectrtpchannel::dtmf( char digit ) {
   this->queueddigits += digit;
 }
 
-const char volume = 10;
+const char volume = 13;
 const char endofevent = 0x80;
 
 const int numevents = 10;
@@ -1315,9 +1316,15 @@ void projectrtpchannel::senddtmf( void ) {
 
   if( this->dtmfsendcount <= numevents ) {
     rtppacket *dst = this->gettempoutbuf();
+    /* the timestamp is fixed to the start of the event */
+    if( 0 == this->dtmfsendcount ) {
+      this->eventtsout = this->tsout;
+    }
+
+    dst->settimestamp( this->eventtsout );
     dst->setpayloadtype( this->rfc2833pt );
     dst->setpayloadlength( 4 );
-    uint8_t *pl =  dst->getpayload();
+    uint8_t *pl = dst->getpayload();
 
     dst->setmarker( 0 == this->dtmfsendcount );
 
@@ -1331,6 +1338,8 @@ void projectrtpchannel::senddtmf( void ) {
   } else {
     /* end packet */
     rtppacket *dst = this->gettempoutbuf();
+
+    dst->settimestamp( this->eventtsout );
     dst->setpayloadtype( this->rfc2833pt );
     dst->setpayloadlength( 4 );
     uint8_t *pl =  dst->getpayload();
