@@ -33,12 +33,14 @@
         [
           "build_type=='prod'", {
             "cflags": [
-              "-O3"
+              "-O3",
+              "-g"
             ]
           }
         ]
       ],
       "ldflags": [
+        "-g",
         "-Wl,-z,relro",
         "-Wl,-z,now",
         "-Wl,--export-dynamic" ],
