@@ -11,12 +11,12 @@ RUN apk add --no-cache \
     cd libilbc-3.0.4; \
     cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; cmake --build .; cmake --install .; 
     
-WORKDIR /usr/local/lib/node_modules/@babblevoice/projectrtp/
+WORKDIR /usr/src/projectrtp
 COPY . .
 
-RUN npm ci --no-optional --production && \
-    rm -fr src/build/Release/obj.target && \
-    rm -fr build/Release/obj.target/projectrtp
+# a more correct to install this module into the global location
+RUN npm install --production --build-from-source && \
+    npm install -g . 
 
 FROM alpine:3.21 AS app
 
