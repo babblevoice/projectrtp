@@ -162,6 +162,28 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   this->icelocalpwd = localicepwd;
 }
 
+struct Channelreadstream {
+  napi_env env;
+  napi_ref js_this = nullptr;
+  napi_ref on_data_cb = nullptr;
+  napi_ref on_end_cb = nullptr;
+  napi_threadsafe_function tsfn = nullptr;
+
+  std::string direction = "combined";
+  std::string encoding = "buffer";
+  int chunk_size = 1;
+
+  std::vector<uint8_t> buffer;
+  projectrtpchannel* channel = nullptr;
+
+  void emitdata( const std::vector<uint8_t>& data ) {
+    if ( !tsfn ) return;
+    auto* vec = new std::vector<uint8_t>( data );
+    napi_call_threadsafe_function( tsfn, vec, napi_tsfn_nonblocking );
+  }
+};
+
+
 void projectrtpchannel::requestclose( std::string reason ) {
 
   this->closereason = reason;
@@ -575,6 +597,8 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
       rtppacket *dst = this->gettempoutbuf();
       dst << this->outcodec;
       this->writepacket( dst );
+      std::vector<uint8_t> payload( dst->getpayload(), dst->getpayload() + dst->getpayloadlength() );
+      this->emittostream( payload );
     }
   } else if( ourplayer ) {
     rtppacket *out = this->gettempoutbuf();
@@ -584,6 +608,8 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
         this->outcodec << r;
         out << this->outcodec;
         this->writepacket( out );
+        std::vector<uint8_t> payload( out->getpayload(), out->getpayload() + out->getpayloadlength() );
+        this->emittostream( payload );
       }
     } else {
       postdatabacktojsfromthread( self, "play", "end", "completed" );
@@ -785,7 +811,15 @@ bool projectrtpchannel::checkfordtmf( rtppacket *src ) {
   return false;
 }
 
+void projectrtpchannel::setreadstream( Channelreadstream* stream ) {
+  this->readstream = stream;
+}
 
+void projectrtpchannel::emittostream( const std::vector<uint8_t>& data ) {
+  if ( this->readstream ) {
+    this->readstream->emitdata( data );
+  }
+}
 /*
 # writerecordings
 If our codecs (in and out) have data then write to recorded files.
@@ -2016,6 +2050,131 @@ napi_value createplayobject( napi_env env, projectrtpchannel::pointer p, jschann
   return result;
 }
 
+napi_value streamon( napi_env env, napi_callback_info info ) {
+  napi_value args[ 2 ], this_arg;
+  size_t argc = 2;
+  napi_get_cb_info( env, info, &argc, args, &this_arg, nullptr );
+
+  char event[ 16 ];
+  size_t len;
+  napi_get_value_string_utf8( env, args[0], event, sizeof(event), &len );
+
+  Channelreadstream* stream;
+  napi_unwrap( env, this_arg, (void**)&stream );
+
+  if ( strcmp(event, "data" ) == 0) {
+    if ( stream->on_data_cb ) napi_delete_reference( env, stream->on_data_cb );
+    napi_create_reference( env, args[ 1 ], 1, &stream->on_data_cb );
+  } else if ( strcmp( event, "end" ) == 0 ) {
+    if ( stream->on_end_cb ) napi_delete_reference( env, stream->on_end_cb );
+    napi_create_reference( env, args[ 1 ], 1, &stream->on_end_cb );
+  }
+
+  return nullptr;
+}
+
+napi_value streamemit( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value args[ 1 ];
+  napi_value this_arg;
+  void* data;
+
+  napi_get_cb_info( env, info, &argc, args, &this_arg, nullptr );
+  napi_unwrap( env, this_arg, &data );
+
+  auto* stream = ( Channelreadstream* )data;
+  if ( !stream || !stream->channel ) return nullptr;
+
+  bool is_typedarray;
+  napi_is_typedarray( env, args[0], &is_typedarray );
+  if ( !is_typedarray ) return nullptr;
+
+  napi_typedarray_type type;
+  size_t length;
+  void* buffer_data;
+  napi_value array_buffer;
+  size_t byte_offset;
+
+  napi_get_typedarray_info( env, args[0], &type, &length, &buffer_data, &array_buffer, &byte_offset );
+
+  std::vector<uint8_t> vec( (uint8_t*)buffer_data, (uint8_t*)buffer_data + length );
+
+  stream->channel->emittostream( vec );
+
+  return nullptr;
+}
+
+napi_value channelreadstream( napi_env env, napi_callback_info info ) {
+  napi_value obj;
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if ( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return nullptr;
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+
+  Channelreadstream* stream = new Channelreadstream();
+  stream->env = env;
+
+  napi_create_object( env, &obj );
+  napi_create_reference( env, obj, 1, &stream->js_this );
+
+  napi_value resource_name;
+  napi_create_string_utf8( env, "ondata_callback", NAPI_AUTO_LENGTH, &resource_name );
+
+  napi_create_threadsafe_function(
+    env,
+    nullptr,
+    nullptr,
+    resource_name,
+    0,
+    1,
+    nullptr,
+    nullptr,
+    stream,
+    []( napi_env env, napi_value js_cb, void* context, void* raw_data ) {
+      auto* vec = static_cast<std::vector<uint8_t>*>( raw_data );
+      auto* stream = static_cast<Channelreadstream*>( context );
+      if ( !vec || !stream || !stream->on_data_cb ) {
+        delete vec;
+        return;
+      }
+
+      napi_value js_this, js_callback, js_data;
+      napi_get_reference_value( env, stream->js_this, &js_this );
+      napi_get_reference_value( env, stream->on_data_cb, &js_callback );
+      napi_create_buffer_copy( env, vec->size(), vec->data(), nullptr, &js_data );
+
+      napi_value args[1] = { js_data };
+      napi_call_function( env, js_this, js_callback, 1, args, nullptr );
+      delete vec;
+    },
+    &stream->tsfn
+  );
+
+  napi_wrap( env, obj, stream, []( napi_env env, void* data, void* ) {
+    auto* s = ( Channelreadstream* )data;
+    if ( s->on_data_cb ) napi_delete_reference( env, s->on_data_cb );
+    if ( s->on_end_cb ) napi_delete_reference( env, s->on_end_cb );
+    if ( s->js_this ) napi_delete_reference( env, s->js_this );
+    if ( s->tsfn ) napi_release_threadsafe_function( s->tsfn, napi_tsfn_abort );
+    delete s;
+  }, nullptr, nullptr );
+
+  napi_value on_fn;
+  napi_create_function( env, "on", NAPI_AUTO_LENGTH, streamon, nullptr, &on_fn );
+  napi_set_named_property( env, obj, "on", on_fn );
+
+  napi_value emit_fn;
+  napi_create_function( env, "emitdata", NAPI_AUTO_LENGTH, streamemit, nullptr, &emit_fn );
+  napi_set_named_property( env, obj, "emitdata", emit_fn );
+
+  chan->setreadstream( stream );
+
+  return obj;
+}
+
+
 napi_value createteleventobject( napi_env env, projectrtpchannel::pointer p, jschannelevent *ev ) {
   napi_value result, tmp;
   if( napi_ok != napi_create_object( env, &result ) ) return NULL;
@@ -2341,7 +2500,10 @@ nodtls:
       napi_ok != napi_set_named_property( env, result, "dtmf", mfunc ) ||
 
       napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelremote, nullptr, &mfunc ) ||
-      napi_ok != napi_set_named_property( env, result, "remote", mfunc )
+      napi_ok != napi_set_named_property( env, result, "remote", mfunc ) ||
+
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelreadstream, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "readstream", mfunc )
     ) {
     delete pb;
     return NULL;
