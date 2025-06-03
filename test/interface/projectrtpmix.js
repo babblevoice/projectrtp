@@ -91,6 +91,22 @@ describe( "channel mix", function() {
       if( "close" === d.action ) done()
     } )
 
+    const rsa = await channela.readstream( {"combined": true });
+
+    const receivedchunksa = [];
+
+    rsa.on( 'data', ( chunk ) => {
+      receivedchunksa.push( chunk )
+    } )
+
+    const rsb = await channelb.readstream();
+
+    const receivedchunksb = [];
+
+    rsb.on( 'data', ( chunk ) => {
+      receivedchunksb.push( chunk )
+    } )
+
     /* mix */
     expect( channela.mix( channelb ) ).to.be.true
 
@@ -108,6 +124,12 @@ describe( "channel mix", function() {
     expect( endpointapkcount ).to.be.within( 30, 51 )
     expect( endpointbpkcount ).to.be.within( 30, 51 )
 
+    expect( receivedchunksa.length ).to.be.greaterThan( 0 )
+    expect( receivedchunksa[ 0 ] ).to.be.instanceOf( Buffer )
+    expect( receivedchunksa[ 0 ].length ).to.be.greaterThan( 0 )
+    expect( receivedchunksb.length ).to.be.greaterThan( 0 )
+    expect( receivedchunksb[ 0 ] ).to.be.instanceOf( Buffer )
+    expect( receivedchunksb[ 0 ].length ).to.be.greaterThan( 0 )
     await finished
 
   } )

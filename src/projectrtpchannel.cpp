@@ -575,6 +575,8 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
       rtppacket *dst = this->gettempoutbuf();
       dst << this->outcodec;
       this->writepacket( dst );
+      std::vector<uint8_t> payload( dst->getpayload(), dst->getpayload() + dst->getpayloadlength() );
+      this->emittostream( payload );
     }
   } else if( ourplayer ) {
     rtppacket *out = this->gettempoutbuf();
@@ -584,6 +586,8 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
         this->outcodec << r;
         out << this->outcodec;
         this->writepacket( out );
+        std::vector<uint8_t> payload( out->getpayload(), out->getpayload() + out->getpayloadlength() );
+        this->emittostream( payload );
       }
     } else {
       postdatabacktojsfromthread( self, "play", "end", "completed" );
@@ -785,7 +789,15 @@ bool projectrtpchannel::checkfordtmf( rtppacket *src ) {
   return false;
 }
 
+void projectrtpchannel::setreadstream( projectrtpreadstream* stream ) {
+  this->readstream = stream;
+}
 
+void projectrtpchannel::emittostream( const std::vector<uint8_t>& data ) {
+  if ( this->readstream ) {
+    this->readstream->emitdata( data );
+  }
+}
 /*
 # writerecordings
 If our codecs (in and out) have data then write to recorded files.
@@ -2029,6 +2041,50 @@ napi_value createteleventobject( napi_env env, projectrtpchannel::pointer p, jsc
   return result;
 }
 
+napi_value channelreadstream( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value args[1];
+  napi_get_cb_info( env, info, &argc, args, nullptr, nullptr );
+
+  std::string encoding = "buffer";
+  bool combined = false;
+
+  if ( argc >= 1 ) {
+    napi_valuetype valuetype;
+    napi_typeof( env, args[0], &valuetype );
+    if ( valuetype == napi_object ) {
+      bool has_prop = false;
+      napi_value prop_val;
+
+      if ( napi_has_named_property( env, args[0], "encoding", &has_prop ), has_prop ) {
+        napi_get_named_property( env, args[0], "encoding", &prop_val );
+
+        size_t str_size;
+        napi_get_value_string_utf8( env, prop_val, nullptr, 0, &str_size );
+        std::string buf( str_size + 1, 0 );
+        napi_get_value_string_utf8( env, prop_val, buf.data(), buf.size(), nullptr );
+        buf.resize( str_size );
+        encoding = buf;
+      }
+
+      if ( napi_has_named_property( env, args[0], "combined", &has_prop ), has_prop ) {
+        napi_get_named_property( env, args[0], "combined", &prop_val );
+        napi_get_value_bool( env, prop_val, &combined );
+      }
+    }
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+
+  auto* stream = new projectrtpreadstream( env, chan.get(), encoding, combined );
+  napi_value js_obj = stream->init_js_object();
+
+  chan->setreadstream( stream );
+
+  return js_obj;
+}
+
+
 /*
 In case the user doesn't supply a call back to be notified then
 we use this one so that we can pass data back into the threadsafe
@@ -2341,7 +2397,10 @@ nodtls:
       napi_ok != napi_set_named_property( env, result, "dtmf", mfunc ) ||
 
       napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelremote, nullptr, &mfunc ) ||
-      napi_ok != napi_set_named_property( env, result, "remote", mfunc )
+      napi_ok != napi_set_named_property( env, result, "remote", mfunc ) ||
+
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelreadstream, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "readstream", mfunc )
     ) {
     delete pb;
     return NULL;
