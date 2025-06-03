@@ -65,7 +65,8 @@
         "src/projectrtpchannel.cpp",
         "src/projectrtpchannelmux.cpp",
         "src/projectrtpsrtp.cpp",
-        "src/projectrtpstun.cpp" ],
+        "src/projectrtpstun.cpp",
+        "src/projectrtpreadstream.cpp" ],
       "include_dirs": [
         "src"
       ]

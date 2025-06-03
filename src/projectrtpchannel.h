@@ -31,6 +31,7 @@
 #include "projectrtpsoundsoup.h"
 #include "projectrtpchannelrecorder.h"
 #include "projectrtpsrtp.h"
+#include "projectrtpreadstream.h"
 
 class projectrtpchannel;
 class projectchannelmux;
@@ -58,7 +59,7 @@ Purpose: RTP Channel - which represents RTP and RTCP. This is here we include ou
 
 RTP on SIP channels should be able to switch between CODECS during a session so we have to make sure we have space for that.
 */
-struct Channelreadstream;
+
 typedef std::shared_ptr< projectchannelmux > projectchannelmuxptr;
 
 typedef std::list< channelrecorder::pointer > chanrecptrlist;
@@ -68,7 +69,7 @@ class projectrtpchannel :
 
 public:
 
-  Channelreadstream* readstream = nullptr;
+  projectrtpreadstream* readstream = nullptr;
   friend projectchannelmux;
   projectrtpchannel( unsigned short port );
   ~projectrtpchannel( void );
@@ -100,7 +101,7 @@ public:
   void doopen( void );
   void emittostream( const std::vector<uint8_t>& data );
   unsigned short getport( void );
-  void setreadstream( Channelreadstream* stream );
+  void setreadstream( projectrtpreadstream* stream );
   void requestplay( soundsoup::pointer newdef );
   void requestrecord( channelrecorder::pointer rec );
   inline void echo( void ) { this->doecho = true; }
