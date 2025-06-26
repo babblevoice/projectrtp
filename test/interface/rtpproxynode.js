@@ -296,6 +296,7 @@ describe( "rtpproxy node", function() {
                 "channel": "echo",
                 "uuid": msg.uuid
               } ) )
+              
             sock.write(
               message.createmessage( {
                 "id": msg.id,
@@ -305,6 +306,75 @@ describe( "rtpproxy node", function() {
             return
           }
           case "close": {
+            /* The fullness of this object is tested elsewhere - but confirm it is a close object we receive */
+            expect( msg ).to.have.property( "action" ).that.is.a( "string" ).to.be.equal( "close" )
+            completed()
+            
+          }
+          }
+        } )
+      } )
+    } )
+
+    const ournode = await prtp.proxy.connect( mock.port )
+    await done
+
+    ournode.destroy()
+    await mock.close()
+  } )
+
+  it( "readstream channel", async function() {
+
+    let completed
+    const done = new Promise( ( r ) => completed = r )
+
+    const ourstate = message.newstate()
+    const mock = new mockserver()
+    await mock.listen()
+
+    let state = "begin"
+    mock.onnewconnection( ( sock ) => {
+      sock.on( "data", async ( data ) => {
+        message.parsemessage( ourstate, data, async ( msg ) => {
+          switch( state ) {
+          case "begin": {
+            state = "open"
+            sock.write(
+              message.createmessage( {
+                "id": "54",
+                "channel": "open"
+              } ) )
+            return
+          }
+          case "open": {
+            state = "record"
+            sock.write(
+              message.createmessage( {
+                "id": msg.id,
+                "channel": "echo",
+                "uuid": msg.uuid
+              } ) )
+            sock.write(
+              message.createmessage( {
+                "id": msg.id,
+                "channel": "record",
+                "uuid": msg.uuid,
+                options: { 
+                  "file": "/readstream/"
+                }
+              } ) )
+              await new Promise( ( resolve ) => { setTimeout( () => resolve(), 500 ) } )
+              sock.write(
+                message.createmessage( {
+                  "id": msg.id,
+                  "channel": "play",
+                  "uuid": msg.uuid,
+                  "soup": { loop: true, files: [ { "wav": "test/interface/pcaps/180fa1ac-08e5-11ed-bd4d-02dba5b5aad6.wav" } ] }
+                } ) )
+            return
+          }
+          case "close": {
+            //chnl.play( { "interupt":true, "files": [ { "wav": "test/interface/pcaps/180fa1ac-08e5-11ed-bd4d-02dba5b5aad6.wav" } ] } )
             /* The fullness of this object is tested elsewhere - but confirm it is a close object we receive */
             expect( msg ).to.have.property( "action" ).that.is.a( "string" ).to.be.equal( "close" )
             completed()
