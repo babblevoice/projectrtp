@@ -95,7 +95,8 @@ public:
   void requestclose( std::string reason );
   std::string closereason;
   void requestecho( bool e = true );
-
+  void emitcombinedmix( projectchannelmux *mux, projectrtpchannel *other_chan, rtppacket *src_self, rtppacket *src_other );
+  void emitcombinedmixall( projectchannelmux *mux, rtppacket *srcself );
   void doremote( void );
   void doclose( void );
   void doopen( void );

@@ -432,6 +432,10 @@ void projectrtpchannel::doclose( void ) {
     this->player = nullptr;
   }
 
+    if( nullptr != this->readstream ) {
+      postdatabacktojsfromthread( self, "readstream", "end", "channelclosed" );
+    }
+
   /* close our session if we have one */
   {
     SpinLockGuard dtlsguard( this->rtpdtlslock );
@@ -1169,6 +1173,76 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
 completewrite:
   this->outpkskipcount++;
 }
+
+void projectrtpchannel::emitcombinedmix( projectchannelmux *mux, projectrtpchannel *otherchan, rtppacket *srcself, rtppacket *srcother ) {
+  bool combinedself = ( this->readstream != nullptr ) ? this->readstream->combined : false;
+  bool combinedother = ( otherchan->readstream != nullptr ) ? otherchan->readstream->combined : false;
+
+  if( combinedself || combinedother ) {
+    mux->added.zero();
+
+    if( nullptr != srcself ) {
+      this->incodec << *srcself;
+      mux->added += this->incodec;
+    }
+
+    if( nullptr != srcother ) {
+      otherchan->incodec << *srcother;
+      mux->added += otherchan->incodec;
+    }
+
+    if( combinedself ) {
+      rtppacket *dst = this->gettempoutbuf();
+      this->outcodec << mux->added;
+      dst << this->outcodec;
+      std::vector<uint8_t> payload( dst->getpayload(), dst->getpayload() + dst->getpayloadlength() );
+      this->emittostream( payload );
+    }
+
+    if( combinedother ) {
+      rtppacket *dst = otherchan->gettempoutbuf();
+      otherchan->outcodec << mux->added;
+      dst << otherchan->outcodec;
+      std::vector<uint8_t> payload( dst->getpayload(), dst->getpayload() + dst->getpayloadlength() );
+      otherchan->emittostream( payload );
+    }
+  }
+  else {
+    if( nullptr != srcself ) {
+      std::vector<uint8_t> payload( srcself->getpayload(), srcself->getpayload() + srcself->getpayloadlength() );
+      this->emittostream( payload );
+    }
+
+    if( nullptr != srcother ) {
+      std::vector<uint8_t> payload( srcother->getpayload(), srcother->getpayload() + srcother->getpayloadlength() );
+      otherchan->emittostream( payload );
+    }
+  }
+}
+
+void projectrtpchannel::emitcombinedmixall( projectchannelmux *mux, rtppacket *srcself )
+{
+    bool combinedself = ( this->readstream != nullptr ) ? this->readstream->combined : false;
+
+    if( combinedself ) {
+      rtppacket *dst = this->gettempoutbuf();
+      this->outcodec << mux->added;
+      dst << this->outcodec;
+
+      std::vector<uint8_t> payload( dst->getpayload(), dst->getpayload() + dst->getpayloadlength() );
+      this->emittostream( payload );
+    }
+    else {
+        if( nullptr != srcself ) {
+            std::vector<uint8_t> payload(
+                srcself->getpayload(),
+                srcself->getpayload() + srcself->getpayloadlength() );
+            this->emittostream( payload );
+        }
+    }
+}
+
+
 
 /*
 ## mix
@@ -2041,6 +2115,20 @@ napi_value createteleventobject( napi_env env, projectrtpchannel::pointer p, jsc
   return result;
 }
 
+napi_value createreadstreamobject( napi_env env, projectrtpchannel::pointer p, jschannelevent *ev ) {
+
+  napi_value result, tmp;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, "readstream", NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "action", tmp ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, ev->arg1.c_str(), NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "event", tmp ) ) return NULL;
+
+  return result;
+}
+
 napi_value channelreadstream( napi_env env, napi_callback_info info ) {
   size_t argc = 1;
   napi_value args[1];
@@ -2114,6 +2202,8 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
     ourdata = createteleventobject( env, p, ev );
   } else if( "mix" == ev->event ) {
     ourdata = createmixobject( env, p, ev );
+  } else if( "readstream" == ev->event ) {
+    ourdata = createreadstreamobject( env, p, ev );
   }
 
   napi_value undefined;

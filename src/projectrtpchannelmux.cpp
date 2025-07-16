@@ -126,6 +126,7 @@ void projectchannelmux::mixall( void ) {
         SpinLockGuard guard( chan->rtpbufferlock );
         chan->inbuff->poppeeked();
       }
+      chan->emitcombinedmixall( this, src );
     }
 
     chan->outcodec << this->subtracted;
@@ -207,47 +208,7 @@ void projectchannelmux::mix2( void ) {
 
   this->postrtpdata( chan2, chan1, src2 );
 
-  bool combined1 = ( chan1->readstream != nullptr ) ? chan1->readstream->combined : false;
-  bool combined2 = ( chan2->readstream != nullptr ) ? chan2->readstream->combined : false;
-
-  if( combined1 || combined2 ) {
-    this->added.zero();
-
-    if( nullptr != src1 ) {
-      chan1->incodec << *src1;
-      this->added += chan1->incodec;
-    }
-
-    if( nullptr != src2 ) {
-      chan2->incodec << *src2;
-      this->added += chan2->incodec;
-    }
-
-    if( combined1 ) {
-      rtppacket *dst = chan1->gettempoutbuf();
-      chan1->outcodec << this->added;
-      dst << chan1->outcodec;
-      chan1->writepacket( dst );
-    }
-
-    if( combined2 ) {
-      rtppacket *dst = chan2->gettempoutbuf();
-      chan2->outcodec << this->added;
-      dst << chan2->outcodec;
-      chan2->writepacket( dst );
-    }
-  }
-  else {
-    if( nullptr != src1 ) {
-      std::vector<uint8_t> payload( src1->getpayload(), src1->getpayload() + src1->getpayloadlength() );
-      chan1->emittostream( payload );
-    }
-
-    if( nullptr != src2 ) {
-      std::vector<uint8_t> payload( src2->getpayload(), src2->getpayload() + src2->getpayloadlength() );
-      chan2->emittostream( payload );
-    }
-  }
+  chan1->emitcombinedmix( this, chan2.get(), src1, src2 );
 }
 
 

@@ -95,15 +95,15 @@ describe( "channel mix", function() {
 
     const receivedchunksa = [];
 
-    rsa.on( 'data', ( chunk ) => {
+    rsa.on( "data", ( chunk ) => {
       receivedchunksa.push( chunk )
     } )
 
-    const rsb = await channelb.readstream();
+    const rsb = await channelb.readstream( { "combined": true } );
 
     const receivedchunksb = [];
 
-    rsb.on( 'data', ( chunk ) => {
+    rsb.on( "data", ( chunk ) => {
       receivedchunksb.push( chunk )
     } )
 
@@ -815,6 +815,14 @@ describe( "channel mix", function() {
     expect( channela.mix( channelb ) ).to.be.true
     expect( channela.mix( channelc ) ).to.be.true
 
+    const rsb = await channelb.readstream( { "combined": true } );
+
+    const receivedchunksb = [];
+
+    rsb.on( "data", ( chunk ) => {
+      receivedchunksb.push( chunk )
+    } )
+
     /* Now, when we send UDP on endpointb it  passes through our mix then arrives at endpointa */
     for( let i = 0;  50 > i; i ++ ) {
       sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
@@ -830,6 +838,9 @@ describe( "channel mix", function() {
     /* This value is based on timeing so may vary very slightly */
     expect( endpointapkcount ).to.be.within( 59, 61 )
     expect( endpointbpkcount ).to.be.within( 59, 61 )
+    expect( receivedchunksb.length ).to.be.greaterThan( 0 )
+    expect( receivedchunksb[ 0 ] ).to.be.instanceOf( Buffer )
+    expect( receivedchunksb[ 0 ].length ).to.be.greaterThan( 0 )
 
     await finished
 

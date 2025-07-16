@@ -1,3 +1,10 @@
+#include "projectrtpreadstream.h"
+#include "projectrtpchannel.h"
+#include <node_api.h>
+#include <vector>
+#include <cstdint>
+#include <cstring> 
+
 projectrtpreadstream::projectrtpreadstream( napi_env env, projectrtpchannel* channel, const std::string& encoding, bool combined )
   : env_( env ), js_this_( nullptr ), on_data_cb_( nullptr ), on_end_cb_( nullptr ),
     tsfn_( nullptr ), combined( combined ), encoding_( encoding ), channel_( channel ) {}

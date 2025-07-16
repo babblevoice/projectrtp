@@ -187,7 +187,7 @@ describe( "rtpchannel", function() {
 
       const receivedChunks = [];
 
-      rs.on( 'data', ( chunk ) => {
+      rs.on( "data", ( chunk ) => {
         receivedChunks.push( chunk )
       } )
 
