@@ -31,6 +31,7 @@
 #include "projectrtpsoundsoup.h"
 #include "projectrtpchannelrecorder.h"
 #include "projectrtpsrtp.h"
+#include "projectrtpreadstream.h"
 
 class projectrtpchannel;
 class projectchannelmux;
@@ -67,6 +68,8 @@ class projectrtpchannel :
   public std::enable_shared_from_this< projectrtpchannel > {
 
 public:
+
+  projectrtpreadstream* readstream = nullptr;
   friend projectchannelmux;
   projectrtpchannel( unsigned short port );
   ~projectrtpchannel( void );
@@ -92,13 +95,14 @@ public:
   void requestclose( std::string reason );
   std::string closereason;
   void requestecho( bool e = true );
-
+  void emitcombinedmix( projectchannelmux *mux, projectrtpchannel *other_chan, rtppacket *src_self, rtppacket *src_other );
+  void emitcombinedmixall( projectchannelmux *mux, rtppacket *srcself );
   void doremote( void );
   void doclose( void );
   void doopen( void );
-
+  void emittostream( const std::vector<uint8_t>& data );
   unsigned short getport( void );
-
+  void setreadstream( projectrtpreadstream* stream );
   void requestplay( soundsoup::pointer newdef );
   void requestrecord( channelrecorder::pointer rec );
   inline void echo( void ) { this->doecho = true; }

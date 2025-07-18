@@ -165,6 +165,10 @@ describe( "rtpchannel", function() {
 
       const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
 
+        expect( receivedChunks.length ).to.be.greaterThan( 0 )
+        expect( receivedChunks[ 0 ] ).to.be.instanceOf( Buffer )
+        expect( receivedChunks[ 0 ].length ).to.be.greaterThan( 0 )
+
         if( "close" === d.action ) {
           expect( d.reason ).to.equal( "requested" )
           expect( receviedpkcount ).to.equal( 50 )
@@ -178,8 +182,16 @@ describe( "rtpchannel", function() {
           done()
         }
       } )
-      expect( channel ).to.be.an( "object" )
 
+      const rs = await channel.readstream();
+
+      const receivedChunks = [];
+
+      rs.on( "data", ( chunk ) => {
+        receivedChunks.push( chunk )
+      } )
+
+      expect( channel ).to.be.an( "object" )
       expect( channel.close ).to.be.an( "function" )
       expect( channel.local ).to.have.property( "port" ).that.is.a( "number" )
 

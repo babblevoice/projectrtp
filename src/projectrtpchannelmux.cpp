@@ -126,6 +126,7 @@ void projectchannelmux::mixall( void ) {
         SpinLockGuard guard( chan->rtpbufferlock );
         chan->inbuff->poppeeked();
       }
+      chan->emitcombinedmixall( this, src );
     }
 
     chan->outcodec << this->subtracted;
@@ -144,15 +145,16 @@ void projectchannelmux::mix2( void ) {
   auto chans = this->channels.begin();
   auto chan1 = *chans++;
   auto chan2 = *chans;
-  rtppacket *src;
+  rtppacket *src1 = nullptr;
+  rtppacket *src2 = nullptr;
 
   while( true ) {
     {
       SpinLockGuard guard( chan1->rtpbufferlock );
-      src = chan1->inbuff->pop();
+      src1 = chan1->inbuff->pop();
     }
 
-    if( nullptr == src ) break;
+    if( nullptr == src1 ) break;
 
     dtlssession::pointer currentdtlssession;
     {
@@ -160,31 +162,31 @@ void projectchannelmux::mix2( void ) {
       currentdtlssession = chan1->rtpdtls;
     }
 
-
     if( nullptr != currentdtlssession &&
         !currentdtlssession->rtpdtlshandshakeing ) {
-      if( !currentdtlssession->unprotect( src ) ) {
+      if( !currentdtlssession->unprotect( src1 ) ) {
         chan1->receivedpkskip++;
-        src = nullptr;
+        src1 = nullptr;
         break;
       }
     }
 
-    /* process but ignore and look for next other packet */
-    if( !chan1->checkfordtmf( src ) ) break;
+    if( !chan1->checkfordtmf( src1 ) ) break;
+
+    break;
   }
-  this->postrtpdata( chan1, chan2, src );
+
+  this->postrtpdata( chan1, chan2, src1 );
 
   while( true ) {
     {
       SpinLockGuard guard( chan2->rtpbufferlock );
-      src = chan2->inbuff->pop();
+      src2 = chan2->inbuff->pop();
     }
 
-    if( nullptr == src ) break;
+    if( nullptr == src2 ) break;
 
-
-    dtlssession::pointer currentdtlssession;    
+    dtlssession::pointer currentdtlssession;
     {
       SpinLockGuard guard( chan2->rtpdtlslock );
       currentdtlssession = chan2->rtpdtls;
@@ -192,18 +194,23 @@ void projectchannelmux::mix2( void ) {
 
     if( nullptr != currentdtlssession &&
         !currentdtlssession->rtpdtlshandshakeing ) {
-      if( !currentdtlssession->unprotect( src ) ) {
+      if( !currentdtlssession->unprotect( src2 ) ) {
         chan2->receivedpkskip++;
-        src = nullptr;
+        src2 = nullptr;
         break;
       }
     }
 
-    if( !chan2->checkfordtmf( src ) ) break;
+    if( !chan2->checkfordtmf( src2 ) ) break;
+
+    break;
   }
 
-  this->postrtpdata( chan2, chan1, src );
+  this->postrtpdata( chan2, chan1, src2 );
+
+  chan1->emitcombinedmix( this, chan2.get(), src1, src2 );
 }
+
 
 /**
  * Called from a channel which has received DTMF - we forward onto all other channels,

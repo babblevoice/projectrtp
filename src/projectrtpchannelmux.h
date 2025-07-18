@@ -38,6 +38,8 @@ public:
   void senddtmf( projectrtpchannelptr from, char digit );
   void go( void );
 
+  rawsound added;
+
 private:
 
   void mix2( void );
@@ -55,7 +57,6 @@ private:
 
   std::atomic_bool channelslock;
 
-  rawsound added;
   rawsound subtracted;
 
   bool active;

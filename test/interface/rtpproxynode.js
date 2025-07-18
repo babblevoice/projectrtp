@@ -296,6 +296,7 @@ describe( "rtpproxy node", function() {
                 "channel": "echo",
                 "uuid": msg.uuid
               } ) )
+              
             sock.write(
               message.createmessage( {
                 "id": msg.id,

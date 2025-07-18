@@ -16,6 +16,7 @@ scenarios.push( require( "./mix2.scenario.js" ) )
 scenarios.push( require( "./mixunmix.scenario.js" ) )
 scenarios.push( require( "./playbackthenmix.scenario.js" ) )
 scenarios.push( require( "./playbackrecordtoofast.scenario.js" ) )
+scenarios.push( require( "./readstream.scenario.js" ) )
 
 /*
 The purpose of this script is to load up projectrtp to expose any issues with timing.

@@ -432,6 +432,10 @@ void projectrtpchannel::doclose( void ) {
     this->player = nullptr;
   }
 
+    if( nullptr != this->readstream ) {
+      postdatabacktojsfromthread( self, "readstream", "end", "channelclosed" );
+    }
+
   /* close our session if we have one */
   {
     SpinLockGuard dtlsguard( this->rtpdtlslock );
@@ -575,6 +579,8 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
       rtppacket *dst = this->gettempoutbuf();
       dst << this->outcodec;
       this->writepacket( dst );
+      std::vector<uint8_t> payload( dst->getpayload(), dst->getpayload() + dst->getpayloadlength() );
+      this->emittostream( payload );
     }
   } else if( ourplayer ) {
     rtppacket *out = this->gettempoutbuf();
@@ -584,6 +590,8 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
         this->outcodec << r;
         out << this->outcodec;
         this->writepacket( out );
+        std::vector<uint8_t> payload( out->getpayload(), out->getpayload() + out->getpayloadlength() );
+        this->emittostream( payload );
       }
     } else {
       postdatabacktojsfromthread( self, "play", "end", "completed" );
@@ -785,7 +793,15 @@ bool projectrtpchannel::checkfordtmf( rtppacket *src ) {
   return false;
 }
 
+void projectrtpchannel::setreadstream( projectrtpreadstream* stream ) {
+  this->readstream = stream;
+}
 
+void projectrtpchannel::emittostream( const std::vector<uint8_t>& data ) {
+  if ( this->readstream ) {
+    this->readstream->emitdata( data );
+  }
+}
 /*
 # writerecordings
 If our codecs (in and out) have data then write to recorded files.
@@ -1157,6 +1173,76 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
 completewrite:
   this->outpkskipcount++;
 }
+
+void projectrtpchannel::emitcombinedmix( projectchannelmux *mux, projectrtpchannel *otherchan, rtppacket *srcself, rtppacket *srcother ) {
+  bool combinedself = ( this->readstream != nullptr ) ? this->readstream->combined : false;
+  bool combinedother = ( otherchan->readstream != nullptr ) ? otherchan->readstream->combined : false;
+
+  if( combinedself || combinedother ) {
+    mux->added.zero();
+
+    if( nullptr != srcself ) {
+      this->incodec << *srcself;
+      mux->added += this->incodec;
+    }
+
+    if( nullptr != srcother ) {
+      otherchan->incodec << *srcother;
+      mux->added += otherchan->incodec;
+    }
+
+    if( combinedself ) {
+      rtppacket *dst = this->gettempoutbuf();
+      this->outcodec << mux->added;
+      dst << this->outcodec;
+      std::vector<uint8_t> payload( dst->getpayload(), dst->getpayload() + dst->getpayloadlength() );
+      this->emittostream( payload );
+    }
+
+    if( combinedother ) {
+      rtppacket *dst = otherchan->gettempoutbuf();
+      otherchan->outcodec << mux->added;
+      dst << otherchan->outcodec;
+      std::vector<uint8_t> payload( dst->getpayload(), dst->getpayload() + dst->getpayloadlength() );
+      otherchan->emittostream( payload );
+    }
+  }
+  else {
+    if( nullptr != srcself ) {
+      std::vector<uint8_t> payload( srcself->getpayload(), srcself->getpayload() + srcself->getpayloadlength() );
+      this->emittostream( payload );
+    }
+
+    if( nullptr != srcother ) {
+      std::vector<uint8_t> payload( srcother->getpayload(), srcother->getpayload() + srcother->getpayloadlength() );
+      otherchan->emittostream( payload );
+    }
+  }
+}
+
+void projectrtpchannel::emitcombinedmixall( projectchannelmux *mux, rtppacket *srcself )
+{
+    bool combinedself = ( this->readstream != nullptr ) ? this->readstream->combined : false;
+
+    if( combinedself ) {
+      rtppacket *dst = this->gettempoutbuf();
+      this->outcodec << mux->added;
+      dst << this->outcodec;
+
+      std::vector<uint8_t> payload( dst->getpayload(), dst->getpayload() + dst->getpayloadlength() );
+      this->emittostream( payload );
+    }
+    else {
+        if( nullptr != srcself ) {
+            std::vector<uint8_t> payload(
+                srcself->getpayload(),
+                srcself->getpayload() + srcself->getpayloadlength() );
+            this->emittostream( payload );
+        }
+    }
+}
+
+
 
 /*
 ## mix
@@ -2029,6 +2115,64 @@ napi_value createteleventobject( napi_env env, projectrtpchannel::pointer p, jsc
   return result;
 }
 
+napi_value createreadstreamobject( napi_env env, projectrtpchannel::pointer p, jschannelevent *ev ) {
+
+  napi_value result, tmp;
+  if( napi_ok != napi_create_object( env, &result ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, "readstream", NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "action", tmp ) ) return NULL;
+
+  if( napi_ok != napi_create_string_utf8( env, ev->arg1.c_str(), NAPI_AUTO_LENGTH, &tmp ) ) return NULL;
+  if( napi_ok != napi_set_named_property( env, result, "event", tmp ) ) return NULL;
+
+  return result;
+}
+
+napi_value channelreadstream( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value args[1];
+  napi_get_cb_info( env, info, &argc, args, nullptr, nullptr );
+
+  std::string encoding = "buffer";
+  bool combined = false;
+
+  if ( argc >= 1 ) {
+    napi_valuetype valuetype;
+    napi_typeof( env, args[0], &valuetype );
+    if ( valuetype == napi_object ) {
+      bool has_prop = false;
+      napi_value prop_val;
+
+      if ( napi_has_named_property( env, args[0], "encoding", &has_prop ), has_prop ) {
+        napi_get_named_property( env, args[0], "encoding", &prop_val );
+
+        size_t str_size;
+        napi_get_value_string_utf8( env, prop_val, nullptr, 0, &str_size );
+        std::string buf( str_size + 1, 0 );
+        napi_get_value_string_utf8( env, prop_val, buf.data(), buf.size(), nullptr );
+        buf.resize( str_size );
+        encoding = buf;
+      }
+
+      if ( napi_has_named_property( env, args[0], "combined", &has_prop ), has_prop ) {
+        napi_get_named_property( env, args[0], "combined", &prop_val );
+        napi_get_value_bool( env, prop_val, &combined );
+      }
+    }
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+
+  auto* stream = new projectrtpreadstream( env, chan.get(), encoding, combined );
+  napi_value js_obj = stream->init_js_object();
+
+  chan->setreadstream( stream );
+
+  return js_obj;
+}
+
+
 /*
 In case the user doesn't supply a call back to be notified then
 we use this one so that we can pass data back into the threadsafe
@@ -2058,6 +2202,8 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
     ourdata = createteleventobject( env, p, ev );
   } else if( "mix" == ev->event ) {
     ourdata = createmixobject( env, p, ev );
+  } else if( "readstream" == ev->event ) {
+    ourdata = createreadstreamobject( env, p, ev );
   }
 
   napi_value undefined;
@@ -2341,7 +2487,10 @@ nodtls:
       napi_ok != napi_set_named_property( env, result, "dtmf", mfunc ) ||
 
       napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelremote, nullptr, &mfunc ) ||
-      napi_ok != napi_set_named_property( env, result, "remote", mfunc )
+      napi_ok != napi_set_named_property( env, result, "remote", mfunc ) ||
+
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelreadstream, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "readstream", mfunc )
     ) {
     delete pb;
     return NULL;
