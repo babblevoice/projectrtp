@@ -1,5 +1,5 @@
 
-FROM alpine:3.21 AS builder
+FROM alpine:3.22 AS builder
 
 WORKDIR /usr/src/
 
@@ -9,16 +9,16 @@ RUN apk add --no-cache \
     wget https://github.com/TimothyGu/libilbc/releases/download/v3.0.4/libilbc-3.0.4.tar.gz; \
     tar xvzf libilbc-3.0.4.tar.gz; \
     cd libilbc-3.0.4; \
-    cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; cmake --build .; cmake --install .; 
-    
+    cmake . -DCMAKE_INSTALL_LIBDIR=/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/include; cmake --build .; cmake --install .;
+
 WORKDIR /usr/src/projectrtp
 COPY . .
 
 # a more correct to install this module into the global location
 RUN npm install --production --build-from-source && \
-    npm install -g . 
+    npm install -g .
 
-FROM alpine:3.21 AS app
+FROM alpine:3.22 AS app
 
 RUN apk add --no-cache \
     spandsp tiff gnutls libsrtp libc6-compat openssl ca-certificates nodejs npm
