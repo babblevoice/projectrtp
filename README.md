@@ -62,22 +62,13 @@ These are designed to create real world scenarios - opening and closing multiple
 
 ### Local build
 
-If you wish to build outsode of a Docker image, there are npm target scripts for build and rebuild. For beta releases the following can be done.
+Local dev build
 
 ```bash
-docker buildx prune
-docker buildx build --platform linux/amd64,linux/arm64 -t tinpotnick/projectrtp:2.6.2 . --push
-```
+docker build --target builder -t projectrtp:dev .
 
-### Dev build
-
-Some items might need installing.
-```sh
-sudo dnf install libasan libubsan
-```
-
-```sh
-npm run build:dev
+# to run
+docker run -it --rm projectrtp:dev [command ie sh or npm test etc]
 ```
 
 ## Example scripts
@@ -129,7 +120,7 @@ A server would typically run application logic before then opening media ports.
 
 const prtp = require( "@babblevoice/projectrtp" ).projectrtp
 
-/* This switches this server to a central 
+/* This switches this server to a central
 server and requires nodes to connect to us
 to provide worker nodes */
 await prtp.server.listen()
@@ -199,7 +190,7 @@ async function go() {
   const pa = await wgets( "https://checkip.amazonaws.com" )
 
   prtp.setaddress( pa )
-  
+
 }
 
 listen()
@@ -209,7 +200,7 @@ listen()
 ## Stats
 
 When we receive an object back from our node (or if standlone just ourself), the object contains information about the
-state of the sevrer. It includes items such as number of channels open, MOS quality score etc. 
+state of the sevrer. It includes items such as number of channels open, MOS quality score etc.
 
 MOS is only included for our received measurements.
 

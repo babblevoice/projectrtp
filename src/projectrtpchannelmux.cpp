@@ -149,7 +149,7 @@ void projectchannelmux::mix2( void ) {
   while( true ) {
     {
       SpinLockGuard guard( chan1->rtpbufferlock );
-      src = chan1->inbuff->pop();
+      src = chan1->inbuff->peek();
     }
 
     if( nullptr == src ) break;
@@ -165,6 +165,10 @@ void projectchannelmux::mix2( void ) {
         !currentdtlssession->rtpdtlshandshakeing ) {
       if( !currentdtlssession->unprotect( src ) ) {
         chan1->receivedpkskip++;
+        {
+          SpinLockGuard guard( chan1->rtpbufferlock );
+          chan1->inbuff->poppeeked();
+        }
         src = nullptr;
         break;
       }
@@ -172,13 +176,22 @@ void projectchannelmux::mix2( void ) {
 
     /* process but ignore and look for next other packet */
     if( !chan1->checkfordtmf( src ) ) break;
+
+    {
+      SpinLockGuard guard( chan1->rtpbufferlock );
+      chan1->inbuff->poppeeked();
+    }
   }
   this->postrtpdata( chan1, chan2, src );
+  if( nullptr != src ) {
+    SpinLockGuard guard( chan1->rtpbufferlock );
+    chan1->inbuff->poppeeked();
+  }
 
   while( true ) {
     {
       SpinLockGuard guard( chan2->rtpbufferlock );
-      src = chan2->inbuff->pop();
+      src = chan2->inbuff->peek();
     }
 
     if( nullptr == src ) break;
@@ -194,15 +207,28 @@ void projectchannelmux::mix2( void ) {
         !currentdtlssession->rtpdtlshandshakeing ) {
       if( !currentdtlssession->unprotect( src ) ) {
         chan2->receivedpkskip++;
+        {
+          SpinLockGuard guard( chan2->rtpbufferlock );
+          chan2->inbuff->poppeeked();
+        }
         src = nullptr;
         break;
       }
     }
 
     if( !chan2->checkfordtmf( src ) ) break;
+
+    {
+      SpinLockGuard guard( chan2->rtpbufferlock );
+      chan2->inbuff->poppeeked();
+    }
   }
 
   this->postrtpdata( chan2, chan1, src );
+  if( nullptr != src ) {
+    SpinLockGuard guard( chan2->rtpbufferlock );
+    chan2->inbuff->poppeeked();
+  }
 }
 
 /**

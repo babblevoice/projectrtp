@@ -188,13 +188,13 @@ void projectrtpchannel::remote( std::string address,
     this->remoteaddress = address;
     changed = true;
   }
-  
+
   if( port != this->remoteport ) {
     this->remoteport = port;
     changed = true;
   }
 
-  
+
   if( this->dtlsfingerprint != fingerprint ) {
     this->dtlsfingerprint = fingerprint;
     changed = true;
@@ -233,7 +233,7 @@ void projectrtpchannel::remote( std::string address,
         this->rtpdtls = newsession;
       }
     }
-    
+
     this->receivedrtp = false;
     this->remoteconfirmed = false;
     this->autoadjust = true;
@@ -316,7 +316,7 @@ void projectrtpchannel::badsocketopen( const char *err ) {
     this->rtpsocket.close();
   }
 
-  if( !this->rtcpsocket.is_open() ) {
+  if( this->rtcpsocket.is_open() ) {
     this->rtcpsocket.close();
   }
 
@@ -470,7 +470,7 @@ bool projectrtpchannel::checkidlerecv( void ) {
         this->doclose();
         return true;
         }
-    
+
     } else if( this->hardtickswithnortpcount > ( 50 * 60 * 60 ) ) { /* 1hr hard timeout */
       this->closereason = "idle";
       this->doclose();
@@ -535,11 +535,13 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
   }
 
   rtppacket *src;
-  do {
+  while( true ) {
     {
       SpinLockGuard guard( this->rtpbufferlock );
-      src = this->inbuff->pop();
+      src = this->inbuff->peek();
     }
+
+    if( nullptr == src ) break;
 
     dtlssession::pointer currentdtlssession;
     {
@@ -551,10 +553,22 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
         !currentdtlssession->rtpdtlshandshakeing ) {
       if( !currentdtlssession->unprotect( src ) ) {
         this->receivedpkskip++;
+        {
+          SpinLockGuard guard( this->rtpbufferlock );
+          this->inbuff->poppeeked();
+        }
         src = nullptr;
+        break;
       }
     }
-  } while( this->checkfordtmf( src ) );
+
+    if( !this->checkfordtmf( src ) ) break;
+
+    {
+      SpinLockGuard guard( this->rtpbufferlock );
+      this->inbuff->poppeeked();
+    }
+  }
 
   this->senddtmf();
 
@@ -590,6 +604,11 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
       SpinLockGuard guard( this->playerlock );
       this->player = nullptr;
     }
+  }
+
+  if( nullptr != src ) {
+    SpinLockGuard guard( this->rtpbufferlock );
+    this->inbuff->poppeeked();
   }
 
   this->writerecordings();
@@ -711,7 +730,7 @@ bool projectrtpchannel::recordercompleted( const channelrecorder::pointer& rec )
 }
 
 /**
- * Helper function for checkfordtmf - 
+ * Helper function for checkfordtmf -
  * 1. stop player if set to stop on event
  * 2. signal back to our control server that an event has been received.
  * 3. forward to other channels we are mixing with
@@ -821,7 +840,7 @@ void projectrtpchannel::writerecordings( void ) {
 
     /* calculate power for the below tests and the finish test in ::removeoldrecorders */
     uint16_t pav = 0;
-    if( ( !rec->isactive() && rec->startabovepower > 0 ) || 
+    if( ( !rec->isactive() && rec->startabovepower > 0 ) ||
         ( rec->isactive() && rec->finishbelowpower > 0 ) ) {
       pav = rec->poweravg( power );
     }
@@ -875,10 +894,10 @@ bool projectrtpchannel::dtlsnegotiate( void ) {
 }
 
 /**
- * @brief 
- * 
- * @return true 
- * @return false 
+ * @brief
+ *
+ * @return true
+ * @return false
  */
 bool projectrtpchannel::handlestun( uint8_t *pk, size_t len ) {
 
@@ -904,7 +923,7 @@ bool projectrtpchannel::handlestun( uint8_t *pk, size_t len ) {
 }
 
 /**
- * Auto correct our to send to address if required. 
+ * Auto correct our to send to address if required.
  */
 void projectrtpchannel::correctaddress( void ) {
 
@@ -949,7 +968,7 @@ void projectrtpchannel::readsomertp( void ) {
     SpinLockGuard guard( this->rtpbufferlock );
     buf = this->inbuff->reserve();
   }
-  
+
 
   if( nullptr == buf ) {
     fprintf( stderr, "Error no buffer\n" );
@@ -957,48 +976,49 @@ void projectrtpchannel::readsomertp( void ) {
     return;
   }
 
+  auto self = shared_from_this();
+
   this->rtpsocket.async_receive_from(
   boost::asio::buffer( buf->pk, RTPMAXLENGTH  ), this->rtpsenderendpoint,
-    [ this, buf ]( boost::system::error_code ec, std::size_t bytesrecvd ) {
+    [ self, buf ]( boost::system::error_code ec, std::size_t bytesrecvd ) {
 
-      if ( ec && ec != boost::asio::error::message_size ) return;
-      this->receivedpkcount++;
-
-      if( !this->active || this->_requestclose ) return;
+      if( !self->active || self->_requestclose ) return;
+      if( ec && ec != boost::asio::error::message_size ) return;
+      self->receivedpkcount++;
 
       if ( bytesrecvd > 0 && bytesrecvd <= RTPMAXLENGTH ) {
         buf->length = bytesrecvd;
 
-        if( this->handlestun( buf->pk, bytesrecvd ) )
+        if( self->handlestun( buf->pk, bytesrecvd ) )
           goto readsomemore;
 
         dtlssession::pointer currentdtlssession;
         {
-          SpinLockGuard guard( this->rtpdtlslock );
-          currentdtlssession = this->rtpdtls;
+          SpinLockGuard guard( self->rtpdtlslock );
+          currentdtlssession = self->rtpdtls;
         }
 
         if( nullptr != currentdtlssession &&
             currentdtlssession->rtpdtlshandshakeing ) {
           {
-            SpinLockGuard guard( this->rtpdtlslock );
+            SpinLockGuard guard( self->rtpdtlslock );
             currentdtlssession->write( buf->pk, bytesrecvd );
           }
 
-          this->dtlsnegotiate();
+          self->dtlsnegotiate();
           goto readsomemore;
         }
 
         /* TODO ZRTP? */
         if( buf->getpacketextension() ) {
-          this->receivedpkskip++;
+          self->receivedpkskip++;
           goto readsomemore;
         }
 
-        this->correctaddress();
+        self->correctaddress();
 
-        if( !this->recv ) {
-          this->receivedpkskip++;
+        if( !self->recv ) {
+          self->receivedpkskip++;
           goto readsomemore;
         }
 
@@ -1007,10 +1027,10 @@ void projectrtpchannel::readsomertp( void ) {
         for now do not check.
         this->correctssrc( buf->getssrc() );
         */
-        
-        if( this->confirmedrtpsenderendpoint != this->rtpsenderendpoint ) {
+
+        if( self->confirmedrtpsenderendpoint != self->rtpsenderendpoint ) {
           /* After the first packet - we only accept data from the verified source */
-          this->receivedpkskip++;
+          self->receivedpkskip++;
           goto readsomemore;
         }
 
@@ -1021,25 +1041,27 @@ void projectrtpchannel::readsomertp( void ) {
         }
         */
 
-        this->tickswithnortpcount = 0;
-        this->hardtickswithnortpcount = 0;
+        self->tickswithnortpcount = 0;
+        self->hardtickswithnortpcount = 0;
 
         /* dynamic payload types */
         auto pt = buf->getpayloadtype();
-        if( pt == this->ilbcpt ) {
+        if( pt == self->ilbcpt ) {
           buf->setpayloadtype( ILBCPAYLOADTYPE );
-        } else if ( pt == this->rfc2833pt ) {
+        } else if ( pt == self->rfc2833pt ) {
           buf->setpayloadtype( RFC2833PAYLOADTYPE );
         }
 
         {
-          SpinLockGuard guard( this->rtpbufferlock );
-          this->inbuff->push();
+          SpinLockGuard guard( self->rtpbufferlock );
+          self->inbuff->push();
         }
       }
 
 readsomemore:
-      this->readsomertp();
+      if( self->active && !self->_requestclose ) {
+        self->readsomertp();
+      }
 
     } );
 }
@@ -1070,18 +1092,24 @@ rtppacket *projectrtpchannel::gettempoutbuf( void ) {
 Wait for RTP data
 */
 void projectrtpchannel::readsomertcp( void ) {
+
+  if( !this->active || this->_requestclose ) return;
+
+  auto self = shared_from_this();
+
   this->rtcpsocket.async_receive_from(
   boost::asio::buffer( &this->rtcpdata[ 0 ], RTCPMAXLENGTH ), this->rtcpsenderendpoint,
-    [ this ]( boost::system::error_code ec, std::size_t bytes_recvd ) {
+    [ self ]( boost::system::error_code ec, std::size_t bytes_recvd ) {
 
+      if( !self->active || self->_requestclose ) return;
       if( ec ) return;
 
       if ( bytes_recvd > 0 && bytes_recvd <= RTCPMAXLENGTH ) {
-        this->handlertcpdata();
+        self->handlertcpdata();
       }
 
-      if( bytes_recvd > 0 && this->active ) {
-        this->readsomertcp();
+      if( bytes_recvd > 0 && self->active && !self->_requestclose ) {
+        self->readsomertcp();
       }
     } );
 }
@@ -1230,7 +1258,7 @@ bool projectrtpchannel::unmix( void ) {
 
 /**
  * @brief Actual do set the variables ot show unmixed.
- * 
+ *
  */
 void projectrtpchannel::dounmix( void ) {
   this->mixing = false;
@@ -1334,7 +1362,7 @@ void projectrtpchannel::senddtmf( void ) {
     *tmp = htons( ( this->dtmfsendcount + 1 ) * 160 );
 
     this->writepacket( dst );
-    
+
   } else {
     /* end packet */
     rtppacket *dst = this->gettempoutbuf();
@@ -1452,7 +1480,7 @@ static projectrtpchannel::pointer getrtpchannelfromargv( napi_env env, napi_call
 static napi_value channelclose( napi_env env, napi_callback_info info ) {
 
   projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
-  if( nullptr == chan ) createnapibool( env, false );
+  if( nullptr == chan ) return createnapibool( env, false );
   chan->requestclose( "requested" );
 
   return createnapibool( env, true );
@@ -1563,7 +1591,7 @@ static napi_value channelrecord( napi_env env, napi_callback_info info ) {
   if( napi_ok == napi_has_named_property( env, argv[ 0 ], "numchannels", &hasit ) &&
       hasit &&
       napi_ok == napi_get_named_property( env, argv[ 0 ], "numchannels", &mtmp ) ) {
-        
+
     uint32_t numchannels = 2;
     napi_get_value_uint32( env, mtmp, &numchannels );
     if( 1 == numchannels || 2 == numchannels ) {
@@ -2118,8 +2146,8 @@ static napi_value channelcreate( napi_env env, napi_callback_info info ) {
   if( napi_ok == napi_has_named_property( env, argv[ 0 ], "remote", &hasit ) &&
       hasit &&
       napi_ok == napi_get_named_property( env, argv[ 0 ], "remote", &nremote ) ) {
-    /* 
-    optional - DTLS 
+    /*
+    optional - DTLS
     "dtls": {
       "fingerprint": {
         "type": "sha-256 - but ignored for now!",
@@ -2364,7 +2392,7 @@ nodtls:
       napi_ok != napi_create_string_utf8( env, getdtlssrtpsha256fingerprint(), NAPI_AUTO_LENGTH, &fp ) ||
       napi_ok != napi_set_named_property( env, ndtls, "fingerprint", fp ) ||
       napi_ok != napi_set_named_property( env, ndtls, "enabled", createnapibool( env, dtlsenabled ) ) ||
-      
+
       napi_ok != napi_create_string_utf8( env, p->icelocalpwd.c_str(), NAPI_AUTO_LENGTH, &nicepwd ) ||
       napi_ok != napi_set_named_property( env, nlocal, "icepwd", nicepwd ) ) {
 
