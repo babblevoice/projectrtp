@@ -4,7 +4,7 @@ FROM alpine:3.22 AS builder
 WORKDIR /usr/src/
 
 RUN apk add --no-cache \
-    alpine-sdk cmake python3 spandsp-dev tiff-dev gnutls-dev libsrtp-dev cmake boost-dev nodejs npm; \
+    alpine-sdk cmake python3 spandsp-dev tiff-dev gnutls-dev libsrtp-dev cmake boost-dev nodejs npm openssl; \
     npm -g install node-gyp; \
     wget https://github.com/TimothyGu/libilbc/releases/download/v3.0.4/libilbc-3.0.4.tar.gz; \
     tar xvzf libilbc-3.0.4.tar.gz; \
