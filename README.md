@@ -68,7 +68,7 @@ Local dev build
 docker build --target builder -t projectrtp:dev .
 
 # to run
-docker run -it --rm projectrtp:dev [command ie sh or npm test etc]
+docker run -it --rm projectrtp:dev [command ie sh or npm test etc but you might need to run npm install first for all dev deps for testing]
 ```
 
 ## Example scripts

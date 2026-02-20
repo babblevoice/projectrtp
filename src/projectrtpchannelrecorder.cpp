@@ -23,7 +23,9 @@ channelrecorder::channelrecorder( std::string file ) :
   activeat( boost::posix_time::not_a_date_time ),
   pause( false ),
   requestfinish( false ),
+  closepending( false ),
   completed( false ),
+  completedreason(),
   powerfilter(),
   _active( false )
 {

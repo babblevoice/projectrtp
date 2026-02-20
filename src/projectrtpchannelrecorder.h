@@ -45,7 +45,9 @@ public:
 
   std::atomic_bool pause;
   std::atomic_bool requestfinish;
+  std::atomic_bool closepending;
   std::atomic_bool completed; /* indicate clean up required */
+  std::string completedreason;
 
 private:
 

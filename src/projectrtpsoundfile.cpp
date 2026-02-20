@@ -4,6 +4,7 @@
 
 #include <iostream>
 #include <algorithm>
+#include <unistd.h>
 
 #include "projectrtpsoundfile.h"
 #include "globals.h"
@@ -434,7 +435,8 @@ NOTE: currently only working for PCM.
 */
 soundfilewriter::soundfilewriter( std::string &url, int16_t numchannels, int32_t samplerate ) :
   soundfile( open( url.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK, S_IRUSR | S_IWUSR ) ),
-  tickcount( 0 ) {
+  tickcount( 0 ),
+  closerequested( false ) {
 
   if ( -1 == this->file ) {
     /* Not much more we can do */
@@ -486,6 +488,48 @@ Clean up.
 soundfilewriter::~soundfilewriter() {
 }
 
+void soundfilewriter::requestclose( void ) {
+  SpinLockGuard guard( this->filelock );
+  this->closerequested = true;
+}
+
+bool soundfilewriter::isclosed( void ) {
+  SpinLockGuard guard( this->filelock );
+
+  if( -1 == this->file ) {
+    return true;
+  }
+
+  if( !this->closerequested ) {
+    return false;
+  }
+
+  if( EINPROGRESS == aio_error( &this->cbwavheader ) ) {
+    return false;
+  }
+
+  for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
+    if( EINPROGRESS == aio_error( &this->cbwavblock[ i ] ) ) {
+      return false;
+    }
+  }
+
+  if( 0 == aio_error( &this->cbwavheader ) ) {
+    aio_return( &this->cbwavheader );
+  }
+  for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
+    if( 0 == aio_error( &this->cbwavblock[ i ] ) ) {
+      aio_return( &this->cbwavblock[ i ] );
+    }
+  }
+
+  pwrite( this->file, &this->ourwavheader, sizeof( wavheader ), 0 );
+  fsync( this->file );
+  close( this->file );
+  this->file = -1;
+  return true;
+}
+
 /*
 # create
 Shared pointer for writing.
@@ -509,6 +553,9 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
 
   if( -1 == this->file ) {
     fprintf( stderr, "soundfile calling write with no open file!\n" );
+    return false;
+  }
+  if( this->closerequested ) {
     return false;
   }
 

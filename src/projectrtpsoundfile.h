@@ -150,9 +150,12 @@ public:
   soundfilewriter& operator=( soundfilewriter&& ) = delete;        // move assignment
 
   bool write( codecx &in, codecx &out );
+  void requestclose( void );
+  bool isclosed( void );
 
 private:
   int32_t tickcount;
+  std::atomic_bool closerequested;
 
 };
 
