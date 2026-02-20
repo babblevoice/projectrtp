@@ -442,6 +442,9 @@ void projectrtpchannel::doclose( void ) {
   {
     SpinLockGuard guard( this->recorderslock );
     for( auto& rec: this->recorders ) {
+      if( rec->sfile ) {
+        rec->sfile->requestclose();
+      }
       postdatabacktojsfromthread( self, "record", rec->file, "finished.channelclosed" );
     }
 
@@ -682,8 +685,26 @@ void projectrtpchannel::requestrecord( channelrecorder::pointer newrec ) {
 void projectrtpchannel::removeoldrecorders( pointer self ) {
 
   SpinLockGuard guard( this->recorderslock );
+  auto startrecorderclose = [&]( const channelrecorder::pointer &rec, const std::string &reason ) {
+    rec->closepending = true;
+    rec->completedreason = reason;
+    rec->maxsincestartpower = 0;
+    if( rec->sfile ) {
+      rec->sfile->requestclose();
+    }
+  };
 
   for ( auto const& rec : this->recorders ) {
+    if( rec->closepending ) {
+      if( !rec->sfile || rec->sfile->isclosed() ) {
+        rec->closepending = false;
+        rec->completed = true;
+        postdatabacktojsfromthread( self, "record", rec->file, rec->completedreason );
+        rec->completedreason.clear();
+      }
+      continue;
+    }
+
     if( rec->isactive() ) {
 
       boost::posix_time::ptime nowtime( boost::posix_time::microsec_clock::local_time() );
@@ -694,9 +715,7 @@ void projectrtpchannel::removeoldrecorders( pointer self ) {
       }
 
       if( rec->requestfinish ) {
-        rec->completed = true;
-        rec->maxsincestartpower = 0;
-        postdatabacktojsfromthread( self, "record", rec->file, "finished.requested" );
+        startrecorderclose( rec, "finished.requested" );
         continue;
       }
 
@@ -707,16 +726,12 @@ void projectrtpchannel::removeoldrecorders( pointer self ) {
       if( rec->finishbelowpower > 0 &&
           rec->maxsincestartpower > rec->finishbelowpower &&
           rec->lastpowercalc < rec->finishbelowpower ) {
-        rec->completed = true;
-        rec->maxsincestartpower = 0;
-        postdatabacktojsfromthread( self, "record", rec->file, "finished.belowpower" );
+        startrecorderclose( rec, "finished.belowpower" );
         continue;
       }
 
       if( 0 != rec->maxduration && diff.total_milliseconds() > rec->maxduration ) {
-        rec->completed = true;
-        rec->maxsincestartpower = 0;
-        postdatabacktojsfromthread( self, "record", rec->file, "finished.timeout" );
+        startrecorderclose( rec, "finished.timeout" );
         continue;
       }
     }
