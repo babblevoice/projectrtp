@@ -78,7 +78,6 @@ implimented) the address and port given to us when opening in the channel.
 projectrtpchannel::projectrtpchannel( unsigned short port ):
   /* public */
   _requestclose( false ),
-  closereason(),
   codec( 0 ),
   ssrcin( 0 ),
   ssrcout( 0 ),
@@ -105,8 +104,11 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   iceremotepwd(),
 #ifdef NODE_MODULE
   cb( NULL ),
+  cblock( false ),
 #endif
   /* private */
+  closereason(),
+  closereasonlock( false ),
   active( false ),
   port( port ),
   rfc2833pt( RFC2833PAYLOADTYPE ),
@@ -163,13 +165,20 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
 }
 
 void projectrtpchannel::requestclose( std::string reason ) {
-
-  this->closereason = reason;
+  {
+    SpinLockGuard guard( this->closereasonlock );
+    this->closereason = reason;
+  }
   if( this->mixing ) {
     this->removemixer = true;
   } else {
     this->_requestclose.exchange( true, std::memory_order_acquire );
   }
+}
+
+std::string projectrtpchannel::getclosereason( void ) {
+  SpinLockGuard guard( this->closereasonlock );
+  return this->closereason;
 }
 
 void projectrtpchannel::remote( std::string address,
@@ -458,7 +467,7 @@ void projectrtpchannel::doclose( void ) {
 
   this->returnavailableport();
 
-  postdatabacktojsfromthread( self, "close", this->closereason );
+  postdatabacktojsfromthread( self, "close", this->getclosereason() );
 }
 
 bool projectrtpchannel::checkidlerecv( void ) {
@@ -469,20 +478,20 @@ bool projectrtpchannel::checkidlerecv( void ) {
 
       this->tickswithnortpcount++;
       if( this->tickswithnortpcount > ( 50 * 20 ) ) { /* 50 (@20mS ptime)/S = 20S */
-        this->closereason = "idle";
+        this->requestclose( "idle" );
         this->doclose();
         return true;
         }
 
     } else if( this->hardtickswithnortpcount > ( 50 * 60 * 60 ) ) { /* 1hr hard timeout */
-      this->closereason = "idle";
+      this->requestclose( "idle" );
       this->doclose();
       return true;
     }
   } else if( this->active ) {
     /* active but not receiving ie on hold or similar - but there are limits! */
     if( this->hardtickswithnortpcount > ( 50 * 60 * 60 * 2 ) ) { /* 2hr hard timeout */
-      this->closereason = "idle";
+      this->requestclose( "idle" );
       this->doclose();
       return true;
     }
@@ -1285,7 +1294,7 @@ void projectrtpchannel::dounmix( void ) {
 
   postdatabacktojsfromthread( shared_from_this(), "mix", "finished" );
 
-  if( this->closereason.length() > 0 ) {
+  if( this->getclosereason().length() > 0 ) {
     this->_requestclose.exchange( true, std::memory_order_acquire );
   }
 }
@@ -1659,7 +1668,7 @@ static napi_value channelecho( napi_env env, napi_callback_info info ) {
   if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) return NULL;
 
   if( argc > 0 ) {
-    if( napi_ok == napi_get_value_bool( env, argv[ 0 ], &echo ) ) {
+    if( napi_ok != napi_get_value_bool( env, argv[ 0 ], &echo ) ) {
       return createnapibool( env, false );
     }
   }
@@ -1909,12 +1918,17 @@ void channeldestroy( napi_env env, void* /* data */, void* hint ) {
 
 void postdatabacktojsfromthread( projectrtpchannel::pointer p, std::string event, std::string arg1, std::string arg2 ) {
 
-  if( NULL == p->cb ) return;
+  napi_threadsafe_function cb = NULL;
+  {
+    SpinLockGuard guard( p->cblock );
+    cb = p->cb;
+  }
+  if( NULL == cb ) return;
   /*
     The return might be ignorable? We have created a threadsafe function
     with a max_queue_size with no limit. Can this still hit a limit?
   */
-  switch( napi_call_threadsafe_function( p->cb,
+  switch( napi_call_threadsafe_function( cb,
                                          new jschannelevent( p, event, arg1, arg2 ),
                                          napi_tsfn_nonblocking ) ) {
 
@@ -1939,7 +1953,7 @@ napi_value createcloseobject( napi_env env, projectrtpchannel::pointer p ) {
   if( napi_ok != napi_create_string_utf8( env, "close", NAPI_AUTO_LENGTH, &action ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "action", action ) ) return NULL;
 
-  if( napi_ok != napi_create_string_utf8( env, p->closereason.c_str(), NAPI_AUTO_LENGTH, &reason ) ) return NULL;
+  if( napi_ok != napi_create_string_utf8( env, p->getclosereason().c_str(), NAPI_AUTO_LENGTH, &reason ) ) return NULL;
   if( napi_ok != napi_set_named_property( env, result, "reason", reason ) ) return NULL;
 
   /* calculate mos - calc borrowed from FS - thankyou. */
@@ -2087,9 +2101,31 @@ by the napi framework after the threadsafe function has been acquired and called
 */
 static void eventcallback( napi_env env, napi_value jscb, void* context, void* data ) {
 
-  napi_value ourdata = NULL;
+  if( nullptr == data ) return;
   jschannelevent *ev = ( ( jschannelevent * ) data );
   projectrtpchannel::pointer p = ev->p;
+  auto releasetsfn = [ p ]() {
+    napi_threadsafe_function cb = NULL;
+    {
+      SpinLockGuard guard( p->cblock );
+      cb = p->cb;
+      p->cb = NULL;
+    }
+
+    if( NULL != cb && napi_ok != napi_release_threadsafe_function( cb, napi_tsfn_abort ) ) {
+      fprintf( stderr, "Error releasing threadsafe function\n" );
+    }
+  };
+
+  if( nullptr == env || nullptr == jscb ) {
+    if( "close" == ev->event ) {
+      releasetsfn();
+    }
+    delete ev;
+    return;
+  }
+
+  napi_value ourdata = NULL;
 
   if( "close" == ev->event ) {
     ourdata = createcloseobject( env, p );
@@ -2104,7 +2140,18 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
   }
 
   napi_value undefined;
-  napi_get_undefined( env, &undefined );
+  if( napi_ok != napi_get_undefined( env, &undefined ) ) {
+    if( "close" == ev->event ) {
+      releasetsfn();
+    }
+    delete ev;
+    return;
+  }
+
+  if( NULL == ourdata ) {
+    ourdata = undefined;
+  }
+
   napi_call_function( env,
                       undefined,
                       jscb,
@@ -2114,11 +2161,7 @@ static void eventcallback( napi_env env, napi_value jscb, void* context, void* d
 
   /* our final call - allow js to clean up */
   if( "close" == ev->event ) {
-    napi_threadsafe_function cb = p->cb;
-    p->cb = NULL;
-    if( napi_ok != napi_release_threadsafe_function( cb, napi_tsfn_abort ) ) {
-      fprintf( stderr, "Error releasing threadsafe function\n" );
-    }
+    releasetsfn();
   }
 
   delete ev;
@@ -2330,6 +2373,7 @@ nodtls:
   }
 
   napi_value workname;
+  napi_threadsafe_function tsfn = NULL;
 
   /*
     We don't need to call napi_acquire_threadsafe_function as we are setting
@@ -2346,12 +2390,20 @@ nodtls:
                                        NULL,
                                        NULL,
                                        eventcallback,
-                                       &p->cb ) ||
+                                       &tsfn ) ||
       napi_ok != napi_create_object( env, &result ) ||
       napi_ok != napi_type_tag_object( env, result, &channelcreatetag ) ||
       napi_ok != napi_wrap( env, result, pb, channeldestroy, pb, nullptr ) ) {
+    if( NULL != tsfn ) {
+      napi_release_threadsafe_function( tsfn, napi_tsfn_abort );
+    }
     delete pb;
     return NULL;
+  }
+
+  {
+    SpinLockGuard guard( p->cblock );
+    p->cb = tsfn;
   }
 
   p->remote( remoteaddress, remoteport, codecval, ilbcpt, rfc2833pt, dtlsmode, vfingerprint );

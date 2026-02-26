@@ -90,7 +90,7 @@ public:
   uint32_t requestopen( void );
   std::atomic_bool _requestclose;
   void requestclose( std::string reason );
-  std::string closereason;
+  std::string getclosereason( void );
   void requestecho( bool e = true );
 
   void doremote( void );
@@ -160,9 +160,12 @@ public:
 
 #ifdef NODE_MODULE
   napi_threadsafe_function cb;
+  std::atomic_bool cblock;
 #endif
 
 private:
+  std::string closereason;
+  std::atomic_bool closereasonlock;
   std::atomic_bool active;
   unsigned short port;
   unsigned short rfc2833pt;
