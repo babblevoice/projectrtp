@@ -225,14 +225,13 @@ void projectrtpchannel::remote( std::string address,
 
       projectrtpchannel::pointer p = shared_from_this();
       newsession->ondata( [ p ] ( const void *d , size_t l ) -> void {
-        /* Note to me, I need to confirm that gnutls maintains the buffer ptr until after the handshake is confirmed (or
-          at least until we have sent the packet). */
         if( p->remoteconfirmed ) {
+          auto buf = std::make_shared< std::vector< uint8_t > >( ( uint8_t * ) d, ( uint8_t * ) d + l );
           p->rtpsocket.async_send_to(
-                            boost::asio::buffer( d, l ),
+                            boost::asio::buffer( *buf ),
                             p->confirmedrtpsenderendpoint,
-                            []( const boost::system::error_code& ec, std::size_t bytes_transferred ) -> void {
-                              /* We don't need to do anything */
+                            [ buf ]( const boost::system::error_code& ec, std::size_t bytes_transferred ) -> void {
+                              /* buf captured to prevent premature free */
                             } );
         }
       } );
@@ -288,8 +287,10 @@ void projectrtpchannel::handleremoteresolve (
     return;
   }
 
-  this->confirmedrtpsenderendpoint = *it;
-  this->remoteconfirmed = true;
+  if( !this->remoteconfirmed ) {
+    this->confirmedrtpsenderendpoint = *it;
+    this->remoteconfirmed = true;
+  }
   this->hardtickswithnortpcount = 0;
 
   /* allow us to re-auto correct */
