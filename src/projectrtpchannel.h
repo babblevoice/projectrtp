@@ -252,6 +252,10 @@ private:
   dtlssession::pointer rtpdtls;
   std::atomic_bool rtpdtlslock;
 
+  /* buffer for DTLS packets arriving before remote() creates the session */
+  std::vector< uint8_t > earlydtls;
+  boost::asio::ip::udp::endpoint earlydtlsendpoint;
+
   dtlssession::mode dtlsmode;
   std::string dtlsfingerprint;
 
