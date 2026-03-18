@@ -247,6 +247,18 @@ void projectrtpchannel::remote( std::string address,
     this->autoadjust = true;
 
     this->doremote();
+
+    /* replay any DTLS packet that arrived before the session was created */
+    if( this->rtpdtls && !this->earlydtls.empty() ) {
+      this->rtpsenderendpoint = this->earlydtlsendpoint;
+      this->correctaddress();
+      {
+        SpinLockGuard guard( this->rtpdtlslock );
+        this->rtpdtls->write( this->earlydtls.data(), this->earlydtls.size() );
+      }
+      this->earlydtls.clear();
+      this->dtlsnegotiate();
+    }
   }
 }
 
@@ -1028,6 +1040,12 @@ void projectrtpchannel::readsomertp( void ) {
           }
 
           self->dtlsnegotiate();
+          goto readsomemore;
+        } else if( nullptr == currentdtlssession &&
+                   bytesrecvd > 0 && buf->pk[ 0 ] >= 20 && buf->pk[ 0 ] <= 63 ) {
+          /* DTLS packet arrived before remote() - buffer it */
+          self->earlydtls.assign( buf->pk, buf->pk + bytesrecvd );
+          self->earlydtlsendpoint = self->rtpsenderendpoint;
           goto readsomemore;
         }
 
