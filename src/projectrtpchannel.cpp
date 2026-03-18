@@ -901,6 +901,7 @@ bool projectrtpchannel::dtlsnegotiate( void ) {
   if( nullptr == oursession ) return false;
   if( !oursession->rtpdtlshandshakeing ) return false;
 
+  this->correctaddress();
   auto dtlsstate = oursession->handshake();
 
   if( GNUTLS_E_SUCCESS != dtlsstate && 0 != gnutls_error_is_fatal( dtlsstate ) ) {
@@ -909,10 +910,6 @@ bool projectrtpchannel::dtlsnegotiate( void ) {
     std::stringstream out;
     out << "error.dtlsfail: " << dtlsstate;
     this->requestclose( out.str() );
-  }
-
-  if( !oursession->rtpdtlshandshakeing ) {
-    this->correctaddress();
   }
 
   return oursession->rtpdtlshandshakeing;
