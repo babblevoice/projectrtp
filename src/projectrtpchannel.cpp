@@ -913,7 +913,6 @@ bool projectrtpchannel::dtlsnegotiate( void ) {
   if( nullptr == oursession ) return false;
   if( !oursession->rtpdtlshandshakeing ) return false;
 
-  this->correctaddress();
   auto dtlsstate = oursession->handshake();
 
   if( GNUTLS_E_SUCCESS != dtlsstate && 0 != gnutls_error_is_fatal( dtlsstate ) ) {
@@ -1039,6 +1038,7 @@ void projectrtpchannel::readsomertp( void ) {
             currentdtlssession->write( buf->pk, bytesrecvd );
           }
 
+          self->correctaddress();
           self->dtlsnegotiate();
           goto readsomemore;
         } else if( nullptr == currentdtlssession &&
