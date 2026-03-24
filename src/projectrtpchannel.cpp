@@ -243,8 +243,9 @@ void projectrtpchannel::remote( std::string address,
     }
 
     this->receivedrtp = false;
-    this->remoteconfirmed = false;
-    this->autoadjust = true;
+    if( !this->remoteconfirmed ) {
+      this->autoadjust = true;
+    }
 
     this->doremote();
 
