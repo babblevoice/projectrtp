@@ -95,7 +95,7 @@ describe( "dtls", function() {
     projectrtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000", "/tmp/ukringing.wav" )
 
     const targeta = {
-      "address": "localhost",
+      "address": "127.0.0.1",
       "port": 0,
       "codec": 0,
       "dtls": {
@@ -107,7 +107,7 @@ describe( "dtls", function() {
     }
 
     const targetb = {
-      "address": "localhost",
+      "address": "127.0.0.1",
       "port": 12008,
       "codec": 0,
       "dtls": {
@@ -193,7 +193,7 @@ describe( "dtls", function() {
     projectrtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000", "/tmp/ukringing.wav" )
 
     const channeltargeta = {
-      "address": "localhost",
+      "address": "127.0.0.1",
       "port": 0,
       "codec": 0,
       "dtls": {
@@ -205,7 +205,7 @@ describe( "dtls", function() {
     }
 
     const clienttargeta = {
-      "address": "localhost",
+      "address": "127.0.0.1",
       "port": 12008,
       "codec": 0,
       "dtls": {
@@ -217,13 +217,13 @@ describe( "dtls", function() {
     }
 
     const channeltargetb = {
-      "address": "localhost",
+      "address": "127.0.0.1",
       "port": 0,
       "codec": 0
     }
 
     const clienttargetb = {
-      "address": "localhost",
+      "address": "127.0.0.1",
       "port": 12010,
       "codec": 0
     }
@@ -316,7 +316,7 @@ describe( "dtls", function() {
     projectrtp.tone.generate( "400+450*0.25/0/400+450*0.25/0:400/200/400/2000", "/tmp/ukringing.wav" )
 
     const targeta = {
-      "address": "localhost",
+      "address": "127.0.0.1",
       "port": 0,
       "codec": 0,
       "dtls": {
@@ -330,7 +330,7 @@ describe( "dtls", function() {
     const targetb = JSON.parse( JSON.stringify( targeta ) )
 
     const targetc =     {
-      "address": "localhost",
+      "address": "127.0.0.1",
       "port": 0,
       "codec": 0
     }

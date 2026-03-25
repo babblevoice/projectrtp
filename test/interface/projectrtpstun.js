@@ -46,7 +46,7 @@ describe( "STUN", function() {
     const channel = await projectrtp.openchannel( { 
       "id": "4", 
       "remote": { 
-        "address": "localhost", 
+        "address": "127.0.0.1", 
         "port": 20000, 
         "codec": 0, 
         "icepwd": chromeicepwd 
@@ -91,7 +91,7 @@ describe( "STUN", function() {
     const channel = await projectrtp.openchannel( { 
       "id": "4", 
       "remote": { 
-        "address": "localhost", 
+        "address": "127.0.0.1", 
         "port": 20000, 
         "codec": 0, 
         "icepwd": chromeicepwd 
@@ -137,7 +137,7 @@ describe( "STUN", function() {
     const channel = await projectrtp.openchannel( { 
       "id": "4", 
       "remote": { 
-        "address": "localhost", 
+        "address": "127.0.0.1", 
         "port": 20000, 
         "codec": 0, 
         "icepwd": chromeicepwd 
@@ -183,7 +183,7 @@ describe( "STUN", function() {
     const channel = await projectrtp.openchannel( { 
       "id": "4", 
       "remote": { 
-        "address": "localhost", 
+        "address": "127.0.0.1", 
         "port": 20000, 
         "codec": 0, 
         "icepwd": chromeicepwd 

@@ -83,11 +83,11 @@ describe( "channel mix", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -150,7 +150,7 @@ describe( "channel mix", function() {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -158,7 +158,7 @@ describe( "channel mix", function() {
     expect( channela.mix( channelb ) ).to.be.true
 
     /* a problem was highlighted that would remote would be called before rtp stream was updated */
-    channela.remote( { "address": "localhost", "port": endpointa.address().port, "codec": 8 } )
+    channela.remote( { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 8 } )
 
     sendpk( 0, 0, channela.local.port, endpointa )
     sendpk( 1, 1, channela.local.port, endpointa )
@@ -216,13 +216,13 @@ describe( "channel mix", function() {
     const promisea = new Promise( r => promisearesolve = r )
     const promiseb = new Promise( r => promisebresolve = r )
     
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) {
         promisearesolve()
       }
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) {
         promisebresolve()
       }
@@ -286,13 +286,13 @@ describe( "channel mix", function() {
     const promisea = new Promise( r => promisearesolve = r )
     const promiseb = new Promise( r => promisebresolve = r )
     
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) {
         promisearesolve()
       }
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) {
         promisebresolve()
       }
@@ -381,13 +381,13 @@ describe( "channel mix", function() {
     const promisea = new Promise( r => promisearesolve = r )
     const promiseb = new Promise( r => promisebresolve = r )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) {
         promisearesolve()
       }
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) {
         promisebresolve()
       }
@@ -450,11 +450,11 @@ describe( "channel mix", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -518,11 +518,11 @@ describe( "channel mix", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 97 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 97 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -578,11 +578,11 @@ describe( "channel mix", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 9 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 9 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -639,11 +639,11 @@ describe( "channel mix", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 9 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 9 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -703,7 +703,7 @@ describe( "channel mix", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
@@ -712,7 +712,7 @@ describe( "channel mix", function() {
 
     await new Promise( resolve => setTimeout( resolve, 500 ) )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 9 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 9 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -777,15 +777,15 @@ describe( "channel mix", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelc.close()
     } )
 
-    const channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -853,15 +853,15 @@ describe( "channel mix", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "direction": { "send": false }, "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "direction": { "send": false }, "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "direction": { "send": false }, "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "direction": { "send": false }, "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelc.close()
     } )
 
-    const channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -929,15 +929,15 @@ describe( "channel mix", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelc.close()
     } )
 
-    const channelc = await projectrtp.openchannel( { "direction": { "recv": false }, "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "direction": { "recv": false }, "remote": { "address": "127.0.0.1", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -1019,15 +1019,15 @@ describe( "channel mix", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelc.close()
     } )
 
-    const channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -1100,15 +1100,15 @@ describe( "channel mix", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelc.close()
     } )
 
-    const channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointc.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 

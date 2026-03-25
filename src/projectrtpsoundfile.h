@@ -156,6 +156,8 @@ public:
 private:
   int32_t tickcount;
   std::atomic_bool closerequested;
+  enum class closestate { open, draining, writingheader, syncing, closed };
+  closestate _closestate;
 
 };
 

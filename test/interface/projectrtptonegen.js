@@ -55,7 +55,7 @@ describe( "tonegen", function() {
 
     const ourport = server.address().port
 
-    const chandef = { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }
+    const chandef = { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }
     const channel = await projectrtp.openchannel( chandef, function( d ) {
       if( "close" === d.action ) {
         server.close()

@@ -436,7 +436,8 @@ NOTE: currently only working for PCM.
 soundfilewriter::soundfilewriter( std::string &url, int16_t numchannels, int32_t samplerate ) :
   soundfile( open( url.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK, S_IRUSR | S_IWUSR ) ),
   tickcount( 0 ),
-  closerequested( false ) {
+  closerequested( false ),
+  _closestate( closestate::open ) {
 
   if ( -1 == this->file ) {
     /* Not much more we can do */
@@ -504,30 +505,81 @@ bool soundfilewriter::isclosed( void ) {
     return false;
   }
 
-  if( EINPROGRESS == aio_error( &this->cbwavheader ) ) {
-    return false;
-  }
+  switch( this->_closestate ) {
 
-  for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
-    if( EINPROGRESS == aio_error( &this->cbwavblock[ i ] ) ) {
+    case closestate::open:
+    case closestate::draining: {
+      /* wait for all pending async writes to complete */
+      if( EINPROGRESS == aio_error( &this->cbwavheader ) ) {
+        this->_closestate = closestate::draining;
+        return false;
+      }
+
+      for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
+        if( EINPROGRESS == aio_error( &this->cbwavblock[ i ] ) ) {
+          this->_closestate = closestate::draining;
+          return false;
+        }
+      }
+
+      /* collect completed aio results */
+      if( 0 == aio_error( &this->cbwavheader ) ) {
+        aio_return( &this->cbwavheader );
+      }
+      for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
+        if( 0 == aio_error( &this->cbwavblock[ i ] ) ) {
+          aio_return( &this->cbwavblock[ i ] );
+        }
+      }
+
+      /* kick off async write of final wav header */
+      this->cbwavheader.aio_nbytes = sizeof( wavheader );
+      this->cbwavheader.aio_offset = 0;
+      this->cbwavheader.aio_buf = &this->ourwavheader;
+      if( -1 == aio_write( &this->cbwavheader ) ) {
+        fprintf( stderr, "soundfile unable to async write final wav header\n" );
+        close( this->file );
+        this->file = -1;
+        return true;
+      }
+      this->_closestate = closestate::writingheader;
       return false;
     }
-  }
 
-  if( 0 == aio_error( &this->cbwavheader ) ) {
-    aio_return( &this->cbwavheader );
-  }
-  for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
-    if( 0 == aio_error( &this->cbwavblock[ i ] ) ) {
-      aio_return( &this->cbwavblock[ i ] );
+    case closestate::writingheader: {
+      if( EINPROGRESS == aio_error( &this->cbwavheader ) ) {
+        return false;
+      }
+      aio_return( &this->cbwavheader );
+
+      /* kick off async fsync */
+      if( -1 == aio_fsync( O_SYNC, &this->cbwavheader ) ) {
+        fprintf( stderr, "soundfile unable to async fsync\n" );
+        close( this->file );
+        this->file = -1;
+        return true;
+      }
+      this->_closestate = closestate::syncing;
+      return false;
     }
+
+    case closestate::syncing: {
+      if( EINPROGRESS == aio_error( &this->cbwavheader ) ) {
+        return false;
+      }
+      aio_return( &this->cbwavheader );
+
+      close( this->file );
+      this->file = -1;
+      this->_closestate = closestate::closed;
+      return true;
+    }
+
+    case closestate::closed:
+      return true;
   }
 
-  pwrite( this->file, &this->ourwavheader, sizeof( wavheader ), 0 );
-  fsync( this->file );
-  close( this->file );
-  this->file = -1;
-  return true;
+  return false;
 }
 
 /*

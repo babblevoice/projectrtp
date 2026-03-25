@@ -187,8 +187,6 @@ private:
   uint32_t lasttelephoneeventsn;
   uint8_t lasttelephoneevent;
 
-  boost::asio::ip::udp::resolver resolver;
-
   boost::asio::ip::udp::socket rtpsocket;
   boost::asio::ip::udp::socket rtcpsocket;
 
@@ -222,10 +220,6 @@ private:
   void senddtmf( void );
 
   void handlertcpdata( void );
-  void handleremoteresolve (
-              boost::system::error_code e,
-              boost::asio::ip::udp::resolver::iterator it );
-
   bool dtlsnegotiate( void );
   void setnexttick( void );
   void startticktimer( void );
