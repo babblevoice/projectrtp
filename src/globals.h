@@ -55,9 +55,14 @@ private:
 struct SpinLockGuard {
   std::atomic_bool& lock;
 
-  SpinLockGuard( std::atomic_bool& l ) : lock( l ) {
+  SpinLockGuard( std::atomic_bool& l, const char *caller = __builtin_FUNCTION(), int line = __builtin_LINE() ) : lock( l ) {
+    int spins = 0;
     while( lock.exchange( true, std::memory_order_acquire ) ) {
-      // Spin until the lock is acquired
+      spins++;
+      if( 0 == ( spins % 10000000 ) ) {
+        fprintf( stderr, "SpinLock contention: %s:%d spinning for %dM iterations\n",
+                 caller, line, spins / 1000000 );
+      }
     }
   }
 

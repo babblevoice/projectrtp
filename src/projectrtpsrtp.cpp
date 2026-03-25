@@ -169,9 +169,7 @@ int dtlssession::timeout( unsigned int ms ) {
     return 1;
   }
 
-  if( 0 == ms ) return 0;
-  gnutls_transport_set_errno( this->session, EAGAIN );
-  return -1;
+  return 0;
 }
 
 
