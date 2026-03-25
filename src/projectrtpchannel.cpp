@@ -907,9 +907,11 @@ void projectrtpchannel::writerecordings( void ) {
 }
 
 bool projectrtpchannel::dtlsnegotiate( void ) {
-  SpinLockGuard guard( this->rtpdtlslock );
-
-  dtlssession::pointer oursession = this->rtpdtls;
+  dtlssession::pointer oursession;
+  {
+    SpinLockGuard guard( this->rtpdtlslock );
+    oursession = this->rtpdtls;
+  }
 
   if( nullptr == oursession ) return false;
   if( !oursession->rtpdtlshandshakeing ) return false;
