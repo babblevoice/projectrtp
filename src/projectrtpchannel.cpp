@@ -9,6 +9,9 @@
 #include <utility>
 
 #include <queue>
+#include <sys/time.h>
+
+#define ICEDEBUGOUTPUT 1
 
 /* gnutls_rnd */
 #include <gnutls/crypto.h>
@@ -963,6 +966,15 @@ bool projectrtpchannel::handlestun( uint8_t *pk, size_t len ) {
         std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
     }
 
+#ifdef ICEDEBUGOUTPUT
+    struct timeval tv;
+    gettimeofday( &tv, nullptr );
+    fprintf( stderr, "STUN recv %ld.%06ld from %s:%d\n",
+             tv.tv_sec, tv.tv_usec,
+             this->rtpsenderendpoint.address().to_string().c_str(),
+             this->rtpsenderendpoint.port() );
+#endif
+
     size_t len = stun::handle( pk, this->stuntmpout, sizeof( this->stuntmpout ), this->rtpsenderendpoint, this->icelocalpwd, this->iceremotepwd );
     if( len > 0 ) {
 
@@ -971,16 +983,31 @@ bool projectrtpchannel::handlestun( uint8_t *pk, size_t len ) {
           std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
       }
 
+      auto stunbuf = std::make_shared< std::vector< uint8_t > >( this->stuntmpout, this->stuntmpout + len );
+#ifdef ICEDEBUGOUTPUT
+      auto ep = this->rtpsenderendpoint;
+      gettimeofday( &tv, nullptr );
+      fprintf( stderr, "STUN send %ld.%06ld to %s:%d len=%zu\n",
+               tv.tv_sec, tv.tv_usec,
+               ep.address().to_string().c_str(), ep.port(), len );
+#endif
+
       this->rtpsocket.async_send_to(
-                      boost::asio::buffer( this->stuntmpout, len ),
-                      this->rtpsenderendpoint, /* do we sometime tie this in with confirmedrtpsenderendpoint as the integrity check can auth it? */
-                      boost::bind( &projectrtpchannel::handlesend,
-                                    shared_from_this(),
-                                    boost::asio::placeholders::error,
-                                    boost::asio::placeholders::bytes_transferred ) );
+                      boost::asio::buffer( *stunbuf ),
+                      this->rtpsenderendpoint,
+                      [ stunbuf ]( const boost::system::error_code& ec, std::size_t bytes_transferred ) -> void {
+                        /* stunbuf captured to prevent premature free */
+                      } );
 
       this->correctaddress();
     }
+#ifdef ICEDEBUGOUTPUT
+    else {
+      gettimeofday( &tv, nullptr );
+      fprintf( stderr, "STUN reject %ld.%06ld (handle returned 0)\n",
+               tv.tv_sec, tv.tv_usec );
+    }
+#endif
 
     return true;
   }
@@ -1072,6 +1099,15 @@ void projectrtpchannel::readsomertp( void ) {
               std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
           }
 
+#ifdef ICEDEBUGOUTPUT
+          struct timeval tv;
+          gettimeofday( &tv, nullptr );
+          fprintf( stderr, "DTLS recv %ld.%06ld from %s:%d len=%zu\n",
+                   tv.tv_sec, tv.tv_usec,
+                   self->rtpsenderendpoint.address().to_string().c_str(),
+                   self->rtpsenderendpoint.port(), bytesrecvd );
+#endif
+
           {
             SpinLockGuard guard( self->rtpdtlslock );
             currentdtlssession->write( buf->pk, bytesrecvd );
@@ -1080,15 +1116,32 @@ void projectrtpchannel::readsomertp( void ) {
           self->correctaddress();
           self->dtlsnegotiate();
 
-          if( !currentdtlssession->rtpdtlshandshakeing && 0 == self->tsdtlscompleted ) {
-            self->tsdtlscompleted = std::chrono::duration_cast< std::chrono::milliseconds >(
-              std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
+          if( !currentdtlssession->rtpdtlshandshakeing ) {
+#ifdef ICEDEBUGOUTPUT
+            gettimeofday( &tv, nullptr );
+            fprintf( stderr, "DTLS completed %ld.%06ld\n", tv.tv_sec, tv.tv_usec );
+#endif
+
+            if( 0 == self->tsdtlscompleted ) {
+              self->tsdtlscompleted = std::chrono::duration_cast< std::chrono::milliseconds >(
+                std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
+            }
           }
 
           goto readsomemore;
         } else if( nullptr == currentdtlssession &&
                    bytesrecvd > 0 && buf->pk[ 0 ] >= 20 && buf->pk[ 0 ] <= 63 ) {
           /* DTLS packet arrived before remote() - buffer it */
+#ifdef ICEDEBUGOUTPUT
+          {
+            struct timeval tv;
+            gettimeofday( &tv, nullptr );
+            fprintf( stderr, "DTLS early-buffer %ld.%06ld from %s:%d len=%zu\n",
+                     tv.tv_sec, tv.tv_usec,
+                     self->rtpsenderendpoint.address().to_string().c_str(),
+                     self->rtpsenderendpoint.port(), bytesrecvd );
+          }
+#endif
           self->earlydtls.assign( buf->pk, buf->pk + bytesrecvd );
           self->earlydtlsendpoint = self->rtpsenderendpoint;
           goto readsomemore;
