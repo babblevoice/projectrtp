@@ -78,7 +78,7 @@ dtlssession::dtlssession( dtlssession::mode mode ) :
   gnutls_anti_replay_init( &this->antireplay );
   gnutls_anti_replay_enable( this->session, this->antireplay );
 
-  gnutls_handshake_set_timeout( this->session, GNUTLS_DEFAULT_HANDSHAKE_TIMEOUT );
+  gnutls_handshake_set_timeout( this->session, 0 );
 
   gnutlserrorcheck( gnutls_set_default_priority( this->session ), "gnutls_set_default_priority" );
   //gnutls_session_enable_compatibility_mode( this->session ); /* opt for compatability over security */
