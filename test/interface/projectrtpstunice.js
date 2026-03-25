@@ -156,7 +156,7 @@ describe( "STUN ICE timing", function() {
     const channel = await projectrtp.openchannel( {
       "id": "10",
       "remote": {
-        "address": "localhost",
+        "address": "127.0.0.1",
         "port": 20000,
         "codec": 0,
         "icepwd": "clientpasswordhere123456"
@@ -229,7 +229,7 @@ describe( "STUN ICE timing", function() {
     const channel = await projectrtp.openchannel( {
       "id": "11",
       "remote": {
-        "address": "localhost",
+        "address": "127.0.0.1",
         "port": 20000,
         "codec": 0,
         "icepwd": "clientpwd2here1234567890"
@@ -317,7 +317,7 @@ describe( "STUN ICE timing", function() {
     const channel = await projectrtp.openchannel( {
       "id": "12",
       "remote": {
-        "address": "localhost",
+        "address": "127.0.0.1",
         "port": 20000,
         "codec": 0,
         "icepwd": "clientpwd3here1234567890"

@@ -142,7 +142,7 @@ describe( "dtmf", function() {
         { action: "close" }
       ]
 
-      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
 
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
@@ -204,7 +204,7 @@ describe( "dtmf", function() {
       { action: "close" }
     ]
 
-    const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+    const channel = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
 
       expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
       expectedmessagecount++
@@ -271,11 +271,11 @@ describe( "dtmf", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ouraport, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourbport, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -347,11 +347,11 @@ describe( "dtmf", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ouraport, "codec": 0, rfc2833pt } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ouraport, "codec": 0, rfc2833pt } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourbport, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -424,15 +424,15 @@ describe( "dtmf", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ouraport, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ouraport, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourbport, "codec": 0 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourbport, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) channelc.close()
     } )
 
-    const channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourcport, "codec": 0 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourcport, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -474,7 +474,7 @@ describe( "dtmf", function() {
     const ourport = server.address().port
 
     const receivedmessages = []
-    const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+    const channel = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
       receivedmessages.push( d )
       if( "close" === d.action ) {
         server.close()
@@ -544,7 +544,7 @@ describe( "dtmf", function() {
     server.on( "listening", async function() {
 
       const ourport = server.address().port
-      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
         receivedmessages.push( d )
 
         if( "close" === d.action ) {
@@ -654,13 +654,13 @@ describe( "dtmf", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       receivedmessages.push( d )
 
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -796,13 +796,13 @@ describe( "dtmf", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0, "rfc2833pt": 127 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0, "rfc2833pt": 127 } }, function( d ) {
       receivedmessages.push( d )
 
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8, "rfc2833pt": 101 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 8, "rfc2833pt": 101 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -956,18 +956,18 @@ describe( "dtmf", function() {
 
     const receveiedmessages = []
 
-    const channela = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
       receveiedmessages.push( d )
 
       if( "close" === d.action ) channelb.close()
     } )
 
-    const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 8 } }, function( d ) {
       expect( d.action).to.not.equal( "telephone-event" )
       if( "close" === d.action ) channelc.close()
     } )
 
-    const channelc = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": endpointc.address().port, "codec": 97 } }, function( d ) {
+    const channelc = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointc.address().port, "codec": 97 } }, function( d ) {
       expect( d.action).to.not.equal( "telephone-event" )
       if( "close" === d.action ) {
         endpointa.close()
@@ -1109,7 +1109,7 @@ describe( "dtmf", function() {
         { action: "close" }
       ]
 
-      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
 
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
@@ -1172,7 +1172,7 @@ describe( "dtmf", function() {
     server.on( "listening", async function() {
 
       const ourport = server.address().port
-      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
         receivedmessages.push( d )
 
         if( "close" === d.action ) {
@@ -1236,7 +1236,7 @@ describe( "dtmf", function() {
     server.on( "listening", async function() {
 
       const ourport = server.address().port
-      const channel = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      const channel = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
         receivedmessages.push( d )
 
         if( "close" === d.action ) {

@@ -129,7 +129,6 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   ilbcpt( ILBCPAYLOADTYPE ),
   lasttelephoneeventsn( 0 ),
   lasttelephoneevent( 0 ),
-  resolver( workercontext ),
   rtpsocket( workercontext ),
   rtcpsocket( workercontext ),
   rtpsenderendpoint(),
@@ -290,38 +289,17 @@ void projectrtpchannel::doremote( void ) {
 
   if( "" == this->remoteaddress ) return;
 
-  boost::asio::ip::udp::resolver::query query(
-    boost::asio::ip::udp::v4(),
-    this->remoteaddress,
-    std::to_string( this->remoteport ) );
-
-  /* Resolve the address */
-  this->resolver.async_resolve( query,
-      boost::bind( &projectrtpchannel::handleremoteresolve,
-        shared_from_this(),
-        boost::asio::placeholders::error,
-        boost::asio::placeholders::iterator ) );
-}
-
-/**
- * handleremoteresolve
- * We have resolved the remote address and port now use it. Further work could be to inform control there is an issue.
- */
-void projectrtpchannel::handleremoteresolve (
-            boost::system::error_code e,
-            boost::asio::ip::udp::resolver::iterator it ) {
-  boost::asio::ip::udp::resolver::iterator end;
-
-  if( e == boost::asio::error::operation_aborted ) return;
-
-  if( it == end ) {
-    /* Failure - silent (the call will be as well!) */
+  boost::system::error_code ec;
+  auto addr = boost::asio::ip::make_address( this->remoteaddress, ec );
+  if( ec ) {
     this->requestclose( "failed.remote" );
     return;
   }
 
+  boost::asio::ip::udp::endpoint ep( addr, this->remoteport );
+
   if( !this->remoteconfirmed ) {
-    this->confirmedrtpsenderendpoint = *it;
+    this->confirmedrtpsenderendpoint = ep;
     this->remoteconfirmed = true;
   }
   this->hardtickswithnortpcount = 0;
@@ -497,8 +475,6 @@ void projectrtpchannel::doclose( void ) {
 
     this->recorders.clear();
   }
-
-  this->resolver.cancel();
 
   this->rtpsocket.close();
   this->rtcpsocket.close();

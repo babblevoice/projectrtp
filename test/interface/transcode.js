@@ -271,7 +271,7 @@ async function looptest( acodec, bcodec, encode, decode, ilbcpt = -1 ) {
   let done
   const finished = new Promise( ( r ) => { done = r } )
 
-  const channeladef = { "id": "4", "remote": { "address": "localhost", "port": a.address().port, "codec": acodec } }
+  const channeladef = { "id": "4", "remote": { "address": "127.0.0.1", "port": a.address().port, "codec": acodec } }
   if( 97 == acodec && -1 != ilbcpt ) channeladef.remote.ilbcpt = ilbcpt
 
   const achannel = await projectrtp.openchannel( channeladef, function( d ) {
@@ -282,7 +282,7 @@ async function looptest( acodec, bcodec, encode, decode, ilbcpt = -1 ) {
     }
   } )
 
-  const bchannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": b.address().port, "codec": bcodec } }, function( d ) {
+  const bchannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "127.0.0.1", "port": b.address().port, "codec": bcodec } }, function( d ) {
     if( "close" === d.action ) done()
   } )
 
@@ -371,7 +371,7 @@ async function loopcounttest( acodec, bcodec, encode, decode, expectedval = 0 ) 
     notcorrect: 0
   }
 
-  const achannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": a.address().port, "codec": acodec } }, function( d ) {
+  const achannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "127.0.0.1", "port": a.address().port, "codec": acodec } }, function( d ) {
     if( "close" === d.action ) {
       a.close()
       b.close()
@@ -380,7 +380,7 @@ async function loopcounttest( acodec, bcodec, encode, decode, expectedval = 0 ) 
     }
   } )
 
-  const bchannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": b.address().port, "codec": bcodec } }, function( d ) {
+  const bchannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "127.0.0.1", "port": b.address().port, "codec": bcodec } }, function( d ) {
     if( "close" === d.action ) {
       allstats.bchannel = { stats: d.stats }
       done()
@@ -594,18 +594,18 @@ describe( "Transcode", function() {
     } )
 
     await new Promise( resolve => setTimeout( resolve, 800 ) )
-    achannel.remote( { "address": "localhost", "port": a.address().port, "codec": acodec } )
+    achannel.remote( { "address": "127.0.0.1", "port": a.address().port, "codec": acodec } )
 
     /* This channel reflects the originator */
-    const bchannel = await projectrtp.openchannel( { "id": "5", "remote": { "address": "localhost", "port": b.address().port, "codec": bcodec } }, function( /*d*/ ) {
+    const bchannel = await projectrtp.openchannel( { "id": "5", "remote": { "address": "127.0.0.1", "port": b.address().port, "codec": bcodec } }, function( /*d*/ ) {
     } )
 
     achannel.mix( bchannel )
     await new Promise( resolve => setTimeout( resolve, 500 ) ) // we really should wait for the mix start events
 
     /* for some reason in our lib this gets sent again */
-    achannel.remote( { "address": "localhost", "port": a.address().port, "codec": acodec } )
-    bchannel.remote( { "address": "localhost", "port": b.address().port, "codec": bcodec } )
+    achannel.remote( { "address": "127.0.0.1", "port": a.address().port, "codec": acodec } )
+    bchannel.remote( { "address": "127.0.0.1", "port": b.address().port, "codec": bcodec } )
 
     achannel.mix( bchannel )
     bchannel.record( { file: "/tmp/test.wav", numchannels: 2, mp3: true } )
@@ -637,7 +637,7 @@ describe( "Transcode", function() {
     } )
 
     bchannel.close()
-    cchannel.remote( { "address": "localhost", "port": c.address().port, "codec": ccodec } )
+    cchannel.remote( { "address": "127.0.0.1", "port": c.address().port, "codec": ccodec } )
     await new Promise( resolve => setTimeout( resolve, 40 ) )
     cchannel.mix( achannel )
 
@@ -689,7 +689,7 @@ describe( "Transcode", function() {
 
     const allstats = {}
 
-    const g722channel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": g722endpoint.address().port, "codec": 9 } }, function( d ) {
+    const g722channel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "127.0.0.1", "port": g722endpoint.address().port, "codec": 9 } }, function( d ) {
       if( "close" === d.action ) {
         g722endpoint.close()
         pcmuendpoint.close()
@@ -700,7 +700,7 @@ describe( "Transcode", function() {
 
     let done
     const allclose = new Promise( resolve => done = resolve )
-    const pcmuchannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": pcmuendpoint.address().port, "codec": 0 } }, function( d ) {
+    const pcmuchannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "127.0.0.1", "port": pcmuendpoint.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) {
         allstats.bchannel = { stats: d.stats }
         done()
@@ -759,7 +759,7 @@ describe( "Transcode", function() {
 
     const allstats = {}
 
-    const g722channel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": g722endpoint.address().port, "codec": 9 } }, function( d ) {
+    const g722channel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "127.0.0.1", "port": g722endpoint.address().port, "codec": 9 } }, function( d ) {
       if( "close" === d.action ) {
         g722endpoint.close()
         pcmuendpoint.close()
@@ -771,14 +771,14 @@ describe( "Transcode", function() {
 
     let done
     const allclose = new Promise( resolve => done = resolve )
-    const pcmuchannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": pcmuendpoint.address().port, "codec": 0 } }, function( d ) {
+    const pcmuchannel = await projectrtp.openchannel( { "id": "4", "remote": { "address": "127.0.0.1", "port": pcmuendpoint.address().port, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) {
         allstats.bchannel = { stats: d.stats }
         done()
       }
     } )
 
-    const secondg722 = await projectrtp.openchannel( { "id": "4", "remote": { "address": "localhost", "port": 9990, "codec": 9 } }, function( d ) {
+    const secondg722 = await projectrtp.openchannel( { "id": "4", "remote": { "address": "127.0.0.1", "port": 9990, "codec": 9 } }, function( d ) {
       if( "close" === d.action ) {
         allstats.bchannel = { stats: d.stats }
         done()

@@ -129,7 +129,7 @@ describe( "rtpsound", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
-    const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": 20000, "codec": 0 } }, ( d ) => {
+    const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": 20000, "codec": 0 } }, ( d ) => {
       if( "close" === d.action ) done()
     } )
 
@@ -175,7 +175,7 @@ describe( "rtpsound", function() {
 
       const ourport = server.address().port
 
-      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) done()
       } )
 
@@ -229,7 +229,7 @@ describe( "rtpsound", function() {
 
     const ourport = server.address().port
 
-    const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+    const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
       if( "close" == d.action ) cleanedup()
     } )
 
@@ -284,7 +284,7 @@ describe( "rtpsound", function() {
 
       const ourport = server.address().port
 
-      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
 
         if( "close" === d.action ) {
           server.close()
@@ -337,7 +337,7 @@ describe( "rtpsound", function() {
 
       const ourport = server.address().port
 
-      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) done()
       } )
 
@@ -410,7 +410,7 @@ describe( "rtpsound", function() {
 
     const ourport = server.address().port
 
-    const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 0 } }, function( d ) {
+    const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
       if( "close" === d.action ) done()
     } )
 
@@ -458,7 +458,7 @@ describe( "rtpsound", function() {
 
     let starttime = 0, endtime = 0
     let playcount = 0
-    channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": ourport, "codec": 8 } }, function( d ) {
+    channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 8 } }, function( d ) {
       //console.log(d)
       if( "play" === d.action && "start" == d.event ) {
         playcount++

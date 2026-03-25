@@ -71,7 +71,7 @@ describe( "record", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": server.address().port, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) {
           endclose = Date.now()
           server.close()
@@ -149,7 +149,7 @@ describe( "record", function() {
 
     server.on( "listening", async function() {
 
-      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": server.address().port, "codec": 0 } }, function( d ) {
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
         if( "close" === d.action ) {
@@ -207,7 +207,7 @@ describe( "record", function() {
     server.bind()
     server.on( "listening", async function() {
 
-      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": server.address().port, "codec": 0 } }, function( d ) {
         if( "close" === d.action ) {
           server.close()
         }
@@ -290,7 +290,7 @@ describe( "record", function() {
     const delayedjobs = []
     server.on( "listening", async function() {
 
-      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": server.address().port, "codec": 0 } }, function( d ) {
 
         expect( d ).to.deep.include( expectedmessages[ expectedmessagecount ] )
         expectedmessagecount++
@@ -361,7 +361,7 @@ describe( "record", function() {
     const delayedjobs = []
     server.on( "listening", async function() {
 
-      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+      channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": server.address().port, "codec": 0 } }, function( d ) {
 
         if( "record" === d.action && "finished.timeout" == d.event ) {
           channel.close()
@@ -433,7 +433,7 @@ describe( "record", function() {
     await new Promise( resolve => server.on( "listening", resolve ) )
 
     const receivedmessages = []
-    const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "localhost", "port": server.address().port, "codec": 0 } }, function( d ) {
+    const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": server.address().port, "codec": 0 } }, function( d ) {
       receivedmessages.push( d )
       if( "close" !== d.action ) return
 
