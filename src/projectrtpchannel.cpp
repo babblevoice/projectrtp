@@ -86,6 +86,17 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   snout( 0 ),
   send( true ),
   recv( true ),
+  tscreated( 0 ),
+  tsopened( 0 ),
+  tsremote( 0 ),
+  tsfirststunrequest( 0 ),
+  tsfirststunresponse( 0 ),
+  tsdtlsstarted( 0 ),
+  tsdtlscompleted( 0 ),
+  tsfirstrtpin( 0 ),
+  tsfirstrtpout( 0 ),
+  tsmixed( 0 ),
+  tsclosed( 0 ),
   receivedpkcount( 0 ),
   receivedpkskip( 0 ),
   maxticktime( 0 ),
@@ -150,6 +161,9 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   lastdtmfsn( 0 ),
   tickstarttime() {
 
+  this->tscreated = std::chrono::duration_cast< std::chrono::milliseconds >(
+    std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
+
   gnutls_rnd( GNUTLS_RND_RANDOM, &this->ssrcout, 4 );
 
   char localicepwd[ 25 ];
@@ -188,6 +202,9 @@ void projectrtpchannel::remote( std::string address,
                                 unsigned short rfc2833pt,
                                 dtlssession::mode m,
                                 std::string fingerprint ) {
+
+  this->tsremote = std::chrono::duration_cast< std::chrono::milliseconds >(
+    std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
 
   /* track changes which invalidate dtls session */
   bool changed = false;
@@ -391,6 +408,8 @@ void projectrtpchannel::doopen( void ) {
   }
 
   this->active = true;
+  this->tsopened = std::chrono::duration_cast< std::chrono::milliseconds >(
+    std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
 
   /* anchor our out time to when the channel is opened */
   this->tsout = std::chrono::system_clock::to_time_t( std::chrono::system_clock::now() );
@@ -441,6 +460,8 @@ void projectrtpchannel::doclose( void ) {
 
   if( !this->active ) return;
   this->active = false;
+  this->tsclosed = std::chrono::duration_cast< std::chrono::milliseconds >(
+    std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
 
   auto self = shared_from_this();
 
@@ -560,14 +581,13 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
     ourplayer = this->player;
   }
 
-  rtppacket *src;
-  while( true ) {
-    {
-      SpinLockGuard guard( this->rtpbufferlock );
-      src = this->inbuff->peek();
-    }
+  rtppacket *src = nullptr;
+  {
+    SpinLockGuard guard( this->rtpbufferlock );
+    src = this->inbuff->peek();
+  }
 
-    if( nullptr == src ) break;
+  while( nullptr != src ) {
 
     dtlssession::pointer currentdtlssession;
     {
@@ -593,6 +613,7 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
     {
       SpinLockGuard guard( this->rtpbufferlock );
       this->inbuff->poppeeked();
+      src = this->inbuff->peek();
     }
   }
 
@@ -937,8 +958,19 @@ bool projectrtpchannel::handlestun( uint8_t *pk, size_t len ) {
 
   if( stun::is( pk, len ) ) {
 
+    if( 0 == this->tsfirststunrequest ) {
+      this->tsfirststunrequest = std::chrono::duration_cast< std::chrono::milliseconds >(
+        std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
+    }
+
     size_t len = stun::handle( pk, this->stuntmpout, sizeof( this->stuntmpout ), this->rtpsenderendpoint, this->icelocalpwd, this->iceremotepwd );
     if( len > 0 ) {
+
+      if( 0 == this->tsfirststunresponse ) {
+        this->tsfirststunresponse = std::chrono::duration_cast< std::chrono::milliseconds >(
+          std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
+      }
+
       this->rtpsocket.async_send_to(
                       boost::asio::buffer( this->stuntmpout, len ),
                       this->rtpsenderendpoint, /* do we sometime tie this in with confirmedrtpsenderendpoint as the integrity check can auth it? */
@@ -1034,6 +1066,12 @@ void projectrtpchannel::readsomertp( void ) {
 
         if( nullptr != currentdtlssession &&
             currentdtlssession->rtpdtlshandshakeing ) {
+
+          if( 0 == self->tsdtlsstarted ) {
+            self->tsdtlsstarted = std::chrono::duration_cast< std::chrono::milliseconds >(
+              std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
+          }
+
           {
             SpinLockGuard guard( self->rtpdtlslock );
             currentdtlssession->write( buf->pk, bytesrecvd );
@@ -1041,6 +1079,12 @@ void projectrtpchannel::readsomertp( void ) {
 
           self->correctaddress();
           self->dtlsnegotiate();
+
+          if( !currentdtlssession->rtpdtlshandshakeing && 0 == self->tsdtlscompleted ) {
+            self->tsdtlscompleted = std::chrono::duration_cast< std::chrono::milliseconds >(
+              std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
+          }
+
           goto readsomemore;
         } else if( nullptr == currentdtlssession &&
                    bytesrecvd > 0 && buf->pk[ 0 ] >= 20 && buf->pk[ 0 ] <= 63 ) {
@@ -1081,6 +1125,11 @@ void projectrtpchannel::readsomertp( void ) {
           goto readsomemore;
         }
         */
+
+        if( 0 == self->tsfirstrtpin ) {
+          self->tsfirstrtpin = std::chrono::duration_cast< std::chrono::milliseconds >(
+            std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
+        }
 
         self->tickswithnortpcount = 0;
         self->hardtickswithnortpcount = 0;
@@ -1203,6 +1252,12 @@ void projectrtpchannel::writepacket( rtppacket *pk ) {
   }
 
   if( this->remoteconfirmed ) {
+
+    if( 0 == this->tsfirstrtpout ) {
+      this->tsfirstrtpout = std::chrono::duration_cast< std::chrono::milliseconds >(
+        std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
+    }
+
     this->snout++;
     this->outpkwritecount++;
 
@@ -1236,6 +1291,11 @@ bool projectrtpchannel::mix( projectrtpchannel::pointer other ) {
   if( this == other.get() ) {
     return true;
   }
+
+  auto now = std::chrono::duration_cast< std::chrono::milliseconds >(
+    std::chrono::high_resolution_clock::now().time_since_epoch() ).count();
+  if( 0 == this->tsmixed ) this->tsmixed = now;
+  if( 0 == other->tsmixed ) other->tsmixed = now;
 
   auto self = shared_from_this();
 
@@ -2040,6 +2100,35 @@ napi_value createcloseobject( napi_env env, projectrtpchannel::pointer p ) {
   if( napi_ok != napi_set_named_property( env, stats, "tick", tick ) ) return NULL;
 
   if( napi_ok != napi_set_named_property( env, result, "stats", stats ) ) return NULL;
+
+  /* channel lifecycle timing */
+  napi_value timing;
+  if( napi_ok != napi_create_object( env, &timing ) ) return NULL;
+
+  auto settiming = [ & ]( const char *name, uint64_t val ) -> bool {
+    napi_value nval;
+    if( 0 == val ) {
+      if( napi_ok != napi_get_undefined( env, &nval ) ) return false;
+    } else {
+      if( napi_ok != napi_create_double( env, static_cast< double >( val ), &nval ) ) return false;
+    }
+    return napi_ok == napi_set_named_property( env, timing, name, nval );
+  };
+
+  if( !settiming( "created", p->tscreated ) ) return NULL;
+  if( !settiming( "opened", p->tsopened ) ) return NULL;
+  if( !settiming( "remote", p->tsremote ) ) return NULL;
+  if( !settiming( "firststunrequest", p->tsfirststunrequest ) ) return NULL;
+  if( !settiming( "firststunresponse", p->tsfirststunresponse ) ) return NULL;
+  if( !settiming( "dtlsstarted", p->tsdtlsstarted ) ) return NULL;
+  if( !settiming( "dtlscompleted", p->tsdtlscompleted ) ) return NULL;
+  if( !settiming( "firstrtpin", p->tsfirstrtpin ) ) return NULL;
+  if( !settiming( "firstrtpout", p->tsfirstrtpout ) ) return NULL;
+  if( !settiming( "mixed", p->tsmixed ) ) return NULL;
+  if( !settiming( "closed", p->tsclosed ) ) return NULL;
+
+  if( napi_ok != napi_set_named_property( env, result, "timing", timing ) ) return NULL;
+
   return result;
 }
 

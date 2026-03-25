@@ -128,6 +128,19 @@ public:
   std::atomic_bool send;
   std::atomic_bool recv;
 
+  /* channel lifecycle timestamps (ms since epoch) */
+  std::atomic_uint64_t tscreated;
+  std::atomic_uint64_t tsopened;
+  std::atomic_uint64_t tsremote;
+  std::atomic_uint64_t tsfirststunrequest;
+  std::atomic_uint64_t tsfirststunresponse;
+  std::atomic_uint64_t tsdtlsstarted;
+  std::atomic_uint64_t tsdtlscompleted;
+  std::atomic_uint64_t tsfirstrtpin;
+  std::atomic_uint64_t tsfirstrtpout;
+  std::atomic_uint64_t tsmixed;
+  std::atomic_uint64_t tsclosed;
+
   /* for stats */
   std::atomic_uint64_t receivedpkcount;
   std::atomic_uint64_t receivedpkskip;
@@ -269,7 +282,6 @@ private:
   uint16_t lastdtmfsn;
 
   boost::posix_time::ptime tickstarttime;
-
 
   uint8_t stuntmpout[ 300 ];
 };
