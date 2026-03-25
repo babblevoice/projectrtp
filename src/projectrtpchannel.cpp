@@ -11,7 +11,7 @@
 #include <queue>
 #include <sys/time.h>
 
-#define ICEDEBUGOUTPUT 1
+//#define ICEDEBUGOUTPUT 1
 
 /* gnutls_rnd */
 #include <gnutls/crypto.h>
@@ -277,7 +277,6 @@ void projectrtpchannel::remote( std::string address,
         this->rtpdtls->write( this->earlydtls.data(), this->earlydtls.size() );
       }
       this->earlydtls.clear();
-      this->dtlsnegotiate();
     }
   }
 }
