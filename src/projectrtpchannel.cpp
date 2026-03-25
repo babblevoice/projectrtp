@@ -972,7 +972,17 @@ bool projectrtpchannel::handlestun( uint8_t *pk, size_t len ) {
                       boost::asio::buffer( *stunbuf ),
                       this->rtpsenderendpoint,
                       [ stunbuf ]( const boost::system::error_code& ec, std::size_t bytes_transferred ) -> void {
-                        /* stunbuf captured to prevent premature free */
+#ifdef ICEDEBUGOUTPUT
+                        struct timeval tv;
+                        gettimeofday( &tv, nullptr );
+                        if( ec ) {
+                          fprintf( stderr, "STUN send complete %ld.%06ld ERROR: %s (%d)\n",
+                                   tv.tv_sec, tv.tv_usec, ec.message().c_str(), ec.value() );
+                        } else {
+                          fprintf( stderr, "STUN send complete %ld.%06ld sent=%zu\n",
+                                   tv.tv_sec, tv.tv_usec, bytes_transferred );
+                        }
+#endif
                       } );
 
       this->correctaddress();
