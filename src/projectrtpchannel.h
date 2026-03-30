@@ -31,6 +31,7 @@
 #include "projectrtpsoundsoup.h"
 #include "projectrtpchannelrecorder.h"
 #include "projectrtpsrtp.h"
+#include "projectrtpringbuffer.h"
 
 class projectrtpchannel;
 class projectchannelmux;
@@ -101,6 +102,11 @@ public:
 
   void requestplay( soundsoup::pointer newdef );
   void requestrecord( channelrecorder::pointer rec );
+  void requestplayrecord( soundsoup::pointer newdef,
+                          channelrecorder::pointer rec,
+                          bool interrupt,
+                          uint16_t bargeinpower,
+                          uint16_t bargeinpackets );
   inline void echo( void ) { this->doecho = true; }
   inline void direction( bool send, bool recv ) { this->send = send; this->recv = recv; }
   void writepacket( rtppacket * );
@@ -254,6 +260,16 @@ private:
 
   std::atomic_bool recorderslock;
   chanrecptrlist recorders;
+
+  /* combined play+record state */
+  channelrecorder::pointer pendingrecorder;
+  std::atomic_bool pendingrecorderlock;
+  bool playrecordactive;
+  bool playrecordinterrupt;
+  pcmringbuffer prebuffer;
+  ma_filter bargeinpowerfilter;
+  uint16_t bargeinpowerthreshold;
+  void activateplayrecordrecorder( pointer self );
 
   /* DTLS Session */
   dtlssession::pointer rtpdtls;

@@ -150,6 +150,7 @@ public:
   soundfilewriter& operator=( soundfilewriter&& ) = delete;        // move assignment
 
   bool write( codecx &in, codecx &out );
+  bool writeraw( int16_t *samples, size_t count );
   void requestclose( void );
   bool isclosed( void );
 

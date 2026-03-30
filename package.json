@@ -9,8 +9,8 @@
     "test": "test"
   },
   "scripts": {
-    "test": "ASAN_OPTIONS=$(cat asan.options) LD_PRELOAD=/usr/lib64/libasan.so.8 ./node_modules/mocha/bin/_mocha test/**/*.js --check-leaks",
-    "github:check": "node test/basictests.js; npm update; ./node_modules/mocha/bin/_mocha test/**/*.js --check-leaks --exit",
+    "test": "ASAN_OPTIONS=$(cat asan.options) LD_PRELOAD=/usr/lib64/libasan.so.8 ./node_modules/mocha/bin/_mocha test/interface/*.js test/unit/*.js --check-leaks",
+    "github:check": "node test/basictests.js; npm update; ./node_modules/mocha/bin/_mocha test/interface/*.js test/unit/*.js --check-leaks --exit",
     "check": "tsc --checkJs --noEmit --target es6 --module commonjs --skipLibCheck *.js test/**/*.js; ./node_modules/eslint/bin/eslint.js ./",
     "docs": "jsdoc -c jsdoc.conf.json ./README.md",
     "stress": "ASAN_OPTIONS=$(cat asan.options) LD_PRELOAD=/usr/lib64/libasan.so.8 node stress/index.js",

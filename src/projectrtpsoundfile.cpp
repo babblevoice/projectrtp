@@ -721,6 +721,78 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
   return true;
 }
 
+/*
+## writeraw
+Write raw L16 PCM samples (e.g. from a pre-buffer) to the wav file.
+Writes in chunks matching the normal tick size so aio buffers are used correctly.
+Only writes to channel 0 (in channel) - channel 1 (out) is zero-filled for stereo.
+*/
+bool soundfilewriter::writeraw( int16_t *samples, size_t count ) {
+
+  SpinLockGuard guard( this->filelock );
+
+  if( -1 == this->file || this->closerequested || nullptr == samples || 0 == count ) {
+    return false;
+  }
+
+  auto numchannels = this->ourwavheader.num_channels;
+  if( numchannels != 2 ) numchannels = 1;
+
+  size_t samplespertick = AIOCBSINGLECHANBUFFNUMSAMPLES;
+  size_t written = 0;
+
+  while( written < count ) {
+    size_t remaining = count - written;
+    size_t chunksamples = std::min( remaining, samplespertick );
+
+    auto thisindex = this->currentcbindex % SOUNDFILENUMBUFFERS;
+    aiocb &thisblock = this->cbwavblock[ thisindex ];
+    soundbuffer &thisbuffer = this->buffer[ thisindex ];
+
+    if( aio_error( &thisblock ) == EINPROGRESS ) {
+      /* previous write still in progress - stop here, we got most of it */
+      break;
+    }
+
+    thisbuffer.resize( chunksamples * numchannels );
+    std::fill_n( thisbuffer.begin(), thisbuffer.size(), 0 );
+    auto buf = thisbuffer.data();
+    thisblock.aio_buf = buf;
+
+    thisblock.aio_nbytes = chunksamples * sizeof( int16_t ) * numchannels;
+    thisblock.aio_offset = sizeof( wavheader ) +
+              ( this->tickcount * samplespertick * sizeof( int16_t ) * numchannels );
+
+    for( size_t i = 0; i < chunksamples; i++ ) {
+      *buf = samples[ written + i ];
+      buf += numchannels;
+    }
+
+    if( aio_write( &thisblock ) == -1 ) {
+      fprintf( stderr, "soundfile unable to write raw block to file %s\n", this->url.c_str() );
+      break;
+    }
+
+    uint32_t maxbasedonthischunk = thisblock.aio_offset + thisblock.aio_nbytes;
+    if( maxbasedonthischunk > this->ourwavheader.subchunksize ) {
+      this->ourwavheader.subchunksize = maxbasedonthischunk;
+      this->ourwavheader.chunksize = maxbasedonthischunk + 36;
+
+      if( aio_error( &this->cbwavheader ) != EINPROGRESS ) {
+        if( aio_write( &this->cbwavheader ) == -1 ) {
+          fprintf( stderr, "soundfile unable to update wav header to file %s\n", this->url.c_str() );
+        }
+      }
+    }
+
+    this->currentcbindex = ( this->currentcbindex + 1 ) % SOUNDFILENUMBUFFERS;
+    this->tickcount++;
+    written += chunksamples;
+  }
+
+  return written > 0;
+}
+
 /*!md
 ## initwav
 Configure header for basic usage

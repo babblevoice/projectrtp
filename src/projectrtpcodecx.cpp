@@ -571,9 +571,9 @@ rawsound& codecx::getref( int pt ) {
 Rely on compiler to use SSE + rsqrtss for sqrt. If this ever gets ported to a different
 processor with limited functions like this then fast inverse sqrt should be implemented.
 */
-uint16_t codecx::power( void )
+uint16_t codecx::power( bool skipwarmup )
 {
-  if( this->inpkcount < 100 ) return 0; /* ensure the rtp has established */
+  if( !skipwarmup && this->inpkcount < 100 ) return 0; /* ensure the rtp has established */
   rawsound &ref = this->requirel16();
   if ( 0 == ref.size() ) return 0;
 
