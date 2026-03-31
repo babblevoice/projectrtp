@@ -5,9 +5,7 @@ const dgram = require( "dgram" )
 const crypto = require( "crypto" )
 const { expect } = require( "chai" )
 
-before( function() {
-  projectrtp.run()
-} )
+/* projectrtp.run() is called by the global before hook in projectrtpserver.js */
 
 /**
  * Build a STUN Binding Request with USERNAME, PRIORITY, USE-CANDIDATE,

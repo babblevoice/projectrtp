@@ -16,6 +16,7 @@ Features
   * Multiple recorders per channel
   * Start, pause and end based on power detection or on command
 * WAV playback using sound soup descriptions to play complex sentences from parts
+* Combined play+record (playrecord) for zero-gap prompt-then-record with optional barge-in
 * DTMF (RFC 2833) - send, receive and bridge
 * DTLS SRTP (WebRTC)
 * Highly scalable - server/node solution to scale out media nodes
@@ -42,34 +43,64 @@ Public docker images for amd64 and arm64 available on [Docker Hub](https://hub.d
 
 ## Tests
 
-We now have 3 different sets of tests.
+Tests require a native build environment (C++ toolchain, libilbc, etc.) so they run inside Docker using the builder stage.
 
-### `npm test`
-
-If you are using an image - that doesn't have dev deps installed then theses might need to be added:
-
-```sh
-npm install --omit=prod --ignore-scripts
-```
-
-All tests are run from NodeJS. From the root directory, run the `npm test`. These test all our interfaces and should test expected outputs. These tests use mocha.
-
-The folder is separated out into interface, unit and mock. The mock folder contains mock objects/functions required for testing. Unit tests are to help test internal functions. Interface tests are used to guarantee a stable interface for a specific version number. If these tests require changing (other than bug fixing i.e. a material API change), then a major version update will happen.
-
-### `npm run stress`
-
-These are designed to create real world scenarios - opening and closing multiple channels and random times and at load. This is designed to test for unexpected behaviour. These test do not provide a pass/fail - but might crash or produce unexpected output on bad behaviour. These have concurrency/race condition tests in mind.
-
-### Local build
-
-Local dev build
+### Build the test image
 
 ```bash
-docker build --target builder -t projectrtp:dev .
-
-# to run
-docker run -it --rm projectrtp:dev [command ie sh or npm test etc but you might need to run npm install first for all dev deps for testing]
+docker build --target builder -t projectrtp-test .
 ```
+
+### Run all tests
+
+```bash
+docker run --rm projectrtp-test sh -c \
+  "cd /usr/src/projectrtp && npm install mocha chai && npx mocha 'test/interface/*.js' 'test/unit/*.js' --check-leaks --exit"
+```
+
+Note: use `test/interface/*.js` and `test/unit/*.js` — not `test/**/*.js` — because `test/basictests.js` and `test/codectests.js` are standalone scripts (not mocha tests) that will hang if loaded by mocha.
+
+### Run a specific test
+
+Most test files rely on the server test (`projectrtpserver.js`) to initialise the native module first, so include it when running individual files:
+
+```bash
+docker run --rm projectrtp-test sh -c \
+  "cd /usr/src/projectrtp && npm install mocha chai && npx mocha test/interface/projectrtpserver.js test/interface/projectrtpplayrecord.js --exit --timeout 20000"
+```
+
+### Test with local edits
+
+Mount `test/` and `lib/` so you can edit and re-run without rebuilding the native module:
+
+```bash
+docker run --rm \
+  -v ./test:/usr/src/projectrtp/test \
+  -v ./lib:/usr/src/projectrtp/lib \
+  projectrtp-test sh -c \
+  "cd /usr/src/projectrtp && npm install mocha chai && npx mocha test/interface/projectrtpserver.js test/interface/projectrtpplayrecord.js --exit --timeout 20000"
+```
+
+If you change C++ source files, rebuild the image.
+
+### Stress tests
+
+Open and close channels at random times under load. Designed for concurrency and race condition testing — no pass/fail, but will crash or produce unexpected output on bad behaviour.
+
+```bash
+docker run --rm projectrtp-test sh -c \
+  "cd /usr/src/projectrtp && npm run stress"
+```
+
+### Mic test tool
+
+`test/tools/mictest.js` is a CLI tool for manually testing playrecord with a real microphone and speakers. It requires a native build of projectrtp and `sox` on the host — see the Dockerfile for the full list of build dependencies.
+
+```bash
+node test/tools/mictest.js [--prompt <file>] [--output <file>] [--duration <ms>] [--interrupt] [--bargeinpower <n>]
+```
+
+Plays a prompt (or a generated test tone), records your voice, prints events in real time, and saves to `/tmp/mictest_recording.wav`.
 
 ## Example scripts
 

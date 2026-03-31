@@ -437,6 +437,8 @@ soundfilewriter::soundfilewriter( std::string &url, int16_t numchannels, int32_t
   soundfile( open( url.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK, S_IRUSR | S_IWUSR ) ),
   tickcount( 0 ),
   closerequested( false ),
+  pendingsamples(),
+  pendingoffset( 0 ),
   _closestate( closestate::open ) {
 
   if ( -1 == this->file ) {
@@ -611,6 +613,20 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
     return false;
   }
 
+  /* if we have pending pre-buffer data, append this tick's incoming audio
+     to the queue and drain one tick from the front instead */
+  if( this->pendingoffset < this->pendingsamples.size() ) {
+    auto format = this->getwavformattopt();
+    if( in.hasdata() ) {
+      rawsound &inref = in.getref( format );
+      if( !inref.isdirty() ) {
+        int16_t *data = ( int16_t * ) inref.c_str();
+        this->pendingsamples.insert( this->pendingsamples.end(), data, data + inref.size() );
+      }
+    }
+    return this->drainpending();
+  }
+
   int16_t *inbuf = nullptr;
   int16_t *outbuf = nullptr;
   size_t inbufsize = 0; /* count of int16 vals */
@@ -658,9 +674,13 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
     return false;
   }
 
-  if( aio_error( &thisblock ) == EINPROGRESS ) {
+  int aioerr = aio_error( &thisblock );
+  if( aioerr == EINPROGRESS ) {
     fprintf( stderr, "soundfile trying to write a packet whilst last is still in progress\n" );
     return false;
+  }
+  if( 0 == aioerr ) {
+    aio_return( &thisblock );
   }
 
   auto numchannels = this->ourwavheader.num_channels;
@@ -709,7 +729,8 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
     this->ourwavheader.chunksize = maxbasedonthischunk + 36;
 
     /* Update the wav header with size */
-    if( aio_error( &this->cbwavheader ) != EINPROGRESS ) { /* silent fail - we will get it on the next one */
+    if( aio_error( &this->cbwavheader ) != EINPROGRESS ) {
+      aio_return( &this->cbwavheader );
       if ( aio_write( &this->cbwavheader ) == -1 ) {
         fprintf( stderr, "soundfile unable to update wav header to file %s\n", this->url.c_str() );
       }
@@ -718,6 +739,100 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
 
   this->currentcbindex = ( this->currentcbindex + 1 ) % SOUNDFILENUMBUFFERS;
   this->tickcount++;
+  return true;
+}
+
+/*
+## writeraw
+Queue raw L16 PCM samples (e.g. from a pre-buffer) for writing.
+Data is stored internally and drained a tick at a time via subsequent
+write() calls so we never overwhelm the aio buffers.
+*/
+void soundfilewriter::writeraw( int16_t *samples, size_t count ) {
+  if( nullptr == samples || 0 == count ) return;
+  this->pendingsamples.assign( samples, samples + count );
+  this->pendingoffset = 0;
+}
+
+/*
+## drainpending
+Write pending pre-buffer data to the file, using as many free buffers as
+available so the backlog can be caught up faster than one packet per tick.
+Returns true if data was written (caller should skip normal write for this tick).
+Only writes to channel 0 (in channel) - channel 1 (out) is zero-filled for stereo.
+*/
+bool soundfilewriter::drainpending( void ) {
+
+  if( this->pendingoffset >= this->pendingsamples.size() ) return false;
+
+  auto numchannels = this->ourwavheader.num_channels;
+  if( numchannels != 2 ) numchannels = 1;
+
+  size_t samplespertick = ( this->ourwavheader.sample_rate >= 16000 )
+                            ? L1616PAYLOADSAMPLES : L16PAYLOADSAMPLES;
+
+  size_t drainedchunks = 0;
+  while( this->pendingoffset < this->pendingsamples.size() &&
+         drainedchunks < SOUNDFILENUMBUFFERS ) {
+    auto thisindex = this->currentcbindex % SOUNDFILENUMBUFFERS;
+    aiocb &thisblock = this->cbwavblock[ thisindex ];
+    soundbuffer &thisbuffer = this->buffer[ thisindex ];
+
+    int aioerr = aio_error( &thisblock );
+    if( aioerr == EINPROGRESS ) {
+      break; /* buffer still in flight - continue next tick */
+    }
+    /* reap completed operation before reusing this aiocb */
+    if( 0 == aioerr ) {
+      aio_return( &thisblock );
+    }
+
+    size_t remaining = this->pendingsamples.size() - this->pendingoffset;
+    size_t chunksamples = std::min( remaining, samplespertick );
+
+    thisbuffer.resize( samplespertick * numchannels );
+    std::fill_n( thisbuffer.begin(), thisbuffer.size(), 0 );
+    auto buf = thisbuffer.data();
+    thisblock.aio_buf = buf;
+
+    thisblock.aio_nbytes = samplespertick * sizeof( int16_t ) * numchannels;
+    thisblock.aio_offset = sizeof( wavheader ) +
+              ( this->tickcount * samplespertick * sizeof( int16_t ) * numchannels );
+
+    for( size_t i = 0; i < chunksamples; i++ ) {
+      *buf = this->pendingsamples[ this->pendingoffset + i ];
+      buf += numchannels;
+    }
+
+    if( aio_write( &thisblock ) == -1 ) {
+      fprintf( stderr, "soundfile unable to write pending block to file %s\n", this->url.c_str() );
+      break;
+    }
+    drainedchunks++;
+
+    uint32_t maxbasedonthischunk = thisblock.aio_offset + thisblock.aio_nbytes;
+    if( maxbasedonthischunk > this->ourwavheader.subchunksize ) {
+      this->ourwavheader.subchunksize = maxbasedonthischunk;
+      this->ourwavheader.chunksize = maxbasedonthischunk + 36;
+
+      if( aio_error( &this->cbwavheader ) != EINPROGRESS ) {
+        aio_return( &this->cbwavheader );
+        if( aio_write( &this->cbwavheader ) == -1 ) {
+          fprintf( stderr, "soundfile unable to update wav header to file %s\n", this->url.c_str() );
+        }
+      }
+    }
+
+    this->currentcbindex = ( this->currentcbindex + 1 ) % SOUNDFILENUMBUFFERS;
+    this->tickcount++;
+    this->pendingoffset += chunksamples;
+  }
+
+  if( this->pendingoffset >= this->pendingsamples.size() ) {
+    this->pendingsamples.clear();
+    this->pendingoffset = 0;
+  }
+
   return true;
 }
 

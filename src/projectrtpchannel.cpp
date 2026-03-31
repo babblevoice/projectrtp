@@ -151,8 +151,17 @@ projectrtpchannel::projectrtpchannel( unsigned short port ):
   nexttick( std::chrono::high_resolution_clock::now() ),
   recorderslock( false ),
   recorders(),
+  pendingrecorder( nullptr ),
+  pendingrecorderlock( false ),
+  playrecordactive( false ),
+  playrecordinterrupt( false ),
+  prebuffer(),
+  bargeinpowerfilter(),
+  bargeinpowerthreshold( 0 ),
   rtpdtls( nullptr ),
   rtpdtlslock( false ),
+  earlydtls( 0 ),
+  earlydtlsendpoint(),
   dtlsmode( dtlssession::none ),
   dtlsfingerprint( "" ),
   remoteaddress(),
@@ -430,6 +439,16 @@ unsigned short projectrtpchannel::getport( void ) {
 
 void projectrtpchannel::requestecho( bool e ) {
   this->doecho = e;
+
+  if( e && this->playrecordactive ) {
+    SpinLockGuard guard( this->pendingrecorderlock );
+    if( this->pendingrecorder && this->pendingrecorder->sfile ) {
+      this->pendingrecorder->sfile->requestclose();
+    }
+    this->pendingrecorder = nullptr;
+    this->playrecordactive = false;
+    this->prebuffer.clear();
+  }
 }
 
 /**
@@ -455,6 +474,17 @@ void projectrtpchannel::doclose( void ) {
 
     this->player = nullptr;
   }
+
+  /* clean up any pending play+record */
+  {
+    SpinLockGuard guard( this->pendingrecorderlock );
+    if( this->pendingrecorder && this->pendingrecorder->sfile ) {
+      this->pendingrecorder->sfile->requestclose();
+    }
+    this->pendingrecorder = nullptr;
+  }
+  this->playrecordactive = false;
+  this->prebuffer.clear();
 
   /* close our session if we have one */
   {
@@ -601,6 +631,29 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
     this->incodec << *src;
   }
 
+  /* pre-buffer incoming audio and check for barge-in during combined play+record */
+  if( this->playrecordactive && nullptr != src ) {
+    uint8_t prebufpt = ( G722PAYLOADTYPE == this->codec ) ? L1616KPAYLOADTYPE : L168KPAYLOADTYPE;
+    rawsound &inl16 = this->incodec.getref( prebufpt );
+    if( !inl16.isdirty() ) {
+      this->prebuffer.push( ( int16_t * ) inl16.c_str(), inl16.size() );
+    }
+
+    if( this->playrecordinterrupt && this->bargeinpowerthreshold > 0 ) {
+      uint16_t power = this->incodec.power( true /* skip warmup gate for barge-in */ );
+      uint16_t avg = this->bargeinpowerfilter.execute( power );
+      if( avg > this->bargeinpowerthreshold ) {
+        postdatabacktojsfromthread( self, "play", "end", "interrupted" );
+        {
+          SpinLockGuard guard( this->playerlock );
+          this->player = nullptr;
+          ourplayer = nullptr;
+        }
+        this->activateplayrecordrecorder( self );
+      }
+    }
+  }
+
   if( this->doecho ) {
     if( ourplayer ) {
       postdatabacktojsfromthread( self, "play", "end", "doecho" );
@@ -625,10 +678,27 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
         this->writepacket( out );
       }
     } else {
-      postdatabacktojsfromthread( self, "play", "end", "completed" );
-      SpinLockGuard guard( this->playerlock );
-      this->player = nullptr;
+      if( this->playrecordactive ) {
+        postdatabacktojsfromthread( self, "play", "end", "completed" );
+        {
+          SpinLockGuard guard( this->playerlock );
+          this->player = nullptr;
+        }
+        this->activateplayrecordrecorder( self );
+      } else {
+        postdatabacktojsfromthread( self, "play", "end", "completed" );
+        SpinLockGuard guard( this->playerlock );
+        this->player = nullptr;
+      }
     }
+  } else if( this->send && this->recorders.size() > 0 ) {
+    /* no player or echo but actively recording — send silence to keep the RTP stream alive */
+    static int16_t zeros[ L1616PAYLOADSAMPLES ] = { 0 };
+    rtppacket *out = this->gettempoutbuf();
+    rawsound silent( ( uint8_t* ) zeros, L1616PAYLOADSAMPLES, L1616KPAYLOADTYPE, 16000 );
+    this->outcodec << silent;
+    out << this->outcodec;
+    this->writepacket( out );
   }
 
   if( nullptr != src ) {
@@ -672,6 +742,17 @@ void projectrtpchannel::requestplay( soundsoup::pointer newdef ) {
 
   this->doecho = false;
 
+  /* cancel any pending play+record */
+  if( this->playrecordactive ) {
+    SpinLockGuard prguard( this->pendingrecorderlock );
+    if( this->pendingrecorder && this->pendingrecorder->sfile ) {
+      this->pendingrecorder->sfile->requestclose();
+    }
+    this->pendingrecorder = nullptr;
+    this->playrecordactive = false;
+    this->prebuffer.clear();
+  }
+
   if( nullptr != this->player ) {
     postdatabacktojsfromthread( self, "play", "end", "replaced" );
   }
@@ -702,6 +783,93 @@ void projectrtpchannel::requestrecord( channelrecorder::pointer newrec ) {
 
 
   this->recorders.push_back( newrec );
+}
+
+/*
+Combined play+record. Starts playback and queues a recorder to activate
+when playback ends (zero-gap). Optionally supports barge-in: if interrupt
+is true, incoming audio power is monitored during playback and recording
+starts (with pre-buffered audio) when the threshold is exceeded.
+*/
+void projectrtpchannel::requestplayrecord(
+    soundsoup::pointer newdef,
+    channelrecorder::pointer rec,
+    bool interrupt,
+    uint16_t bargeinpower,
+    uint16_t bargeinpackets ) {
+
+  /* prepare the recorder file writer */
+  rec->sfile = soundfilewriter::create(
+      rec->file,
+      rec->numchannels,
+      soundfile::getsampleratefrompt( this->codec ) );
+
+  {
+    SpinLockGuard guard( this->pendingrecorderlock );
+    this->pendingrecorder = rec;
+  }
+
+  this->playrecordactive = true;
+  this->playrecordinterrupt = interrupt;
+  this->bargeinpowerthreshold = bargeinpower;
+  this->prebuffer.clear();
+
+  if( bargeinpackets > 0 ) {
+    this->bargeinpowerfilter.reset( bargeinpackets );
+  } else {
+    this->bargeinpowerfilter.reset( 5 );
+  }
+
+  /* start the player (same as requestplay) */
+  {
+    SpinLockGuard guard( this->playerlock );
+    auto self = shared_from_this();
+
+    this->doecho = false;
+
+    if( nullptr != this->player ) {
+      postdatabacktojsfromthread( self, "play", "end", "replaced" );
+    }
+
+    postdatabacktojsfromthread( self, "play", "start", "new" );
+    this->player = newdef;
+  }
+}
+
+/*
+Activate the pending recorder from a combined play+record command.
+Called from handletick context when play ends or barge-in is detected.
+Flushes the pre-buffer into the recording file before starting normal recording.
+*/
+void projectrtpchannel::activateplayrecordrecorder( pointer self ) {
+  channelrecorder::pointer rec;
+  {
+    SpinLockGuard guard( this->pendingrecorderlock );
+    rec = this->pendingrecorder;
+    this->pendingrecorder = nullptr;
+  }
+
+  if( !rec ) return;
+
+  /* pass pre-buffer to the recording file - it will drain over
+     subsequent write() ticks to avoid overwhelming aio buffers */
+  if( this->prebuffer.size() > 0 && rec->sfile ) {
+    std::vector< int16_t > prebufdata;
+    this->prebuffer.drain( prebufdata );
+    rec->sfile->writeraw( prebufdata.data(), prebufdata.size() );
+  }
+
+  rec->active();
+
+  {
+    SpinLockGuard guard( this->recorderslock );
+    this->recorders.push_back( rec );
+  }
+
+  this->playrecordactive = false;
+  this->prebuffer.clear();
+
+  postdatabacktojsfromthread( self, "record", rec->file, "recording" );
 }
 
 void projectrtpchannel::removeoldrecorders( pointer self ) {
@@ -783,6 +951,10 @@ void projectrtpchannel::sendtelevent( void ) {
       postdatabacktojsfromthread( self, "play", "end", "telephone-event" );
       this->player = nullptr;
     }
+  }
+
+  if( this->playrecordactive ) {
+    this->activateplayrecordrecorder( self );
   }
 
   postdatabacktojsfromthread( self, "telephone-event", std::string( 1, dtmfchars[ this->lasttelephoneevent ] ) );
@@ -1775,6 +1947,152 @@ static napi_value channelplay( napi_env env, napi_callback_info info ) {
   return createnapibool( env, true );
 }
 
+/*
+## channelplayrecord
+Combined play+record NAPI function. Accepts:
+{
+  "soup": { "files": [ ... ] },
+  "record": {
+    "file": "...",
+    "finishbelowpower": 200,
+    "minduration": 2000,
+    "maxduration": 15000,
+    "poweraveragepackets": 50,
+    "numchannels": 1
+  },
+  "interrupt": true,
+  "bargeinpower": 500,
+  "bargeinpoweraveragepackets": 5
+}
+*/
+static napi_value channelplayrecord( napi_env env, napi_callback_info info ) {
+  size_t argc = 1;
+  napi_value argv[ 1 ];
+
+  if( napi_ok != napi_get_cb_info( env, info, &argc, argv, nullptr, nullptr ) ) {
+    return createnapibool( env, false );
+  }
+
+  if( 1 != argc ) {
+    return createnapibool( env, false );
+  }
+
+  projectrtpchannel::pointer chan = getrtpchannelfromthis( env, info );
+  if( nullptr == chan ) {
+    return createnapibool( env, false );
+  }
+
+  bool hasit;
+
+  /* parse soundsoup from "soup" property */
+  napi_value msoup;
+  if( napi_ok != napi_has_named_property( env, argv[ 0 ], "soup", &hasit ) || !hasit ||
+      napi_ok != napi_get_named_property( env, argv[ 0 ], "soup", &msoup ) ) {
+    return createnapibool( env, false );
+  }
+
+  soundsoup::pointer soup = soundsoupcreate( env, msoup, chan->codec );
+  if( nullptr == soup || 0 == soup->size() ) {
+    return createnapibool( env, false );
+  }
+
+  /* parse record options from "record" property */
+  napi_value mrecord;
+  if( napi_ok != napi_has_named_property( env, argv[ 0 ], "record", &hasit ) || !hasit ||
+      napi_ok != napi_get_named_property( env, argv[ 0 ], "record", &mrecord ) ) {
+    return createnapibool( env, false );
+  }
+
+  napi_value mfile;
+  if( napi_ok != napi_get_named_property( env, mrecord, "file", &mfile ) ) {
+    return createnapibool( env, false );
+  }
+
+  size_t bytescopied;
+  char buf[ 256 ];
+  if( napi_ok != napi_get_value_string_utf8( env, mfile, buf, sizeof( buf ), &bytescopied ) ) {
+    return createnapibool( env, false );
+  }
+
+  channelrecorder::pointer rec = channelrecorder::create( buf );
+
+  napi_value mtmp;
+  int32_t vtmp;
+
+  if( napi_ok == napi_has_named_property( env, mrecord, "startabovepower", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, mrecord, "startabovepower", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    rec->startabovepower = vtmp;
+  }
+
+  if( napi_ok == napi_has_named_property( env, mrecord, "finishbelowpower", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, mrecord, "finishbelowpower", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    rec->finishbelowpower = vtmp;
+  }
+
+  if( napi_ok == napi_has_named_property( env, mrecord, "minduration", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, mrecord, "minduration", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    rec->minduration = vtmp;
+  }
+
+  if( napi_ok == napi_has_named_property( env, mrecord, "maxduration", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, mrecord, "maxduration", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    rec->maxduration = vtmp;
+  }
+
+  if( napi_ok == napi_has_named_property( env, mrecord, "poweraveragepackets", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, mrecord, "poweraveragepackets", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    rec->poweraveragepackets = vtmp;
+  }
+
+  if( napi_ok == napi_has_named_property( env, mrecord, "numchannels", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, mrecord, "numchannels", &mtmp ) ) {
+    uint32_t numchannels = 2;
+    napi_get_value_uint32( env, mtmp, &numchannels );
+    if( 1 == numchannels || 2 == numchannels ) {
+      rec->numchannels = numchannels;
+    }
+  }
+
+  /* parse interrupt options */
+  bool interrupt = false;
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "interrupt", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "interrupt", &mtmp ) ) {
+    napi_get_value_bool( env, mtmp, &interrupt );
+  }
+
+  uint16_t bargeinpower = 0;
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "bargeinpower", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "bargeinpower", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    bargeinpower = vtmp;
+  }
+
+  uint16_t bargeinpackets = 5;
+  if( napi_ok == napi_has_named_property( env, argv[ 0 ], "bargeinpoweraveragepackets", &hasit ) &&
+      hasit &&
+      napi_ok == napi_get_named_property( env, argv[ 0 ], "bargeinpoweraveragepackets", &mtmp ) ) {
+    napi_get_value_int32( env, mtmp, &vtmp );
+    bargeinpackets = vtmp;
+  }
+
+  chan->requestplayrecord( soup, rec, interrupt, bargeinpower, bargeinpackets );
+
+  return createnapibool( env, true );
+}
+
 static napi_value channelecho( napi_env env, napi_callback_info info ) {
 
   size_t argc = 1;
@@ -2574,6 +2892,9 @@ nodtls:
 
       napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelrecord, nullptr, &mfunc ) ||
       napi_ok != napi_set_named_property( env, result, "record", mfunc ) ||
+
+      napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channelplayrecord, nullptr, &mfunc ) ||
+      napi_ok != napi_set_named_property( env, result, "playrecord", mfunc ) ||
 
       napi_ok != napi_create_function( env, "exports", NAPI_AUTO_LENGTH, channeldirection, nullptr, &mfunc ) ||
       napi_ok != napi_set_named_property( env, result, "direction", mfunc ) ||
