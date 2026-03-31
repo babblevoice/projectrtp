@@ -633,7 +633,8 @@ void projectrtpchannel::handletick( const boost::system::error_code& error ) {
 
   /* pre-buffer incoming audio and check for barge-in during combined play+record */
   if( this->playrecordactive && nullptr != src ) {
-    rawsound &inl16 = this->incodec.getref( L168KPAYLOADTYPE );
+    uint8_t prebufpt = ( G722PAYLOADTYPE == this->codec ) ? L1616KPAYLOADTYPE : L168KPAYLOADTYPE;
+    rawsound &inl16 = this->incodec.getref( prebufpt );
     if( !inl16.isdirty() ) {
       this->prebuffer.push( ( int16_t * ) inl16.c_str(), inl16.size() );
     }
@@ -850,7 +851,8 @@ void projectrtpchannel::activateplayrecordrecorder( pointer self ) {
 
   if( !rec ) return;
 
-  /* flush pre-buffer into the recording */
+  /* pass pre-buffer to the recording file - it will drain over
+     subsequent write() ticks to avoid overwhelming aio buffers */
   if( this->prebuffer.size() > 0 && rec->sfile ) {
     std::vector< int16_t > prebufdata;
     this->prebuffer.drain( prebufdata );

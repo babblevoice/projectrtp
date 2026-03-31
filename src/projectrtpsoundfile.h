@@ -150,13 +150,18 @@ public:
   soundfilewriter& operator=( soundfilewriter&& ) = delete;        // move assignment
 
   bool write( codecx &in, codecx &out );
-  bool writeraw( int16_t *samples, size_t count );
+  void writeraw( int16_t *samples, size_t count );
   void requestclose( void );
   bool isclosed( void );
 
 private:
+  bool drainpending( void );
   int32_t tickcount;
   std::atomic_bool closerequested;
+
+  /* pending pre-buffer data, drained a tick at a time via write() */
+  std::vector< int16_t > pendingsamples;
+  size_t pendingoffset;
   enum class closestate { open, draining, writingheader, syncing, closed };
   closestate _closestate;
 
