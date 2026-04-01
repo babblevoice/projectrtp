@@ -297,7 +297,8 @@ bool soundfilereader::read( rawsound &out ) {
   auto numbytes = aio_return( &thisblock );
 
   if( -1 == numbytes ) {
-    fprintf( stderr, "Bad call to aio_return\n" );
+    fprintf( stderr, "Bad call to aio_return on %s at offset %lld errno %d\n",
+             this->url.c_str(), ( long long ) thisblock.aio_offset, errno );
     this->bodyread = true;
     out.zero();
     return true;
@@ -308,7 +309,11 @@ bool soundfilereader::read( rawsound &out ) {
 
   if( static_cast<size_t>( numbytes ) < this->bytecount ) {
     this->bodyread = true;
-    /* TODO if we get a partial read we probably should not zero that part */
+    if( numbytes > 0 ) {
+      fprintf( stderr, "Partial read on %s: got %zd expected %zu at offset %lld (chunksize %u)\n",
+               this->url.c_str(), numbytes, this->bytecount,
+               ( long long ) thisblock.aio_offset, this->ourwavheader.chunksize );
+    }
     out.zero();
     return true;
   }
@@ -319,6 +324,11 @@ bool soundfilereader::read( rawsound &out ) {
 
   aiocb &nextblock = this->cbwavblock[ this->currentcbindex ];
   soundbuffer &thisbuffer = this->buffer[ this->currentcbindex ];
+
+  /* reap any completed aio on the buffer we are about to reuse */
+  if( aio_error( &nextblock ) != EINPROGRESS ) {
+    aio_return( &nextblock );
+  }
 
   /* it shouldn't reallocate - but just in case */
   thisbuffer.resize( this->bytecount );
@@ -334,6 +344,8 @@ bool soundfilereader::read( rawsound &out ) {
 
   /* read next block */
   if ( aio_read( &nextblock ) == -1 ) {
+    fprintf( stderr, "aio_read failed on %s at offset %lld errno %d\n",
+             this->url.c_str(), ( long long ) nextblock.aio_offset, errno );
     this->bodyread = true;
     return false;
   }
