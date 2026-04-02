@@ -510,6 +510,84 @@ describe( "rtpsound", function() {
     
   } )
 
+  it( "play long 16kHz wav in soundsoup without truncation", async function() {
+
+    /*
+    Regression test for truncation of longer 16kHz files in soundsoup.
+    The file is a 52.42s 16kHz mono PCM voicemail recording. We place it
+    in a soundsoup alongside a short 8kHz file (as happens in production
+    when playing a voicemail followed by menu prompts) and verify we
+    receive the full duration of both files.
+    */
+
+    const longwav = __dirname + "/pcaps/19a10634-b0b3-4e9a-8a59-935d34813685.wav"
+    const longwavduration = 52.42  /* seconds, from ffprobe */
+
+    this.timeout( 62000 )
+    this.slow( 56000 )
+
+    const server = dgram.createSocket( "udp4" )
+    let receviedpkcount = 0
+
+    server.on( "message", function() {
+      receviedpkcount++
+    } )
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    server.bind()
+    await new Promise( resolve => server.on( "listening", resolve ) )
+
+    const ourport = server.address().port
+
+    let starttime = 0, endtime = 0
+    const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
+      if( "play" === d.action && "start" == d.event ) {
+        starttime = +new Date()
+      }
+      if( "play" === d.action && "end" == d.event && "completed" == d.reason ) {
+        endtime = +new Date()
+        done()
+      }
+    } )
+
+    /* send keepalive RTP to prevent idle timeout */
+    const rtppk = Buffer.alloc( 172 )
+    rtppk[ 0 ] = 0x80
+    rtppk[ 1 ] = 0x00
+    let sn = 0
+    const keepalive = setInterval( function() {
+      rtppk.writeUInt16BE( sn++, 2 )
+      rtppk.writeUInt32BE( sn * 160, 4 )
+      rtppk.writeUInt32BE( 0x12345678, 8 )
+      server.send( rtppk, 0, rtppk.length, channel.local.port, "127.0.0.1" )
+    }, 20 )
+
+    expect( channel.play( {
+      "files": [
+        { "wav": longwav },
+        { "wav": "/tmp/flat.wav" }
+      ]
+    } ) ).to.be.true
+
+    await finished
+
+    clearInterval( keepalive )
+    channel.close()
+    server.close()
+
+    await new Promise( resolve => setTimeout( resolve, 100 ) )
+
+    const durationms = endtime - starttime
+
+    /* flat.wav is 1S of 8kHz audio = 50 packets */
+    const expectedmin = ( longwavduration + 1 ) * 50 * 0.95 /* 5% tolerance */
+    expect( receviedpkcount ).to.be.above( expectedmin )
+    expect( durationms ).to.be.greaterThan( ( longwavduration + 1 ) * 1000 * 0.95 )
+    expect( durationms ).to.be.lessThan( ( longwavduration + 1 ) * 1000 * 1.10 )
+  } )
+
   before( async () => {
 
     const samples = 8000
