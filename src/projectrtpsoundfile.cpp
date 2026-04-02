@@ -336,10 +336,12 @@ bool soundfilereader::read( rawsound &out ) {
   thisbuffer.resize( this->bytecount );
   nextblock.aio_buf = thisbuffer.data();
 
-  if( nextblock.aio_offset > this->ourwavheader.chunksize ) {
+  off_t nextoffset = lastreadoffset + this->bytecount;
+  if( nextoffset >= ( off_t ) ( sizeof( wavheader ) + this->ourwavheader.subchunksize ) ) {
     nextblock.aio_offset = sizeof( wavheader );
+    this->bodyread = true;
   } else {
-    nextblock.aio_offset = lastreadoffset + this->bytecount;
+    nextblock.aio_offset = nextoffset;
   }
 
   nextblock.aio_nbytes = this->bytecount;
