@@ -107,12 +107,15 @@ perhaps monitor (std::cerr).
 soundfilereader::soundfilereader( std::string &url ) :
   soundfile( open( url.c_str(), O_RDONLY | O_NONBLOCK, 0 ) ),
   bytecount( L16WIDEBANDBYTES ),
+  /* url stored below after base init */
   samplecount( L1616PAYLOADSAMPLES ),
   badheader( false ),
   headerread( false ),
   bodyread( false ),
   initseekmseconds( 0 ),
   ploadtype( L168KPAYLOADTYPE ) {
+
+  this->url = url;
 
   if ( -1 == this->file ) {
     /* Not much more we can do */
@@ -309,11 +312,10 @@ bool soundfilereader::read( rawsound &out ) {
 
   if( static_cast<size_t>( numbytes ) < this->bytecount ) {
     this->bodyread = true;
-    if( numbytes > 0 ) {
-      fprintf( stderr, "Partial read on %s: got %zd expected %zu at offset %lld (chunksize %u)\n",
-               this->url.c_str(), numbytes, this->bytecount,
-               ( long long ) thisblock.aio_offset, this->ourwavheader.chunksize );
-    }
+    fprintf( stderr, "soundfilereader EOF on %s: got %zd expected %zu at offset %lld (chunksize %u filesize %lld)\n",
+             this->url.c_str(), numbytes, this->bytecount,
+             ( long long ) thisblock.aio_offset, this->ourwavheader.chunksize,
+             ( long long ) thisblock.aio_offset + numbytes );
     out.zero();
     return true;
   }
@@ -734,11 +736,10 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
     return false;
   }
 
-  uint32_t maxbasedonthischunk = 0;
-  maxbasedonthischunk = thisblock.aio_offset + thisblock.aio_nbytes;
-  if( maxbasedonthischunk > this->ourwavheader.subchunksize ) {
-    this->ourwavheader.subchunksize = maxbasedonthischunk;
-    this->ourwavheader.chunksize = maxbasedonthischunk + 36;
+  uint32_t dataend = thisblock.aio_offset + thisblock.aio_nbytes - sizeof( wavheader );
+  if( dataend > this->ourwavheader.subchunksize ) {
+    this->ourwavheader.subchunksize = dataend;
+    this->ourwavheader.chunksize = dataend + 36;
 
     /* Update the wav header with size */
     if( aio_error( &this->cbwavheader ) != EINPROGRESS ) {
@@ -822,10 +823,10 @@ bool soundfilewriter::drainpending( void ) {
     }
     drainedchunks++;
 
-    uint32_t maxbasedonthischunk = thisblock.aio_offset + thisblock.aio_nbytes;
-    if( maxbasedonthischunk > this->ourwavheader.subchunksize ) {
-      this->ourwavheader.subchunksize = maxbasedonthischunk;
-      this->ourwavheader.chunksize = maxbasedonthischunk + 36;
+    uint32_t dataend = thisblock.aio_offset + thisblock.aio_nbytes - sizeof( wavheader );
+    if( dataend > this->ourwavheader.subchunksize ) {
+      this->ourwavheader.subchunksize = dataend;
+      this->ourwavheader.chunksize = dataend + 36;
 
       if( aio_error( &this->cbwavheader ) != EINPROGRESS ) {
         aio_return( &this->cbwavheader );
