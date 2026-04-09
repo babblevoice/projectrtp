@@ -373,36 +373,39 @@ describe( "rtpsound", function() {
     let done
     const finished = new Promise( ( r ) => { done = r } )
 
+    /* Track the sequence of PCMA values across file transitions.
+       flat=228, flat2=223, flat3=220. flat.wav plays twice (loop=2) so
+       no value change between loops. The value sequence is:
+       228 → 223 → 228 → 220 → (outer loop restart) 228 → 223 → 228 → 220
+       So transitions TO: 223, 228, 220, 228, 223, 228, 220 */
+    const expectedtransitions = [ 223, 228, 220, 228, 223, 228, 220 ]
+    let transindex = 0
+    let lastvalue = 0
+
     // eslint-disable-next-line complexity
     server.on( "message", function( msg ) {
 
       receviedpkcount++
-      const secondouterloopoffset = 205
 
-      /* This is PCMA encoded data from our soundsoup */
-      if( 25 == receviedpkcount || ( 25 + secondouterloopoffset ) == receviedpkcount ) {
-        /* flat.wav first loop */
-        expect( msg[ 17 ] ).to.equal( 228 )
-        expect( msg[ 150 ] ).to.equal( 228 )
-      } else if( 75 == receviedpkcount || ( 75 + secondouterloopoffset ) == receviedpkcount ) {
-        /* flat.wav second loop */
-        expect( msg[ 17 ] ).to.equal( 228 )
-        expect( msg[ 150 ] ).to.equal( 228 )
-      } else if( 125 == receviedpkcount || ( 125 + secondouterloopoffset ) == receviedpkcount ) {
-        /* flat2.wav */
-        expect( msg[ 17 ] ).to.equal( 223 )
-        expect( msg[ 150 ] ).to.equal( 223 )
-      } else if( 175 == receviedpkcount || ( 175 + secondouterloopoffset ) == receviedpkcount ) {
-        /* flat.wav */
-        expect( msg[ 17 ] ).to.equal( 228 )
-        expect( msg[ 150 ] ).to.equal( 228 )
-      } else if( 206 == receviedpkcount || 413 == receviedpkcount ) {
-        /* flat3.wav */
-        expect( msg[ 17 ] ).to.equal( 220 )
-        expect( msg[ 150 ] ).to.equal( 220 )
-      } else if( ( 207 * 2 ) == receviedpkcount ) {
-        enoughpackets()
+      const val = msg[ 17 ]
+      if( 0 == val ) return
+
+      if( val !== lastvalue && 0 !== lastvalue ) {
+        /* value transition — verify against expected order */
+        if( transindex < expectedtransitions.length ) {
+          expect( val ).to.equal( expectedtransitions[ transindex ] )
+          transindex++
+        }
+
+        if( transindex >= expectedtransitions.length ) {
+          enoughpackets()
+        }
+      } else if( 0 === lastvalue ) {
+        /* first non-zero packet — should be flat.wav */
+        expect( val ).to.equal( 228 )
       }
+
+      lastvalue = val
     } )
 
     server.bind()
@@ -629,6 +632,137 @@ describe( "rtpsound", function() {
     prtp.projectrtp.tone.generate( "440/0:400/350/225/525", uktones )
     prtp.projectrtp.tone.generate( "440/0:125/125", uktones )
 
+  } )
+
+  it( "rapid play replacement stresses aio cancel and reap", async function() {
+
+    /*
+    Rapidly replace the player 20 times in quick succession. Each replacement
+    triggers setposition (aio_cancel + reap) on the old file and starts reading
+    the new file. This exercises the aio lifecycle under pressure:
+    - cancel in-flight operations
+    - reap cancelled operations (needsreap tracking)
+    - start new operations on reused aiocbs
+    - destructor cleanup of abandoned files
+    */
+
+    this.timeout( 5000 )
+    this.slow( 3000 )
+
+    const server = dgram.createSocket( "udp4" )
+    let receviedpkcount = 0
+
+    server.on( "message", function() { receviedpkcount++ } )
+
+    let done
+    const finished = new Promise( r => { done = r } )
+
+    server.bind()
+    await new Promise( resolve => server.on( "listening", resolve ) )
+
+    const ourport = server.address().port
+    const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) done()
+    } )
+
+    /* rapidly replace the player */
+    for( let i = 0; i < 20; i++ ) {
+      const file = ( 0 == i % 2 ) ? "/tmp/flat.wav" : "/tmp/flat2.wav"
+      expect( channel.play( { "files": [ { "wav": file } ] } ) ).to.be.true
+      await new Promise( r => setTimeout( r, 30 ) )
+    }
+
+    /* let the last file play out */
+    await new Promise( r => setTimeout( r, 1200 ) )
+
+    channel.close()
+    server.close()
+
+    await finished
+
+    expect( receviedpkcount ).to.be.above( 30 )
+  } )
+
+  it( "many short files in soundsoup stresses file transitions", async function() {
+
+    /*
+    A soundsoup with many very short plays (using start/stop) forces
+    rapid file transitions. Each transition goes through plusone →
+    setposition → aio_cancel → reap → new aio_read. With 10 files
+    playing ~3 packets each, we get ~10 transitions in quick succession.
+    */
+
+    this.timeout( 5000 )
+    this.slow( 3000 )
+
+    const server = dgram.createSocket( "udp4" )
+    let receviedpkcount = 0
+
+    server.on( "message", function() { receviedpkcount++ } )
+
+    let done
+    const finished = new Promise( r => { done = r } )
+
+    server.bind()
+    await new Promise( resolve => server.on( "listening", resolve ) )
+
+    const ourport = server.address().port
+    const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) done()
+    } )
+
+    expect( channel.play( { "files": [
+      { "wav": "/tmp/flat.wav", "start": 0, "stop": 60 },
+      { "wav": "/tmp/flat2.wav", "start": 0, "stop": 60 },
+      { "wav": "/tmp/flat.wav", "start": 100, "stop": 160 },
+      { "wav": "/tmp/flat2.wav", "start": 200, "stop": 260 },
+      { "wav": "/tmp/flat.wav", "start": 300, "stop": 360 },
+      { "wav": "/tmp/flat2.wav", "start": 400, "stop": 460 },
+      { "wav": "/tmp/flat.wav", "start": 500, "stop": 560 },
+      { "wav": "/tmp/flat2.wav", "start": 600, "stop": 660 },
+      { "wav": "/tmp/flat.wav", "start": 700, "stop": 760 },
+      { "wav": "/tmp/flat3.wav", "start": 0, "stop": 60 },
+    ] } ) ).to.be.true
+
+    /* ~30 packets total (10 files × ~3 packets each) + transitions */
+    await new Promise( r => setTimeout( r, 2000 ) )
+
+    channel.close()
+    server.close()
+
+    await finished
+
+    /* should have received data without crashing */
+    expect( receviedpkcount ).to.be.above( 20 )
+  } )
+
+  it( "close channel while file is playing stresses destructor aio cleanup", async function() {
+
+    /*
+    Start playback then immediately close the channel. The soundfilereader
+    destructor must cancel and reap all in-flight aio operations without
+    crashing. Run this multiple times to catch intermittent races.
+    */
+
+    this.timeout( 5000 )
+    this.slow( 3000 )
+
+    for( let attempt = 0; attempt < 10; attempt++ ) {
+      let done
+      const finished = new Promise( r => { done = r } )
+
+      const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": 20000, "codec": 0 } }, function( d ) {
+        if( "close" === d.action ) done()
+      } )
+
+      channel.play( { "loop": true, "files": [ { "wav": "/tmp/flat.wav" } ] } )
+
+      /* close after a random short delay (0-50ms) to hit different aio states */
+      await new Promise( r => setTimeout( r, Math.floor( Math.random() * 50 ) ) )
+      channel.close()
+
+      await finished
+    }
   } )
 
   after( async () => {

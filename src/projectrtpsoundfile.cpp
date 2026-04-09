@@ -22,6 +22,7 @@ soundfile::soundfile( int fromfile ) :
   ourwavheader(),
   currentcbindex( 0 ),
   cbwavheader(),
+  headerneedsreap( false ),
   buffer(),
   filelock( true /* initialised as locked */ ) {
 
@@ -36,6 +37,8 @@ soundfile::soundfile( int fromfile ) :
   for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
     soundbuffer &thisbuffer = this->buffer[ i ];
     aiocb &thisblock = this->cbwavblock[ i ];
+
+    this->blockneedsreap[ i ] = false;
 
     thisbuffer.reserve( AIOCBBUFFERNUMSAMPLES );
 
@@ -59,6 +62,19 @@ soundfile::~soundfile() {
     /* Is there a better way? Not waiting for the cancel can can cause the async
     opperation to write to our buffer which is much worse */
     while( AIO_NOTCANCELED == aio_cancel( this->file, NULL ) );
+
+    /* reap any operations that weren't already reaped during normal use */
+    for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
+      if( this->blockneedsreap[ i ] ) {
+        aio_return( &this->cbwavblock[ i ] );
+        this->blockneedsreap[ i ] = false;
+      }
+    }
+    if( this->headerneedsreap ) {
+      aio_return( &this->cbwavheader );
+      this->headerneedsreap = false;
+    }
+
     close( this->file );
     this->file = -1;
   }
@@ -150,6 +166,7 @@ soundfilereader::soundfilereader( std::string &url ) :
     releasespinlock( this->filelock );
     return;
   }
+  this->headerneedsreap = true;
 
   releasespinlock( this->filelock );
 	return;
@@ -178,6 +195,8 @@ void soundfilereader::parseheader( void ) {
     return;
   }
 
+  aio_return( &this->cbwavheader );
+  this->headerneedsreap = false;
   this->headerread = true;
 
   if( 'W' != this->ourwavheader.wave_header[ 0 ] ) {
@@ -247,6 +266,8 @@ void soundfilereader::parseheader( void ) {
   aiocb &thisblock = this->cbwavblock[ thisindex ];
   if ( aio_read( &thisblock ) == -1 ) {
     this->bodyread = true;
+  } else {
+    this->blockneedsreap[ thisindex ] = true;
   }
 }
 
@@ -290,6 +311,12 @@ bool soundfilereader::read( rawsound &out ) {
   auto thisindex = this->currentcbindex % SOUNDFILENUMBUFFERS;
   aiocb &thisblock = this->cbwavblock[ thisindex ];
 
+  if( !this->blockneedsreap[ thisindex ] ) {
+    /* no aio operation was started on this buffer - return silence */
+    out.zero();
+    return true;
+  }
+
   if( aio_error( &thisblock ) == EINPROGRESS ) {
     /* return some silence */
     out.zero();
@@ -298,6 +325,7 @@ bool soundfilereader::read( rawsound &out ) {
 
   /* success? */
   auto numbytes = aio_return( &thisblock );
+  this->blockneedsreap[ thisindex ] = false;
 
   if( -1 == numbytes ) {
     fprintf( stderr, "Bad call to aio_return on %s at offset %lld errno %d\n",
@@ -327,17 +355,23 @@ bool soundfilereader::read( rawsound &out ) {
   aiocb &nextblock = this->cbwavblock[ this->currentcbindex ];
   soundbuffer &thisbuffer = this->buffer[ this->currentcbindex ];
 
-  /* reap any completed aio on the buffer we are about to reuse */
-  if( aio_error( &nextblock ) != EINPROGRESS ) {
-    aio_return( &nextblock );
+  /* Do not touch the aiocb or its buffer while an operation is in progress -
+     reusing an aiocb with an in-flight op is undefined behaviour and corrupts
+     musl's internal aio thread pool state. Skip queuing; the next tick will
+     pick up the completed buffer. */
+  if( aio_error( &nextblock ) == EINPROGRESS ) {
+    return true;
   }
+  aio_return( &nextblock );
+  this->blockneedsreap[ this->currentcbindex ] = false;
 
   /* it shouldn't reallocate - but just in case */
   thisbuffer.resize( this->bytecount );
   nextblock.aio_buf = thisbuffer.data();
 
   off_t nextoffset = lastreadoffset + this->bytecount;
-  if( nextoffset >= ( off_t ) ( sizeof( wavheader ) + this->ourwavheader.subchunksize ) ) {
+  off_t dataend = ( off_t ) ( sizeof( wavheader ) + this->ourwavheader.subchunksize );
+  if( nextoffset >= dataend ) {
     nextblock.aio_offset = sizeof( wavheader );
     this->bodyread = true;
   } else {
@@ -353,6 +387,7 @@ bool soundfilereader::read( rawsound &out ) {
     this->bodyread = true;
     return false;
   }
+  this->blockneedsreap[ this->currentcbindex ] = true;
 
   return true;
 }
@@ -377,6 +412,15 @@ void soundfilereader::realsetposition( long mseconds ) {
 
   while( AIO_NOTCANCELED == aio_cancel( this->file, NULL ) );
 
+  /* reap every cancelled/completed operation before reusing the aiocbs -
+     skipping this leaves musl's aio thread pool in an inconsistent state */
+  for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
+    if( this->blockneedsreap[ i ] ) {
+      aio_return( &this->cbwavblock[ i ] );
+      this->blockneedsreap[ i ] = false;
+    }
+  }
+
   this->bodyread = false;
 
   this->currentcbindex = 0;
@@ -398,6 +442,8 @@ void soundfilereader::realsetposition( long mseconds ) {
 
   if ( aio_read( &thisblock ) == -1 ) {
     this->bodyread = true;
+  } else {
+    this->blockneedsreap[ 0 ] = true;
   }
 
   this->initseekmseconds = 0;
@@ -495,6 +541,7 @@ soundfilewriter::soundfilewriter( std::string &url, int16_t numchannels, int32_t
     releasespinlock( this->filelock );
     return;
   }
+  this->headerneedsreap = true;
 
   releasespinlock( this->filelock );
 	return;
@@ -540,13 +587,15 @@ bool soundfilewriter::isclosed( void ) {
         }
       }
 
-      /* collect completed aio results */
-      if( 0 == aio_error( &this->cbwavheader ) ) {
+      /* reap all completed aio results (success or error) */
+      if( this->headerneedsreap ) {
         aio_return( &this->cbwavheader );
+        this->headerneedsreap = false;
       }
       for( auto i = 0; i < SOUNDFILENUMBUFFERS; i++ ) {
-        if( 0 == aio_error( &this->cbwavblock[ i ] ) ) {
+        if( this->blockneedsreap[ i ] ) {
           aio_return( &this->cbwavblock[ i ] );
+          this->blockneedsreap[ i ] = false;
         }
       }
 
@@ -560,6 +609,7 @@ bool soundfilewriter::isclosed( void ) {
         this->file = -1;
         return true;
       }
+      this->headerneedsreap = true;
       this->_closestate = closestate::writingheader;
       return false;
     }
@@ -568,7 +618,10 @@ bool soundfilewriter::isclosed( void ) {
       if( EINPROGRESS == aio_error( &this->cbwavheader ) ) {
         return false;
       }
-      aio_return( &this->cbwavheader );
+      if( this->headerneedsreap ) {
+        aio_return( &this->cbwavheader );
+        this->headerneedsreap = false;
+      }
 
       /* kick off async fsync */
       if( -1 == aio_fsync( O_SYNC, &this->cbwavheader ) ) {
@@ -577,6 +630,7 @@ bool soundfilewriter::isclosed( void ) {
         this->file = -1;
         return true;
       }
+      this->headerneedsreap = true;
       this->_closestate = closestate::syncing;
       return false;
     }
@@ -585,7 +639,10 @@ bool soundfilewriter::isclosed( void ) {
       if( EINPROGRESS == aio_error( &this->cbwavheader ) ) {
         return false;
       }
-      aio_return( &this->cbwavheader );
+      if( this->headerneedsreap ) {
+        aio_return( &this->cbwavheader );
+        this->headerneedsreap = false;
+      }
 
       close( this->file );
       this->file = -1;
@@ -695,8 +752,9 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
     fprintf( stderr, "soundfile trying to write a packet whilst last is still in progress\n" );
     return false;
   }
-  if( 0 == aioerr ) {
+  if( this->blockneedsreap[ thisindex ] ) {
     aio_return( &thisblock );
+    this->blockneedsreap[ thisindex ] = false;
   }
 
   auto numchannels = this->ourwavheader.num_channels;
@@ -737,6 +795,7 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
     fprintf( stderr, "soundfile unable to write wav block to file %s\n", this->url.c_str() );
     return false;
   }
+  this->blockneedsreap[ thisindex ] = true;
 
   uint32_t dataend = thisblock.aio_offset + thisblock.aio_nbytes - sizeof( wavheader );
   if( dataend > this->ourwavheader.subchunksize ) {
@@ -745,9 +804,14 @@ bool soundfilewriter::write( codecx &in, codecx &out ) {
 
     /* Update the wav header with size */
     if( aio_error( &this->cbwavheader ) != EINPROGRESS ) {
-      aio_return( &this->cbwavheader );
+      if( this->headerneedsreap ) {
+        aio_return( &this->cbwavheader );
+        this->headerneedsreap = false;
+      }
       if ( aio_write( &this->cbwavheader ) == -1 ) {
         fprintf( stderr, "soundfile unable to update wav header to file %s\n", this->url.c_str() );
+      } else {
+        this->headerneedsreap = true;
       }
     }
   }
@@ -797,9 +861,9 @@ bool soundfilewriter::drainpending( void ) {
     if( aioerr == EINPROGRESS ) {
       break; /* buffer still in flight - continue next tick */
     }
-    /* reap completed operation before reusing this aiocb */
-    if( 0 == aioerr ) {
+    if( this->blockneedsreap[ thisindex ] ) {
       aio_return( &thisblock );
+      this->blockneedsreap[ thisindex ] = false;
     }
 
     size_t remaining = this->pendingsamples.size() - this->pendingoffset;
@@ -823,6 +887,7 @@ bool soundfilewriter::drainpending( void ) {
       fprintf( stderr, "soundfile unable to write pending block to file %s\n", this->url.c_str() );
       break;
     }
+    this->blockneedsreap[ thisindex ] = true;
     drainedchunks++;
 
     uint32_t dataend = thisblock.aio_offset + thisblock.aio_nbytes - sizeof( wavheader );
@@ -831,9 +896,14 @@ bool soundfilewriter::drainpending( void ) {
       this->ourwavheader.chunksize = dataend + 36;
 
       if( aio_error( &this->cbwavheader ) != EINPROGRESS ) {
-        aio_return( &this->cbwavheader );
+        if( this->headerneedsreap ) {
+          aio_return( &this->cbwavheader );
+          this->headerneedsreap = false;
+        }
         if( aio_write( &this->cbwavheader ) == -1 ) {
           fprintf( stderr, "soundfile unable to update wav header to file %s\n", this->url.c_str() );
+        } else {
+          this->headerneedsreap = true;
         }
       }
     }
