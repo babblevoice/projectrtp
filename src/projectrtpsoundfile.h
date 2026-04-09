@@ -90,6 +90,10 @@ protected:
   aiocb cbwavheader;
   aiocb cbwavblock[ SOUNDFILENUMBUFFERS ];
 
+  /* track whether each aiocb has an outstanding operation needing aio_return */
+  bool headerneedsreap;
+  bool blockneedsreap[ SOUNDFILENUMBUFFERS ];
+
   /* buffer for data */
   soundbuffer buffer[ SOUNDFILENUMBUFFERS ];
 

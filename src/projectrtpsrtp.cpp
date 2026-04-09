@@ -89,7 +89,10 @@ dtlssession::dtlssession( dtlssession::mode mode ) :
   gnutlserrorcheck( gnutls_srtp_set_profile( this->session, GNUTLS_SRTP_AES128_CM_HMAC_SHA1_80 ), "gnutls_srtp_set_profile" ); // or maybe GNUTLS_SRTP_AES128_CM_HMAC_SHA1_32?
   gnutls_transport_set_ptr( this->session, this );
 
-  gnutls_dtls_set_timeouts( this->session, 500, 60 * 1000 );
+  /* retransmission timeout must be short since our pull_timeout callback
+     returns immediately (non-blocking tick-based design). GnuTLS doubles
+     the timeout after each cycle, so 200ms → 400ms → 800ms... */
+  gnutls_dtls_set_timeouts( this->session, 200, 10000 );
 
   gnutls_transport_set_push_function( this->session, [] ( gnutls_transport_ptr_t p, const void *data, size_t size ) -> ssize_t {
     ( ( dtlssession * )( p ) )->push( data, size );
@@ -169,8 +172,10 @@ int dtlssession::timeout( unsigned int ms ) {
     return 1;
   }
 
-  gnutls_transport_set_errno( this->session, EAGAIN );
-  return -1;
+  /* no data available - return 0 (timeout elapsed) so gnutls handles
+     retransmission internally. returning -1 would signal a transport
+     error and cause the handshake to fail with GNUTLS_E_TIMEDOUT */
+  return 0;
 }
 
 

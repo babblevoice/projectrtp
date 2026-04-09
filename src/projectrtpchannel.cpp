@@ -287,6 +287,11 @@ void projectrtpchannel::remote( std::string address,
       }
       this->earlydtls.clear();
     }
+
+    /* kick off the DTLS handshake immediately rather than waiting for
+       the next tick - avoids burning through gnutls retransmission
+       budget since our pull_timeout returns instantly */
+    this->dtlsnegotiate();
   }
 }
 
