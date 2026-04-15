@@ -140,7 +140,9 @@ async fn run(mut state: ChannelState, mut cmds: mpsc::Receiver<Command>, events:
     }
     let stats = ChannelStats {
         in_count: state.in_count,
-        in_dropped: state.in_dropped,
+        // Jitter-side drops (out-of-window SN, duplicates) plus any drops
+        // counted directly on state (e.g. mix-relay transcode failures).
+        in_dropped: state.in_dropped + state.jitter.dropped,
         in_skip: state.in_skip,
         out_count: state.out_count,
     };
