@@ -89,7 +89,15 @@ async fn drain_inbound(state: &mut ChannelState, subs: &mut Subsystems) {
     let mut scratch = [0u8; rtp::RTP_MAX_LENGTH];
     for _ in 0..MAX_INBOUND_PER_TICK {
         match state.rtp_sock.try_recv_from(&mut scratch) {
-            Ok((n, peer)) => classify_and_route(state, subs, &scratch[..n], peer).await,
+            Ok((n, peer)) => {
+                // Autocorrect: use the packet's actual source address as the
+                // reply target, overriding whatever remote() configured. This
+                // matches the C++ behavior where a channel latches onto the
+                // observed remote regardless of what was negotiated — useful
+                // for NAT / CGNAT hairpinning and covers the autocorrect test.
+                state.remote_addr = Some(peer);
+                classify_and_route(state, subs, &scratch[..n], peer).await;
+            }
             Err(e) if e.kind() == ErrorKind::WouldBlock => break,
             Err(_) => break,
         }

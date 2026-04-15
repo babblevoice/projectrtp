@@ -151,9 +151,32 @@ impl ChannelObject {
         }));
     }
 
-    // The following take richer param objects. They'll grow typed napi signatures
-    // as the soundsoup/record JSON schemas are ported from lib/node.js.
-    #[napi] pub async fn remote(&self)     -> Result<()> { Ok(()) }
+    /// Reconfigure the remote end for outbound RTP. JS calls
+    /// `channel.remote({ address, port, codec })`. Synchronous so the test's
+    /// `channel.remote(...)` sits on the same tick as `channel.echo()`.
+    #[napi]
+    pub fn remote(&self, params: Object) -> Result<()> {
+        let addr = params.get_named_property::<String>("address").ok();
+        let port = params.get_named_property::<u32>("port").ok();
+        let codec = params.get_named_property::<u32>("codec").ok().unwrap_or(0);
+        let Some(addr_s) = addr else { return Ok(()); };
+        let Some(port_n) = port else { return Ok(()); };
+        let Ok(ip) = addr_s.parse::<IpAddr>() else { return Ok(()); };
+        let sa = SocketAddr::new(ip, port_n as u16);
+        let (ack, _) = tokio::sync::oneshot::channel();
+        let _ = self.handle.cmd.try_send(super::commands::Command::Remote {
+            cfg: super::commands::RemoteConfig {
+                addr: sa,
+                payload_type: codec as u8,
+                ilbc_payload_type: None,
+                rfc2833_payload_type: None,
+                dtls: None,
+            },
+            ack,
+        });
+        Ok(())
+    }
+
     #[napi] pub async fn play(&self)       -> Result<()> { Ok(()) }
     #[napi] pub async fn record(&self)     -> Result<()> { Ok(()) }
     #[napi] pub async fn playrecord(&self) -> Result<()> { Ok(()) }
