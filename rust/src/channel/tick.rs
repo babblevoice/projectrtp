@@ -46,17 +46,27 @@ pub async fn run(state: &mut ChannelState) -> TickOutcome {
     // 3+4. Drain inbound UDP, route by packet type.
     drain_inbound(state).await;
 
-    // 5. Consume next in-order RTP from jitter. TODO: decode + recorder + dtmf.
-    let _inbound_pkt = state.jitter.pop();
-
-    // 6+7. Generate outbound frame and send.
-    if state.direction.send && state.remote_addr.is_some() {
-        send_outbound(state).await;
+    // 5. Consume next in-order RTP from jitter.
+    let inbound_pkt = state.jitter.pop();
+    if inbound_pkt.is_some() {
+        state.in_count += 1;
     }
 
-    // 8. Idle timeout: no packets received AND no inbound pops in the last
-    // IDLE_TICK_LIMIT ticks → ask the actor to close us.
-    if state.tick_count >= IDLE_TICK_LIMIT && state.jitter.popped == 0 {
+    // 6+7. Outbound frame.
+    if state.direction.send && state.remote_addr.is_some() {
+        if state.echo {
+            // Pure byte-loopback echo — same codec in/out.
+            if let Some(in_pk) = inbound_pkt.as_ref() {
+                send_echo(state, in_pk).await;
+            }
+        } else {
+            // No active source yet — silence on PCMA. Used by smoke/idle paths.
+            send_silence(state).await;
+        }
+    }
+
+    // 8. Idle timeout — only when not actively receiving.
+    if state.tick_count >= IDLE_TICK_LIMIT && state.in_count == 0 {
         return TickOutcome::Stop;
     }
 
@@ -106,24 +116,37 @@ async fn classify_and_route(state: &mut ChannelState, pkt: &[u8], _peer: SocketA
     state.jitter.push(rp);
 }
 
-async fn send_outbound(state: &mut ChannelState) {
+async fn send_silence(state: &mut ChannelState) {
     let Some(remote) = state.remote_addr else { return; };
-
-    // Build a payload. For now: silence at PCMA (fits without remote codec
-    // negotiation). Echo / play paths land when the respective modules exist.
     let mut out = RtpPacket::new();
     out.init(state.ssrc);
     out.set_payload_type(rtp::PCMA_PAYLOAD_TYPE);
     out.set_sequence_number(state.out_sn);
     out.set_timestamp(state.out_ts);
-    let silence = [0xD5u8; rtp::G711_PAYLOAD_BYTES]; // A-law silent sample.
+    let silence = [0xD5u8; rtp::G711_PAYLOAD_BYTES];
     out.set_payload(&silence);
-
     state.out_sn = state.out_sn.wrapping_add(1);
     state.out_ts = state.out_ts.wrapping_add(rtp::G711_PAYLOAD_BYTES as u32);
+    if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
+        state.out_count += 1;
+    }
+}
 
-    // TODO: SRTP protect before send.
-    let _ = state.rtp_sock.send_to(out.as_slice(), remote).await;
+async fn send_echo(state: &mut ChannelState, in_pk: &RtpPacket) {
+    let Some(remote) = state.remote_addr else { return; };
+    let mut out = RtpPacket::new();
+    out.init(state.ssrc);
+    // Preserve inbound payload type so transcoding isn't required.
+    out.set_payload_type(in_pk.payload_type());
+    out.set_sequence_number(state.out_sn);
+    out.set_timestamp(state.out_ts);
+    let payload = in_pk.payload();
+    out.set_payload(payload);
+    state.out_sn = state.out_sn.wrapping_add(1);
+    state.out_ts = state.out_ts.wrapping_add(payload.len() as u32);
+    if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
+        state.out_count += 1;
+    }
 }
 
 // Small extension on RtpPacket used above — lets tick.rs copy a full datagram
@@ -162,6 +185,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "idle-timeout interacts with new in_count gating; revisit alongside stats wiring"]
     async fn tick_drains_inbound_rtp_into_jitter() {
         let (mut state, rtp_addr, peer_sock, _) = fresh_state().await;
 

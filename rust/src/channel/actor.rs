@@ -26,9 +26,17 @@ pub const DEFAULT_CMD_QUEUE_DEPTH: usize = 64;
 
 /// Events the actor emits back to the outside world. The JS facade (Task #9)
 /// will bridge these into a napi `ThreadsafeFunction`.
+#[derive(Debug, Clone, Default)]
+pub struct ChannelStats {
+    pub in_count: u64,
+    pub in_dropped: u64,
+    pub in_skip: u64,
+    pub out_count: u64,
+}
+
 #[derive(Debug, Clone)]
 pub enum Event {
-    Close { reason: String },
+    Close { reason: String, stats: ChannelStats },
     Play { state: PlayState, reason: Option<String> },
     Record { state: RecordState, reason: Option<String> },
     TelephoneEvent { digit: char },
@@ -125,8 +133,14 @@ async fn run(mut state: ChannelState, mut cmds: mpsc::Receiver<Command>, events:
     if let Some(mut rec) = subs.recorder.take() {
         rec.close(FinishReason::ChannelClosed);
     }
+    let stats = ChannelStats {
+        in_count: state.in_count,
+        in_dropped: state.in_dropped,
+        in_skip: state.in_skip,
+        out_count: state.out_count,
+    };
     state.close_info = Some(CloseInfo { reason: reason.clone() });
-    events.post(Event::Close { reason });
+    events.post(Event::Close { reason, stats });
 }
 
 async fn handle_command(
@@ -228,7 +242,7 @@ mod tests {
         let ev = tokio::time::timeout(Duration::from_millis(500), rx.recv())
             .await.expect("no close event").expect("stream ended");
         match ev {
-            Event::Close { reason } => assert_eq!(reason, "test"),
+            Event::Close { reason, .. } => assert_eq!(reason, "test"),
             other => panic!("unexpected event: {:?}", other),
         }
     }

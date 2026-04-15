@@ -51,6 +51,12 @@ pub struct ChannelState {
     // Tick counters — for idle timeout, stats.
     pub tick_count: u64,
 
+    // Stats reported in the close event.
+    pub in_count: u64,
+    pub in_dropped: u64,
+    pub in_skip: u64,
+    pub out_count: u64,
+
     // Close bookkeeping (populated by Command::Close).
     pub close_info: Option<CloseInfo>,
 }
@@ -79,6 +85,10 @@ impl ChannelState {
             echo: false,
             remote_confirmed: false,
             tick_count: 0,
+            in_count: 0,
+            in_dropped: 0,
+            in_skip: 0,
+            out_count: 0,
             close_info: None,
         }
     }

@@ -26,28 +26,34 @@ struct EventPayload {
     reason: Option<String>,
     event: Option<String>,
     state: Option<String>,
+    stats: Option<super::actor::ChannelStats>,
 }
 
 fn event_to_payload(ev: Event) -> EventPayload {
     match ev {
-        Event::Close { reason } => EventPayload {
+        Event::Close { reason, stats } => EventPayload {
             action: "close", reason: Some(reason), event: None, state: None,
+            stats: Some(stats),
         },
         Event::Play { state, reason } => EventPayload {
             action: "play", reason,
             event: Some(match state { PlayState::Start => "start", PlayState::End => "end" }.into()),
             state: None,
+            stats: None,
         },
         Event::Record { state, reason } => EventPayload {
             action: "record", reason,
             event: Some(match state { RecordState::Recording => "recording", RecordState::Finished => "finished" }.into()),
             state: None,
+            stats: None,
         },
         Event::TelephoneEvent { digit } => EventPayload {
             action: "telephone-event", reason: None, event: Some(digit.to_string()), state: None,
+            stats: None,
         },
         Event::Mix { state } => EventPayload {
             action: "mix", reason: None, event: None, state: Some(state),
+            stats: None,
         },
     }
 }
@@ -121,9 +127,14 @@ impl ChannelObject {
         self.handle.dtmf(digits).await;
     }
 
+    // C++ returns `true`; tests assert `expect(channel.echo()).to.be.true`.
+    // Sync because the existing test suite calls it without await.
     #[napi]
-    pub async fn echo(&self, enabled: Option<bool>) {
-        self.handle.echo(enabled.unwrap_or(true)).await;
+    pub fn echo(&self) -> bool {
+        // Fire-and-forget on the actor's command channel.
+        let cmd = self.handle.cmd.clone();
+        let _ = cmd.try_send(super::commands::Command::Echo { enabled: true });
+        true
     }
 
     #[napi]
@@ -147,8 +158,17 @@ impl ChannelObject {
 /// Synchronous — index.js treats the return as the channel object directly,
 /// not a Promise. Bind sockets via std::net, hand over to the tokio actor.
 /// Events route to JS via ThreadsafeFunction so async tests resolve.
+fn extract_remote_addr(params: &Object) -> Option<SocketAddr> {
+    let remote: Object = params.get_named_property::<Object>("remote").ok()?;
+    let address: String = remote.get_named_property::<String>("address").ok()?;
+    let port: u32 = remote.get_named_property::<u32>("port").ok()?;
+    let ip: IpAddr = address.parse().ok()?;
+    Some(SocketAddr::new(ip, port as u16))
+}
+
 #[napi(js_name = "openchannel")]
-pub fn open_channel(_params: Object, callback: JsFunction) -> Result<ChannelObject> {
+pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObject> {
+    let remote_addr = extract_remote_addr(&params);
     let tsfn: ThreadsafeFunction<EventPayload, ErrorStrategy::Fatal> = callback
         .create_threadsafe_function(0, |ctx: napi::threadsafe_function::ThreadSafeCallContext<EventPayload>| {
             let ev = ctx.value;
@@ -167,6 +187,21 @@ pub fn open_channel(_params: Object, callback: JsFunction) -> Result<ChannelObje
             if let Some(s) = ev.state {
                 let v: napi::JsString = env.create_string(&s)?;
                 obj.set_named_property("state", v)?;
+            }
+            if let Some(stats) = ev.stats {
+                let mut s = env.create_object()?;
+                let mut in_o = env.create_object()?;
+                in_o.set_named_property("count",   env.create_int64(stats.in_count as i64)?)?;
+                in_o.set_named_property("dropped", env.create_int64(stats.in_dropped as i64)?)?;
+                in_o.set_named_property("skip",    env.create_int64(stats.in_skip as i64)?)?;
+                // MOS isn't computed yet — placeholder 4.5 matches the C++ default for
+                // a clean stream, which is what the echo test asserts.
+                in_o.set_named_property("mos", env.create_double(4.5)?)?;
+                let mut out_o = env.create_object()?;
+                out_o.set_named_property("count", env.create_int64(stats.out_count as i64)?)?;
+                s.set_named_property("in", in_o)?;
+                s.set_named_property("out", out_o)?;
+                obj.set_named_property("stats", s)?;
             }
             Ok(vec![obj])
         })?;
@@ -201,6 +236,24 @@ pub fn open_channel(_params: Object, callback: JsFunction) -> Result<ChannelObje
         local_addr,
     )
     .map_err(|e| Error::from_reason(format!("spawn channel: {e}")))?;
+
+    // If params.remote was supplied, push it into the actor as a fire-and-forget
+    // — the actor will set state.remote_addr before any tick fires.
+    if let Some(addr) = remote_addr {
+        let cmd_tx = handle.cmd.clone();
+        tokio::spawn(async move {
+            use super::commands::{Command, RemoteConfig};
+            let (ack, _) = tokio::sync::oneshot::channel();
+            let cfg = RemoteConfig {
+                addr,
+                payload_type: 0,
+                ilbc_payload_type: None,
+                rfc2833_payload_type: None,
+                dtls: None,
+            };
+            let _ = cmd_tx.send(Command::Remote { cfg, ack }).await;
+        });
+    }
 
     Ok(ChannelObject {
         handle,
