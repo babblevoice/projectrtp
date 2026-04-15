@@ -118,3 +118,10 @@ dist
 
 # TernJS port file
 .tern-port
+
+# Rust
+rust/target/
+**/*.rs.bk
+
+# napi build artefacts (the .node file is reproducible from `cargo build`)
+*.node

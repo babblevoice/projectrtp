@@ -1,0 +1,28 @@
+FROM rust:1.94-alpine3.22 AS rust-builder
+WORKDIR /src
+RUN apk add --no-cache musl-dev pkgconfig
+COPY rust/ /src/rust/
+WORKDIR /src/rust
+# Alpine's rust defaults target musl, which forces `-C target-feature=+crt-static`.
+# A cdylib (.so loaded by Node at runtime) needs dynamic linkage, so disable it.
+ENV RUSTFLAGS="-C target-feature=-crt-static"
+RUN cargo build --release                                                                                                                                                                   
+                                                                                                                                                                                              
+FROM alpine:3.22 AS test
+WORKDIR /usr/src/projectrtp                                                                                                                                                                 
+RUN apk add --no-cache nodejs npm openssl ca-certificates 
+COPY . .                                                                                                                                                                                    
+COPY --from=rust-builder /src/rust/target/release/libprojectrtp.so ./build/Release/projectrtp.node
+RUN npm ci --ignore-scripts   # skip the install hook that runs node-gyp                                                                                                                    
+CMD [ "./node_modules/mocha/bin/_mocha", "test/interface/*.js", "test/unit/*.js", "--exit" ]                                                                                                
+                                                                                                                                                                                              
+FROM alpine:3.22 AS app                                                                                                                                                                     
+WORKDIR /app                                                                                                                                                                                
+RUN apk add --no-cache nodejs openssl ca-certificates                                                                                                                                       
+COPY --from=rust-builder /src/rust/target/release/libprojectrtp.so /app/build/Release/projectrtp.node
+COPY index.js package.json /app/                                                                                                                                                            
+COPY lib/ /app/lib/                                       
+COPY examples/ /app/examples/                                                                                                                                                               
+RUN npm ci --omit=dev --ignore-scripts                    
+EXPOSE 10000-50000/udp                                                                                                                                                                      
+CMD [ "node", "examples/simplenode.js" ]
