@@ -17,7 +17,9 @@
 
 use std::collections::VecDeque;
 
-pub const EVENT_REPEATS: u8 = 10;
+// 11 body + 3 end packets per digit, matching pkcountperdtmfdigit = 14 in
+// test/interface/projectrtpdtmf.js.
+pub const EVENT_REPEATS: u8 = 11;
 pub const END_REPEATS: u8 = 3;
 pub const DEFAULT_VOLUME: u8 = 10; // dB below max, matches C++ `volume` const
 pub const EVENT_DURATION_UNIT: u16 = 160; // one G.711 packet worth
@@ -218,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn sender_emits_10_body_plus_3_end_per_digit() {
+    fn sender_emits_11_body_plus_3_end_per_digit() {
         let mut s = DtmfSender::new();
         s.enqueue("5");
         let mut body = 0;

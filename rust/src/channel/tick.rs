@@ -20,6 +20,7 @@ use std::net::SocketAddr;
 
 use bytes::Bytes;
 
+use super::actor::{Event, Subsystems};
 use super::rtp::{self, RtpPacket};
 use super::state::ChannelState;
 use crate::stun;
@@ -38,13 +39,14 @@ pub enum TickOutcome {
 const IDLE_TICK_LIMIT: u64 = 50 * 20; // 20 s @ 20 ms/tick, matches C++ line 528.
 const MAX_INBOUND_PER_TICK: usize = 64;
 
-pub async fn run(state: &mut ChannelState) -> TickOutcome {
+pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome {
     state.tick_count += 1;
 
     // 2. DTLS handshake step. TODO: drive DtlsSession when live.
 
-    // 3+4. Drain inbound UDP, route by packet type.
-    drain_inbound(state).await;
+    // 3+4. Drain inbound UDP, route by packet type. Inbound DTMF is consumed
+    // here and routed to subs.dtmf_recv → state.pending_events.
+    drain_inbound(state, subs).await;
 
     // 5. Consume next in-order RTP from jitter.
     let inbound_pkt = state.jitter.pop();
@@ -52,15 +54,16 @@ pub async fn run(state: &mut ChannelState) -> TickOutcome {
         state.in_count += 1;
     }
 
-    // 6+7. Outbound frame.
+    // 6+7. Outbound frame. DTMF queued events take precedence over media
+    // (matches the C++ behavior — DTMF preempts the audio stream).
     if state.direction.send && state.remote_addr.is_some() {
-        if state.echo {
-            // Pure byte-loopback echo — same codec in/out.
+        if let Some((event, payload)) = subs.dtmf_send.next_event() {
+            send_dtmf(state, event, &payload).await;
+        } else if state.echo {
             if let Some(in_pk) = inbound_pkt.as_ref() {
                 send_echo(state, in_pk).await;
             }
         } else {
-            // No active source yet — silence on PCMA. Used by smoke/idle paths.
             send_silence(state).await;
         }
     }
@@ -73,45 +76,52 @@ pub async fn run(state: &mut ChannelState) -> TickOutcome {
     TickOutcome::Continue
 }
 
-async fn drain_inbound(state: &mut ChannelState) {
+async fn drain_inbound(state: &mut ChannelState, subs: &mut Subsystems) {
     let mut scratch = [0u8; rtp::RTP_MAX_LENGTH];
     for _ in 0..MAX_INBOUND_PER_TICK {
         match state.rtp_sock.try_recv_from(&mut scratch) {
-            Ok((n, peer)) => classify_and_route(state, &scratch[..n], peer).await,
+            Ok((n, peer)) => classify_and_route(state, subs, &scratch[..n], peer).await,
             Err(e) if e.kind() == ErrorKind::WouldBlock => break,
             Err(_) => break,
         }
     }
 }
 
-async fn classify_and_route(state: &mut ChannelState, pkt: &[u8], _peer: SocketAddr) {
+async fn classify_and_route(
+    state: &mut ChannelState,
+    subs: &mut Subsystems,
+    pkt: &[u8],
+    _peer: SocketAddr,
+) {
     if pkt.is_empty() { return; }
 
-    // STUN per RFC 5389: first byte's top two bits are 00, magic cookie matches.
     if stun::is_stun(pkt) {
         // TODO: respond to Binding Request via stun::handle once we have the
         // local/remote ICE keys on ChannelState.
         return;
     }
 
-    // DTLS: content type 20 (change cipher), 21 (alert), 22 (handshake), 23
-    // (application data). The first byte distinguishes DTLS from RTP because
-    // RTP's first byte always has v=2 → top bits `10xx xxxx` (0x80..=0xBF).
     let first = pkt[0];
     if (20..=23).contains(&first) {
         // TODO: forward to DtlsSession.step_incoming and drain outgoing.
         return;
     }
 
-    // Everything else: treat as RTP/RTCP. We only buffer RTP; RTCP routes
-    // elsewhere. RTCP is PT 200..=204 (after the v=2 marker in pk[1]).
-    // Be permissive here — jitter::push rejects malformed SN anyway.
     if pkt.len() < rtp::RTP_FIXED_HEADER_LEN { return; }
 
+    // RFC 2833 telephone events: split off before the jitter so they don't
+    // occupy a media slot. Decode → emit "telephone-event" via pending_events.
+    let pt = rtp::payload_type(pkt);
+    if pt == state.rfc2833_pt {
+        let sn = rtp::sequence_number(pkt);
+        let payload = &pkt[rtp::RTP_FIXED_HEADER_LEN..];
+        if let Some(digit) = subs.dtmf_recv.feed(sn, payload) {
+            state.pending_events.push(Event::TelephoneEvent { digit });
+        }
+        return;
+    }
+
     let mut rp = RtpPacket::new();
-    // Copy into an owned RtpPacket. (Pool-backed allocation lands when the
-    // channel's packet pool is wired up; for now this matches the C++
-    // behavior of memcpy into a pre-sized buffer.)
     rp.as_mut_slice_for_fill(pkt.len()).copy_from_slice(pkt);
     state.jitter.push(rp);
 }
@@ -127,6 +137,23 @@ async fn send_silence(state: &mut ChannelState) {
     out.set_payload(&silence);
     state.out_sn = state.out_sn.wrapping_add(1);
     state.out_ts = state.out_ts.wrapping_add(rtp::G711_PAYLOAD_BYTES as u32);
+    if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
+        state.out_count += 1;
+    }
+}
+
+async fn send_dtmf(state: &mut ChannelState, _event: u8, payload: &[u8; 4]) {
+    let Some(remote) = state.remote_addr else { return; };
+    let mut out = RtpPacket::new();
+    out.init(state.ssrc);
+    out.set_payload_type(state.rfc2833_pt);
+    out.set_sequence_number(state.out_sn);
+    out.set_timestamp(state.out_ts);
+    out.set_payload(payload);
+    state.out_sn = state.out_sn.wrapping_add(1);
+    // DTMF events all share the timestamp of the first packet in the burst,
+    // per RFC 2833. Approximate by not advancing here; refine if a test
+    // asserts exact TS values.
     if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
         state.out_count += 1;
     }

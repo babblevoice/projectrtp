@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, MissedTickBehavior};
 
 use super::commands::{Command, Direction, Handle};
-use super::dtmf::DtmfSender;
+use super::dtmf::{DtmfReceiver, DtmfSender};
 use super::player::Player;
 use super::recorder::{FinishReason, Recorder};
 use super::state::{ChannelState, CloseInfo};
@@ -95,6 +95,7 @@ pub struct Subsystems {
     pub player: Option<Player>,
     pub recorder: Option<Recorder>,
     pub dtmf_send: DtmfSender,
+    pub dtmf_recv: DtmfReceiver,
 }
 
 async fn run(mut state: ChannelState, mut cmds: mpsc::Receiver<Command>, events: Arc<dyn EventSink>) {
@@ -118,9 +119,13 @@ async fn run(mut state: ChannelState, mut cmds: mpsc::Receiver<Command>, events:
             }
 
             _ = ticker.tick() => {
-                match tick::run(&mut state).await {
-                    TickOutcome::Stop => closing = Some("idle-timeout".to_string()),
-                    _ => {}
+                let outcome = tick::run(&mut state, &mut subs).await;
+                // Drain any events the tick generated (e.g. inbound DTMF).
+                for ev in state.pending_events.drain(..) {
+                    events.post(ev);
+                }
+                if outcome == TickOutcome::Stop {
+                    closing = Some("idle-timeout".to_string());
                 }
             }
         }

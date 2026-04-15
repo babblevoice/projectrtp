@@ -9,6 +9,7 @@ use std::net::SocketAddr;
 
 use tokio::net::UdpSocket;
 
+use super::actor::Event;
 use super::commands::{ChannelId, Direction, RemoteConfig};
 use super::jitter::JitterBuffer;
 use super::rtp::RtpPacket;
@@ -57,6 +58,14 @@ pub struct ChannelState {
     pub in_skip: u64,
     pub out_count: u64,
 
+    // RFC 2833 payload type — defaults to 101 unless the remote config
+    // negotiates a different one.
+    pub rfc2833_pt: u8,
+
+    // Events the tick wants the actor to forward to the JS callback. Drained
+    // after each tick.run().
+    pub pending_events: Vec<Event>,
+
     // Close bookkeeping (populated by Command::Close).
     pub close_info: Option<CloseInfo>,
 }
@@ -89,6 +98,8 @@ impl ChannelState {
             in_dropped: 0,
             in_skip: 0,
             out_count: 0,
+            rfc2833_pt: 101,
+            pending_events: Vec::new(),
             close_info: None,
         }
     }
