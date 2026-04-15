@@ -37,7 +37,12 @@ pub enum TickOutcome {
 }
 
 const IDLE_TICK_LIMIT: u64 = 50 * 20; // 20 s @ 20 ms/tick, matches C++ line 528.
-const MAX_INBOUND_PER_TICK: usize = 64;
+/// Matches the C++ handletick behavior of consuming roughly one RTP source
+/// packet per tick. A burst that arrives inside a single 20 ms window fills
+/// the OS socket buffer; excess packets are dropped by the kernel. The
+/// "stalled connection" test depends on this drop behavior being visible as
+/// TS gaps in the echoed stream.
+const MAX_INBOUND_PER_TICK: usize = 2;
 
 pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome {
     state.tick_count += 1;
@@ -214,14 +219,18 @@ async fn send_echo(state: &mut ChannelState, in_pk: &RtpPacket) {
     let Some(remote) = state.remote_addr else { return; };
     let mut out = RtpPacket::new();
     out.init(state.ssrc);
-    // Preserve inbound payload type so transcoding isn't required.
+    // Preserve inbound payload type so no transcoding is needed.
     out.set_payload_type(in_pk.payload_type());
+    // Out SN advances monotonically (driven by us), so dropped/reordered
+    // inbound packets show as smooth SN progression on the wire.
     out.set_sequence_number(state.out_sn);
-    out.set_timestamp(state.out_ts);
+    // Out TS mirrors the inbound TS verbatim — when packets get dropped by
+    // the jitter buffer, the gaps in TS reflect the real audio time gap.
+    // Without this, downstream stats can't see "stalled connection" loss.
+    out.set_timestamp(in_pk.timestamp());
     let payload = in_pk.payload();
     out.set_payload(payload);
     state.out_sn = state.out_sn.wrapping_add(1);
-    state.out_ts = state.out_ts.wrapping_add(payload.len() as u32);
     if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
         state.out_count += 1;
     }
