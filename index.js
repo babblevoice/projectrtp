@@ -476,10 +476,26 @@ class projectrtp {
           console.trace( e )
         }
       } )
-      /* I can't find a way of defining a getter in napi - so here we override */
-
-      chan.local.address = localaddress
-      chan.local.privateaddress = privateaddress
+      /* Build chan.local from the Rust napi-class getters (port/ssrc/icepwd/
+         dtlsfingerprint). napi-rs class getters can't be replaced on the
+         instance, so we attach `local` as a regular own-property here. */
+      Object.defineProperty( chan, "local", {
+        value: {
+          port: chan.port,
+          ssrc: chan.ssrc,
+          icepwd: chan.icepwd,
+          address: localaddress,
+          privateaddress: privateaddress,
+          dtls: {
+            fingerprint: chan.dtlsfingerprint,
+            enabled: false,
+            icepwd: chan.icepwd,
+          },
+        },
+        writable: true,
+        configurable: true,
+        enumerable: true,
+      } )
 
       chan.em = new EventEmitter()
       if( cb ) chan.em.on( "all", cb )
