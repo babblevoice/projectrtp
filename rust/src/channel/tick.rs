@@ -48,24 +48,30 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     // here and routed to subs.dtmf_recv → state.pending_events.
     drain_inbound(state, subs).await;
 
-    // 5. Consume next in-order RTP from jitter.
+    // 5. Consume next in-order RTP from jitter (drives in_count / stats).
     let inbound_pkt = state.jitter.pop();
     if inbound_pkt.is_some() {
         state.in_count += 1;
     }
 
-    // 6+7. Outbound frame. DTMF queued events take precedence over media
-    // (matches the C++ behavior — DTMF preempts the audio stream).
-    if state.direction.send && state.remote_addr.is_some() {
+    // 6+7. Outbound. Three modes, in priority order:
+    //   - mixed: the mix relay already sent inbound bytes to the peer remote
+    //     during drain_inbound; nothing more to do here.
+    //   - dtmf send queue: takes precedence over media.
+    //   - echo / silence: the existing 1-channel paths.
+    if state.mix_peer_remote.is_some() {
+        // No-op: mix relay handled per-packet on receive.
+    } else if state.direction.send && state.remote_addr.is_some() {
         if let Some((event, payload)) = subs.dtmf_send.next_event() {
             send_dtmf(state, event, &payload).await;
         } else if state.echo {
             if let Some(in_pk) = inbound_pkt.as_ref() {
                 send_echo(state, in_pk).await;
             }
-        } else {
-            send_silence(state).await;
         }
+        // Otherwise: stay silent. C++ behavior — no media unless echo / play /
+        // mix is active. Earlier silence-fallback caused PT=8 packets to bleed
+        // into tests expecting only PT=0 after unmix.
     }
 
     // 8. Idle timeout — only when not actively receiving.
@@ -109,8 +115,40 @@ async fn classify_and_route(
 
     if pkt.len() < rtp::RTP_FIXED_HEADER_LEN { return; }
 
-    // RFC 2833 telephone events: split off before the jitter so they don't
-    // occupy a media slot. Decode → emit "telephone-event" via pending_events.
+    // 2-channel mix relay: forward the bytes to the peer channel's remote.
+    // If our inbound PT matches the peer's outbound PT (same codec on both
+    // sides), pass the bytes through unchanged. Otherwise transcode the
+    // payload between G.711 codecs and rewrite the PT byte.
+    if let Some(peer_remote) = state.mix_peer_remote {
+        let in_pt = rtp::payload_type(pkt);
+        // RFC 2833 telephone events pass through transparently regardless
+        // of codec — they're a separate PT and have no PCM payload.
+        let pass_through = in_pt == state.mix_peer_pt || in_pt == state.rfc2833_pt;
+        let send_ok = if pass_through {
+            state.rtp_sock.send_to(pkt, peer_remote).await.is_ok()
+        } else {
+            let header_len = rtp::header_len(pkt);
+            let payload = &pkt[header_len..];
+            match crate::codec::transcode_g711(in_pt, state.mix_peer_pt, payload) {
+                Some(transcoded) => {
+                    let mut buf = pkt[..header_len].to_vec();
+                    buf.extend_from_slice(&transcoded);
+                    rtp::set_payload_type(&mut buf, state.mix_peer_pt);
+                    state.rtp_sock.send_to(&buf, peer_remote).await.is_ok()
+                }
+                None => {
+                    // Unsupported codec pair — drop and count.
+                    state.in_dropped += 1;
+                    false
+                }
+            }
+        };
+        if send_ok { state.out_count += 1; }
+        state.in_count += 1;
+        return;
+    }
+
+    // RFC 2833 telephone events: decode → emit "telephone-event".
     let pt = rtp::payload_type(pkt);
     if pt == state.rfc2833_pt {
         let sn = rtp::sequence_number(pkt);

@@ -80,6 +80,8 @@ pub enum Command {
     Direction(Direction),
     Mix { other_id: ChannelId, other_sender: tokio::sync::mpsc::Sender<Command>, ack: Ack },
     Unmix,
+    /// Set the 2-channel mix relay target. None clears it.
+    SetMixPeer { remote: Option<SocketAddr>, peer_pt: u8 },
     Close { reason: String },
 }
 

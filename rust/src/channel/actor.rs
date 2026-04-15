@@ -169,6 +169,7 @@ async fn handle_command(
 
         Command::Remote { cfg, ack } => {
             state.remote_addr = Some(cfg.addr);
+            state.remote_pt = cfg.payload_type;
             state.remote = Some(cfg);
             state.remote_confirmed = true;
             let _ = ack.send(());
@@ -208,7 +209,13 @@ async fn handle_command(
         }
 
         Command::Unmix => {
-            // TODO: request state hand-back from MixGroup.
+            state.mix_peer_remote = None;
+            None
+        }
+
+        Command::SetMixPeer { remote, peer_pt } => {
+            state.mix_peer_remote = remote;
+            state.mix_peer_pt = peer_pt;
             None
         }
     }

@@ -49,6 +49,18 @@ pub struct ChannelState {
     pub echo: bool,
     pub remote_confirmed: bool,
 
+    // 2-channel mix relay target — when Some, every inbound packet is
+    // forwarded straight to this address (the *other* channel's remote) and
+    // the normal echo/silence outbound is skipped. n>2 mixing requires real
+    // sample-level mix math and lands in mixer.rs.
+    pub mix_peer_remote: Option<SocketAddr>,
+    /// Outbound payload type for the peer when forwarding via mix relay. If
+    /// it differs from the inbound PT we transcode (G.711 only).
+    pub mix_peer_pt: u8,
+
+    /// Outbound payload type for our own remote (set from params.remote.codec).
+    pub remote_pt: u8,
+
     // Tick counters — for idle timeout, stats.
     pub tick_count: u64,
 
@@ -93,6 +105,9 @@ impl ChannelState {
             ssrc,
             echo: false,
             remote_confirmed: false,
+            mix_peer_remote: None,
+            mix_peer_pt: 0,
+            remote_pt: 0,
             tick_count: 0,
             in_count: 0,
             in_dropped: 0,

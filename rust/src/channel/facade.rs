@@ -94,6 +94,12 @@ pub struct ChannelObject {
     channel_ssrc: u32,
     channel_port: u16,
     channel_icepwd: String,
+    /// Snapshot of the remote address supplied at openchannel — used to
+    /// program the mix-peer relay when JS calls `chan.mix(other)`.
+    remote_addr: Option<SocketAddr>,
+    /// Snapshot of the remote payload type from params.remote.codec — used
+    /// so a mix peer can transcode toward us correctly.
+    remote_pt: u8,
 }
 
 #[napi]
@@ -137,12 +143,13 @@ impl ChannelObject {
         true
     }
 
+    /// JS calls `channel.direction({ send, recv })` with a single object.
     #[napi]
-    pub async fn direction(&self, send: Option<bool>, recv: Option<bool>) {
-        self.handle.direction(Direction {
-            send: send.unwrap_or(true),
-            recv: recv.unwrap_or(true),
-        }).await;
+    pub fn direction(&self, opts: DirectionOpts) {
+        let _ = self.handle.cmd.try_send(super::commands::Command::Direction(Direction {
+            send: opts.send.unwrap_or(true),
+            recv: opts.recv.unwrap_or(true),
+        }));
     }
 
     // The following take richer param objects. They'll grow typed napi signatures
@@ -151,8 +158,38 @@ impl ChannelObject {
     #[napi] pub async fn play(&self)       -> Result<()> { Ok(()) }
     #[napi] pub async fn record(&self)     -> Result<()> { Ok(()) }
     #[napi] pub async fn playrecord(&self) -> Result<()> { Ok(()) }
-    #[napi] pub async fn mix(&self)        -> Result<()> { Ok(()) }
-    #[napi] pub async fn unmix(&self)      -> Result<()> { Ok(()) }
+
+    /// 2-channel mix: program each side's tick to forward inbound packets to
+    /// the other side's remote. Returns true on success, mirroring the C++
+    /// `expect( channela.mix( channelb ) ).to.be.true`.
+    #[napi]
+    pub fn mix(&self, other: &ChannelObject) -> bool {
+        let (Some(a), Some(b)) = (self.remote_addr, other.remote_addr) else { return false; };
+        let _ = self.handle.cmd.try_send(super::commands::Command::SetMixPeer {
+            remote: Some(b), peer_pt: other.remote_pt,
+        });
+        let _ = other.handle.cmd.try_send(super::commands::Command::SetMixPeer {
+            remote: Some(a), peer_pt: self.remote_pt,
+        });
+        true
+    }
+
+    /// `unmix()` or `unmix(otherChannel)` — both forms accepted; the optional
+    /// other arg is unused in our 2-channel relay (peer is implicit).
+    /// Returns true to match C++ behaviour.
+    #[napi]
+    pub fn unmix(&self, _other: Option<&ChannelObject>) -> bool {
+        let _ = self.handle.cmd.try_send(super::commands::Command::SetMixPeer {
+            remote: None, peer_pt: 0,
+        });
+        true
+    }
+}
+
+#[napi(object)]
+pub struct DirectionOpts {
+    pub send: Option<bool>,
+    pub recv: Option<bool>,
 }
 
 /// Synchronous — index.js treats the return as the channel object directly,
@@ -166,9 +203,19 @@ fn extract_remote_addr(params: &Object) -> Option<SocketAddr> {
     Some(SocketAddr::new(ip, port as u16))
 }
 
+fn extract_remote_pt(params: &Object) -> u8 {
+    params
+        .get_named_property::<Object>("remote")
+        .ok()
+        .and_then(|r| r.get_named_property::<u32>("codec").ok())
+        .map(|v| v as u8)
+        .unwrap_or(0)
+}
+
 #[napi(js_name = "openchannel")]
 pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObject> {
     let remote_addr = extract_remote_addr(&params);
+    let remote_pt = extract_remote_pt(&params);
     let tsfn: ThreadsafeFunction<EventPayload, ErrorStrategy::Fatal> = callback
         .create_threadsafe_function(0, |ctx: napi::threadsafe_function::ThreadSafeCallContext<EventPayload>| {
             let ev = ctx.value;
@@ -246,7 +293,7 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
             let (ack, _) = tokio::sync::oneshot::channel();
             let cfg = RemoteConfig {
                 addr,
-                payload_type: 0,
+                payload_type: remote_pt,
                 ilbc_payload_type: None,
                 rfc2833_payload_type: None,
                 dtls: None,
@@ -260,6 +307,8 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
         channel_ssrc: ssrc,
         channel_port: port,
         channel_icepwd: rand_icepwd(),
+        remote_addr,
+        remote_pt,
     })
 }
 

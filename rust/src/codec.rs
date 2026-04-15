@@ -62,6 +62,43 @@ pub fn linear_to_ulaw(linear: i32) -> u8 {
     (u_val ^ mask) as u8
 }
 
+// ---- Buffer-level transcode helpers ----
+//
+// Used by tick.rs's mix-relay path to transcode between PCMA/PCMU when two
+// mixed channels speak different codecs.
+
+pub fn encode_pcma_buf(samples: &[i16]) -> Vec<u8> {
+    samples.iter().map(|&s| linear_to_alaw(s as i32)).collect()
+}
+pub fn decode_pcma_buf(payload: &[u8]) -> Vec<i16> {
+    payload.iter().map(|&b| alaw_to_linear(b)).collect()
+}
+pub fn encode_pcmu_buf(samples: &[i16]) -> Vec<u8> {
+    samples.iter().map(|&s| linear_to_ulaw(s as i32)).collect()
+}
+pub fn decode_pcmu_buf(payload: &[u8]) -> Vec<i16> {
+    payload.iter().map(|&b| ulaw_to_linear(b)).collect()
+}
+
+/// Transcode a payload between G.711 codecs (PT 0 = PCMU, PT 8 = PCMA).
+/// Returns None for unsupported codec pairs (e.g. G.722, iLBC) — caller
+/// should fall back to byte relay or drop.
+pub fn transcode_g711(src_pt: u8, dst_pt: u8, payload: &[u8]) -> Option<Vec<u8>> {
+    if src_pt == dst_pt { return Some(payload.to_vec()); }
+    match (src_pt, dst_pt) {
+        (0, 8) => {
+            // PCMU → linear → PCMA
+            let pcm: Vec<i16> = payload.iter().map(|&b| ulaw_to_linear(b)).collect();
+            Some(pcm.iter().map(|&s| linear_to_alaw(s as i32)).collect())
+        }
+        (8, 0) => {
+            let pcm: Vec<i16> = payload.iter().map(|&b| alaw_to_linear(b)).collect();
+            Some(pcm.iter().map(|&s| linear_to_ulaw(s as i32)).collect())
+        }
+        _ => None, // G.722/iLBC unsupported here
+    }
+}
+
 pub fn ulaw_to_linear(ulaw: u8) -> i16 {
     let u = !ulaw;
     let t = (((u as i32 & 0x0F) << 3) + 0x84) << ((u as i32 & 0x70) >> 4);
