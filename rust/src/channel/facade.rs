@@ -231,10 +231,24 @@ fn extract_remote_pt(params: &Object) -> u8 {
         .unwrap_or(0)
 }
 
+fn extract_rfc2833_pt(params: &Object) -> Option<u8> {
+    // Tests pass the RFC 2833 PT two ways: `params.remote.rfc2833pt` (nested)
+    // and `params.rfc2833pt` (flat). Accept both.
+    if let Some(pt) = params
+        .get_named_property::<Object>("remote")
+        .ok()
+        .and_then(|r| r.get_named_property::<u32>("rfc2833pt").ok())
+    {
+        return Some(pt as u8);
+    }
+    params.get_named_property::<u32>("rfc2833pt").ok().map(|v| v as u8)
+}
+
 #[napi(js_name = "openchannel")]
 pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObject> {
     let remote_addr = extract_remote_addr(&params);
     let remote_pt = extract_remote_pt(&params);
+    let rfc2833_pt = extract_rfc2833_pt(&params);
     let tsfn: ThreadsafeFunction<EventPayload, ErrorStrategy::Fatal> = callback
         .create_threadsafe_function(0, |ctx: napi::threadsafe_function::ThreadSafeCallContext<EventPayload>| {
             let ev = ctx.value;
@@ -314,7 +328,7 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
                 addr,
                 payload_type: remote_pt,
                 ilbc_payload_type: None,
-                rfc2833_payload_type: None,
+                rfc2833_payload_type: rfc2833_pt,
                 dtls: None,
             };
             let _ = cmd_tx.send(Command::Remote { cfg, ack }).await;

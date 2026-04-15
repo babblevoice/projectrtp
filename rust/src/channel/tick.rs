@@ -66,7 +66,15 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     // when something fresh is in the group this tick — matches C++ which
     // produces an output packet only when there's a source packet to mix.
     if state.mix_peer_remote.is_some() {
-        // No-op: 2-channel byte relay handled per-packet on receive.
+        // 2-channel mix relay handles audio per-packet on receive. DTMF
+        // though must still flow: channel.dtmf() during a mix sends events
+        // to *this* channel's remote (not the peer's), so DTMF can be
+        // directed at one end of a bridge independently. Matches C++.
+        if state.direction.send && state.remote_addr.is_some() {
+            if let Some((event, payload)) = subs.dtmf_send.next_event() {
+                send_dtmf(state, event, &payload).await;
+            }
+        }
     } else if state.direction.send && state.remote_addr.is_some() {
         if let Some((event, payload)) = subs.dtmf_send.next_event() {
             send_dtmf(state, event, &payload).await;
@@ -207,9 +215,6 @@ async fn send_dtmf(state: &mut ChannelState, _event: u8, payload: &[u8; 4]) {
     out.set_timestamp(state.out_ts);
     out.set_payload(payload);
     state.out_sn = state.out_sn.wrapping_add(1);
-    // DTMF events all share the timestamp of the first packet in the burst,
-    // per RFC 2833. Approximate by not advancing here; refine if a test
-    // asserts exact TS values.
     if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
         state.out_count += 1;
     }

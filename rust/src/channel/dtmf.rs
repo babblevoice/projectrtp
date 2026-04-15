@@ -35,6 +35,8 @@ pub fn char_to_event(c: char) -> Option<u8> {
         'B' | 'b' => 13,
         'C' | 'c' => 14,
         'D' | 'd' => 15,
+        // RFC 2833 event 16 = Flash / hookflash.
+        'F' | 'f' => 16,
         _ => return None,
     })
 }
@@ -48,6 +50,7 @@ pub fn event_to_char(event: u8) -> Option<char> {
         13 => 'B',
         14 => 'C',
         15 => 'D',
+        16 => 'F',
         _ => return None,
     })
 }

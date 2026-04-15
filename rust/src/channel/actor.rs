@@ -172,6 +172,9 @@ async fn handle_command(
         Command::Remote { cfg, ack } => {
             state.remote_addr = Some(cfg.addr);
             state.remote_pt = cfg.payload_type;
+            if let Some(pt) = cfg.rfc2833_payload_type {
+                state.rfc2833_pt = pt;
+            }
             state.remote = Some(cfg);
             state.remote_confirmed = true;
             let _ = ack.send(());
