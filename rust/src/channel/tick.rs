@@ -48,11 +48,9 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     // here and routed to subs.dtmf_recv → state.pending_events.
     drain_inbound(state, subs).await;
 
-    // 5. Consume next in-order RTP from jitter (drives in_count / stats).
+    // 5. Consume next in-order RTP from jitter. in_count is incremented at
+    // receive time (not here) so packets still buffered at close still count.
     let inbound_pkt = state.jitter.pop();
-    if inbound_pkt.is_some() {
-        state.in_count += 1;
-    }
 
     // 6+7. Outbound. Three modes, in priority order:
     //   - mixed: the mix relay already sent inbound bytes to the peer remote
@@ -126,6 +124,11 @@ async fn classify_and_route(
 
     if pkt.len() < rtp::RTP_FIXED_HEADER_LEN { return; }
 
+    // Count any well-formed RTP receipt (matches C++ inbound counter that
+    // increments at network receive time, not at jitter pop). DTMF and mix
+    // paths increment elsewhere — see below.
+    state.in_count += 1;
+
     // 2-channel mix relay: forward the bytes to the peer channel's remote.
     // If our inbound PT matches the peer's outbound PT (same codec on both
     // sides), pass the bytes through unchanged. Otherwise transcode the
@@ -155,7 +158,6 @@ async fn classify_and_route(
             }
         };
         if send_ok { state.out_count += 1; }
-        state.in_count += 1;
         return;
     }
 
