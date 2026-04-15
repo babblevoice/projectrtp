@@ -80,22 +80,71 @@ pub fn decode_pcmu_buf(payload: &[u8]) -> Vec<i16> {
     payload.iter().map(|&b| ulaw_to_linear(b)).collect()
 }
 
-/// Transcode a payload between G.711 codecs (PT 0 = PCMU, PT 8 = PCMA).
-/// Returns None for unsupported codec pairs (e.g. G.722, iLBC) — caller
-/// should fall back to byte relay or drop.
-pub fn transcode_g711(src_pt: u8, dst_pt: u8, payload: &[u8]) -> Option<Vec<u8>> {
-    if src_pt == dst_pt { return Some(payload.to_vec()); }
-    match (src_pt, dst_pt) {
-        (0, 8) => {
-            // PCMU → linear → PCMA
-            let pcm: Vec<i16> = payload.iter().map(|&b| ulaw_to_linear(b)).collect();
-            Some(pcm.iter().map(|&s| linear_to_alaw(s as i32)).collect())
+/// Transcoder owning the per-direction codec state needed for G.722 (which
+/// has filter / predictor history — can't be one-shot like G.711). One per
+/// channel, used by tick.rs's mix-relay path when peers speak different
+/// codecs. iLBC remains TODO until a Rust crate or FFI wrapper lands.
+pub struct Transcoder {
+    g722_encoder: Option<ezk_g722::libg722::encoder::Encoder>,
+    g722_decoder: Option<ezk_g722::libg722::decoder::Decoder>,
+}
+
+impl Default for Transcoder {
+    fn default() -> Self { Self::new() }
+}
+
+impl Transcoder {
+    pub fn new() -> Self {
+        Self { g722_encoder: None, g722_decoder: None }
+    }
+
+    fn g722_enc(&mut self) -> &mut ezk_g722::libg722::encoder::Encoder {
+        // 8kHz input mode — input is L16 at 8 kHz (since the upstream PCMU/PCMA
+        // path produces 8 kHz samples). Encoder handles the upsample internally.
+        self.g722_encoder.get_or_insert_with(|| {
+            ezk_g722::libg722::encoder::Encoder::new(
+                ezk_g722::libg722::Bitrate::Mode1_64000,
+                true,  // eight_k
+                false, // packed
+            )
+        })
+    }
+
+    fn g722_dec(&mut self) -> &mut ezk_g722::libg722::decoder::Decoder {
+        self.g722_decoder.get_or_insert_with(|| {
+            ezk_g722::libg722::decoder::Decoder::new(
+                ezk_g722::libg722::Bitrate::Mode1_64000,
+                true,  // eight_k
+                false, // packed
+            )
+        })
+    }
+
+    /// Decode `payload` from `pt` to linear16 @ 8 kHz.
+    pub fn decode(&mut self, pt: u8, payload: &[u8]) -> Option<Vec<i16>> {
+        match pt {
+            0 => Some(payload.iter().map(|&b| ulaw_to_linear(b)).collect()),
+            8 => Some(payload.iter().map(|&b| alaw_to_linear(b)).collect()),
+            9 => Some(self.g722_dec().decode(payload)),
+            _ => None,
         }
-        (8, 0) => {
-            let pcm: Vec<i16> = payload.iter().map(|&b| alaw_to_linear(b)).collect();
-            Some(pcm.iter().map(|&s| linear_to_ulaw(s as i32)).collect())
+    }
+
+    /// Encode linear16 @ 8 kHz into `pt`.
+    pub fn encode(&mut self, pt: u8, samples: &[i16]) -> Option<Vec<u8>> {
+        match pt {
+            0 => Some(samples.iter().map(|&s| linear_to_ulaw(s as i32)).collect()),
+            8 => Some(samples.iter().map(|&s| linear_to_alaw(s as i32)).collect()),
+            9 => Some(self.g722_enc().encode(samples)),
+            _ => None,
         }
-        _ => None, // G.722/iLBC unsupported here
+    }
+
+    /// Transcode in one shot using the decode/encode pair above.
+    pub fn transcode(&mut self, src_pt: u8, dst_pt: u8, payload: &[u8]) -> Option<Vec<u8>> {
+        if src_pt == dst_pt { return Some(payload.to_vec()); }
+        let pcm = self.decode(src_pt, payload)?;
+        self.encode(dst_pt, &pcm)
     }
 }
 

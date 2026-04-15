@@ -47,6 +47,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayvec"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
+
+[[package]]
 name = "asn1-rs"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -160,6 +166,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "byte-slice-cast"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7575182f7272186991736b70173b0ea045398f984bf5ebbb3804736ce1330c9d"
+
+[[package]]
 name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -170,6 +182,15 @@ name = "bytes"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
+
+[[package]]
+name = "bytesstr"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d255284ba151c912781bb2eba4fa1983b8de636c0712f09e5f98ab3a4d8e09d8"
+dependencies = [
+ "bytes",
+]
 
 [[package]]
 name = "cbc"
@@ -460,6 +481,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "downcast-rs"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
+
+[[package]]
 name = "ecdsa"
 version = "0.16.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -502,6 +529,58 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ezk"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e51a5a591d807b43d312e40b0b9fe9b457e01b30d5f93af7af3188240b20ef6"
+dependencies = [
+ "downcast-rs",
+ "parking_lot",
+ "reusable-box",
+ "slotmap",
+ "tokio",
+]
+
+[[package]]
+name = "ezk-audio"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e9290c43fb0b524a7191b3bc326bd4252bb1e080e27f4667641ad91bc845471"
+dependencies = [
+ "bitflags 2.11.1",
+ "byte-slice-cast",
+ "ezk",
+]
+
+[[package]]
+name = "ezk-g722"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b255b268bb31835375df113a7bd162474f4facd49027861034962e5f90a62168"
+dependencies = [
+ "bytes",
+ "ezk",
+ "ezk-audio",
+ "ezk-rtp",
+]
+
+[[package]]
+name = "ezk-rtp"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c88ed6c2d251d6411e3c10df8e0a78767804894515e664a49142e53db4ac9126"
+dependencies = [
+ "arrayvec",
+ "bytes",
+ "bytesstr",
+ "ezk",
+ "rand 0.8.5",
+ "rtcp-types",
+ "rtp-types",
+ "time",
 ]
 
 [[package]]
@@ -990,6 +1069,7 @@ dependencies = [
  "crc32fast",
  "crossbeam",
  "dirs",
+ "ezk-g722",
  "hmac",
  "napi",
  "napi-build",
@@ -1141,6 +1221,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "reusable-box"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b9cb77e81b1d036c2543436df7c5ac85839b1a774a826a9f2607c57094d1a23"
+
+[[package]]
 name = "rfc6979"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1176,6 +1262,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtcp-types"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce5248489db464de29835170cd1f6e19933146b0016789effc59cb53d9f13844"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "rtp"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1188,6 +1283,16 @@ dependencies = [
  "serde",
  "thiserror",
  "webrtc-util 0.17.1",
+]
+
+[[package]]
+name = "rtp-types"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7bb90df8268abfe08452ef2dae9e867a54edfdaa71b3127ef47d8b031f77ac73"
+dependencies = [
+ "smallvec",
+ "thiserror",
 ]
 
 [[package]]
@@ -1357,6 +1462,15 @@ checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
 dependencies = [
  "digest",
  "rand_core 0.6.4",
+]
+
+[[package]]
+name = "slotmap"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdd58c3c93c3d278ca835519292445cb4b0d4dc59ccfdf7ceadaab3f8aeb4038"
+dependencies = [
+ "version_check",
 ]
 
 [[package]]

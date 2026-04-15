@@ -57,6 +57,9 @@ pub struct ChannelState {
     /// Outbound payload type for the peer when forwarding via mix relay. If
     /// it differs from the inbound PT we transcode (G.711 only).
     pub mix_peer_pt: u8,
+    /// Stateful transcoder (G.722 needs filter history) for the mix relay.
+    pub transcoder: crate::codec::Transcoder,
+
 
     /// Outbound payload type for our own remote (set from params.remote.codec).
     pub remote_pt: u8,
@@ -107,6 +110,7 @@ impl ChannelState {
             remote_confirmed: false,
             mix_peer_remote: None,
             mix_peer_pt: 0,
+            transcoder: crate::codec::Transcoder::new(),
             remote_pt: 0,
             tick_count: 0,
             in_count: 0,

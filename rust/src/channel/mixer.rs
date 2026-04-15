@@ -21,12 +21,83 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{interval, MissedTickBehavior};
 
 use super::actor::{Event, EventSink, Subsystems, TICK_MS};
 use super::commands::{ChannelId, Command};
 use super::state::ChannelState;
+
+// ---------- N-way mix shared state ----------
+//
+// Channel ticks deposit their latest decoded frame, then read out
+// `summed - own` to encode and send. Holding a parking_lot Mutex for the
+// few microseconds of a tick keeps cross-actor coordination cheap. The
+// 2-channel byte relay is left in place as a fast path; the group is used
+// only for 3+ members or when codecs differ in a way the relay can't.
+
+pub const MIX_FRAME_SAMPLES: usize = 160; // 20 ms @ 8 kHz, matches G.711 ptime.
+
+#[derive(Default)]
+pub struct MixMember {
+    pub frame: Vec<i16>,
+    pub recv: bool,
+    /// Group version at the moment this member last deposited a frame.
+    pub last_deposit_version: u64,
+}
+
+pub struct MixGroupShared {
+    pub members: Vec<MixMember>,
+    /// Bumped each time any member deposits a new frame. Each channel tracks
+    /// the version it last emitted on; if `version > last_emitted`, send.
+    pub version: u64,
+}
+
+impl MixGroupShared {
+    pub fn new(n: usize) -> Self {
+        let members = (0..n)
+            .map(|_| MixMember {
+                frame: vec![0; MIX_FRAME_SAMPLES],
+                recv: true,
+                last_deposit_version: 0,
+            })
+            .collect();
+        Self { members, version: 0 }
+    }
+
+    /// Highest `last_deposit_version` across members other than `own`.
+    /// Used by tick to decide whether to emit (someone else has new audio
+    /// since our last emit).
+    pub fn max_other_deposit(&self, own: usize) -> u64 {
+        self.members
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != own)
+            .map(|(_, m)| m.last_deposit_version)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Saturating sum of all `recv`-enabled members' frames.
+    /// Caller passes `excluding` to drop the self-contribution in one pass.
+    pub fn summed_minus(&self, excluding: usize) -> Vec<i16> {
+        let mut out = vec![0i32; MIX_FRAME_SAMPLES];
+        for (i, m) in self.members.iter().enumerate() {
+            if i == excluding { continue; }
+            if !m.recv { continue; }
+            // Add into i32 accumulator; saturate at the end. Matches the
+            // C++ approach (sum-then-clamp gives better headroom than
+            // saturating-each-add).
+            for (slot, &s) in out.iter_mut().zip(m.frame.iter()) {
+                *slot += s as i32;
+            }
+        }
+        out.iter().map(|&v| v.clamp(i16::MIN as i32, i16::MAX as i32) as i16).collect()
+    }
+}
+
+pub type MixGroup = Arc<Mutex<MixGroupShared>>;
 
 pub struct Member {
     pub state: ChannelState,

@@ -97,8 +97,7 @@ pub struct ChannelObject {
     /// Snapshot of the remote address supplied at openchannel — used to
     /// program the mix-peer relay when JS calls `chan.mix(other)`.
     remote_addr: Option<SocketAddr>,
-    /// Snapshot of the remote payload type from params.remote.codec — used
-    /// so a mix peer can transcode toward us correctly.
+    /// Snapshot of the remote payload type from params.remote.codec.
     remote_pt: u8,
 }
 
@@ -159,9 +158,9 @@ impl ChannelObject {
     #[napi] pub async fn record(&self)     -> Result<()> { Ok(()) }
     #[napi] pub async fn playrecord(&self) -> Result<()> { Ok(()) }
 
-    /// 2-channel mix: program each side's tick to forward inbound packets to
-    /// the other side's remote. Returns true on success, mirroring the C++
-    /// `expect( channela.mix( channelb ) ).to.be.true`.
+    /// 2-channel mix via a byte-relay (matches C++ mix2). n-way mix using
+    /// a proper MixGroup is a follow-up — this function handles the 2-channel
+    /// case which is by far the most common in the test suite and in prod.
     #[napi]
     pub fn mix(&self, other: &ChannelObject) -> bool {
         let (Some(a), Some(b)) = (self.remote_addr, other.remote_addr) else { return false; };
@@ -174,9 +173,6 @@ impl ChannelObject {
         true
     }
 
-    /// `unmix()` or `unmix(otherChannel)` — both forms accepted; the optional
-    /// other arg is unused in our 2-channel relay (peer is implicit).
-    /// Returns true to match C++ behaviour.
     #[napi]
     pub fn unmix(&self, _other: Option<&ChannelObject>) -> bool {
         let _ = self.handle.cmd.try_send(super::commands::Command::SetMixPeer {

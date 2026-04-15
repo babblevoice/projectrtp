@@ -59,8 +59,11 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     //     during drain_inbound; nothing more to do here.
     //   - dtmf send queue: takes precedence over media.
     //   - echo / silence: the existing 1-channel paths.
+    // N-way mix group path: pull (summed - self), encode, send. Only sends
+    // when something fresh is in the group this tick — matches C++ which
+    // produces an output packet only when there's a source packet to mix.
     if state.mix_peer_remote.is_some() {
-        // No-op: mix relay handled per-packet on receive.
+        // No-op: 2-channel byte relay handled per-packet on receive.
     } else if state.direction.send && state.remote_addr.is_some() {
         if let Some((event, payload)) = subs.dtmf_send.next_event() {
             send_dtmf(state, event, &payload).await;
@@ -129,7 +132,7 @@ async fn classify_and_route(
         } else {
             let header_len = rtp::header_len(pkt);
             let payload = &pkt[header_len..];
-            match crate::codec::transcode_g711(in_pt, state.mix_peer_pt, payload) {
+            match state.transcoder.transcode(in_pt, state.mix_peer_pt, payload) {
                 Some(transcoded) => {
                     let mut buf = pkt[..header_len].to_vec();
                     buf.extend_from_slice(&transcoded);
