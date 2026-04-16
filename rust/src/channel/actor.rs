@@ -215,6 +215,9 @@ async fn handle_command(
             if let Some(pt) = cfg.rfc2833_payload_type {
                 state.rfc2833_pt = pt;
             }
+            if let Some(pt) = cfg.ilbc_payload_type {
+                state.transcoder.set_local_ilbc_pt(pt);
+            }
             if let Some(pwd) = &cfg.icepwd {
                 state.remote_icepwd = pwd.clone();
             }
@@ -390,12 +393,16 @@ async fn handle_command(
             None
         }
 
-        Command::BindMixPeer { peer_handle, peer_remote, peer_pt, peer_rfc2833_pt } => {
+        Command::BindMixPeer { peer_handle, peer_remote, peer_pt, peer_rfc2833_pt, peer_ilbc_pt } => {
             let was_bound = state.mix_peer_handle.is_some();
             state.mix_peer_handle = Some(peer_handle);
             state.mix_peer_remote = peer_remote;
             state.mix_peer_pt = peer_pt;
             state.mix_peer_rfc2833_pt = peer_rfc2833_pt;
+            // Tell the transcoder which PT to treat as iLBC on the peer side,
+            // so when we encode outbound for them we pick the iLBC path even
+            // if they're using a dynamic PT != 97.
+            state.transcoder.set_peer_ilbc_pt(peer_ilbc_pt);
             if !was_bound {
                 events.post(Event::Mix { state: "start".to_string() });
             }
@@ -423,6 +430,55 @@ async fn handle_command(
             state.mix_peer_remote = remote;
             state.mix_peer_pt = pt;
             state.mix_peer_rfc2833_pt = rfc2833_pt;
+            None
+        }
+
+        Command::BindMixGroup { group, own_idx, own_handle } => {
+            let was_bound = state.mix_peer_handle.is_some() || state.mix_group.is_some();
+            // Drop any 2-chan fast-path state — promotion to N-way takes over.
+            state.mix_peer_handle = None;
+            state.mix_peer_remote = None;
+            state.mix_peer_pt = 0;
+            state.mix_peer_rfc2833_pt = 101;
+
+            // Fresh-start semantics: on (re-)bind, adopt the group's current
+            // total-other-deposits as our last-emit mark. That way a remix
+            // after an unmix doesn't fire a burst of "catch-up" packets for
+            // history that isn't relevant any more.
+            let baseline = {
+                let mut g = group.lock();
+                if let Some(m) = g.members.get_mut(own_idx) {
+                    m.channel_handle = Some(own_handle);
+                }
+                g.total_other_deposits(own_idx)
+            };
+            state.mix_group = Some(group);
+            state.mix_group_idx = own_idx;
+            state.mix_last_emit = baseline;
+            if !was_bound {
+                events.post(Event::Mix { state: "start".to_string() });
+            }
+            None
+        }
+
+        Command::MixRelayDtmf { digits } => {
+            // Another member forwarded a DTMF burst — enqueue it so our
+            // next tick emits the full RFC 2833 sequence to our remote.
+            subs.dtmf_relay.enqueue(&digits);
+            None
+        }
+
+        Command::UnbindMixGroup => {
+            let was_bound = state.mix_group.is_some();
+            if let Some(group) = state.mix_group.take() {
+                let idx = state.mix_group_idx;
+                group.lock().tombstone(idx);
+            }
+            state.mix_group_idx = 0;
+            state.mix_last_emit = 0;
+            if was_bound {
+                events.post(Event::Mix { state: "finished".to_string() });
+            }
             None
         }
     }

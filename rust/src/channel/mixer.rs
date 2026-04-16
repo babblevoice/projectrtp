@@ -39,12 +39,22 @@ use super::state::ChannelState;
 
 pub const MIX_FRAME_SAMPLES: usize = 160; // 20 ms @ 8 kHz, matches G.711 ptime.
 
-#[derive(Default)]
 pub struct MixMember {
     pub frame: Vec<i16>,
+    /// Whether this member contributes to the mix (JS `direction.recv`).
     pub recv: bool,
-    /// Group version at the moment this member last deposited a frame.
-    pub last_deposit_version: u64,
+    /// Number of frames this member has deposited so far. Other members
+    /// compare against their own cached value to detect new frames from
+    /// this peer — per-member counter, not a shared group version, so a
+    /// reader only sees increments from its actual peers.
+    pub deposit_count: u64,
+    /// `false` after `tombstone()` — the slot still exists to preserve
+    /// indices of remaining members but is completely ignored by both
+    /// `summed_minus` and `total_other_deposits`.
+    pub alive: bool,
+    /// Actor command sender for this member — lets other members forward
+    /// control events (e.g. regenerated DTMF bursts on mix relay).
+    pub channel_handle: Option<tokio::sync::mpsc::Sender<super::commands::Command>>,
 }
 
 pub struct MixGroupShared {
@@ -60,23 +70,25 @@ impl MixGroupShared {
             .map(|_| MixMember {
                 frame: vec![0; MIX_FRAME_SAMPLES],
                 recv: true,
-                last_deposit_version: 0,
+                deposit_count: 0,
+                alive: true,
+                channel_handle: None,
             })
             .collect();
         Self { members, version: 0 }
     }
 
-    /// Highest `last_deposit_version` across members other than `own`.
-    /// Used by tick to decide whether to emit (someone else has new audio
-    /// since our last emit).
-    pub fn max_other_deposit(&self, own: usize) -> u64 {
+    /// Total deposits across all other members — this is the count the
+    /// emitting member uses as a "catch up" target. Each step gap means
+    /// exactly one new peer frame landed since our last emit, so we send
+    /// one output packet per step.
+    pub fn total_other_deposits(&self, own: usize) -> u64 {
         self.members
             .iter()
             .enumerate()
-            .filter(|(i, _)| *i != own)
-            .map(|(_, m)| m.last_deposit_version)
-            .max()
-            .unwrap_or(0)
+            .filter(|(i, m)| *i != own && m.alive)
+            .map(|(_, m)| m.deposit_count)
+            .sum()
     }
 
     /// Saturating sum of all `recv`-enabled members' frames.
@@ -85,6 +97,7 @@ impl MixGroupShared {
         let mut out = vec![0i32; MIX_FRAME_SAMPLES];
         for (i, m) in self.members.iter().enumerate() {
             if i == excluding { continue; }
+            if !m.alive { continue; }
             if !m.recv { continue; }
             // Add into i32 accumulator; saturate at the end. Matches the
             // C++ approach (sum-then-clamp gives better headroom than
@@ -98,6 +111,51 @@ impl MixGroupShared {
 }
 
 pub type MixGroup = Arc<Mutex<MixGroupShared>>;
+
+impl MixGroupShared {
+    /// Append a fresh member slot and return its index. Used when the
+    /// facade's `mix()` adds a new channel to an existing group.
+    pub fn push_member(&mut self) -> usize {
+        self.members.push(MixMember {
+            frame: vec![0; MIX_FRAME_SAMPLES],
+            recv: true,
+            deposit_count: 0,
+            alive: true,
+            channel_handle: None,
+        });
+        self.members.len() - 1
+    }
+
+    /// Remove a member and shift indices. Callers that survive a removal
+    /// must learn their new index — the facade tracks a version on each
+    /// channel and sends a re-bind on shift. Simpler paths (channel close)
+    /// just leave the slot behind as a tombstone: we zero `recv` and
+    /// `frame` so the member stops contributing without renumbering others.
+    pub fn tombstone(&mut self, idx: usize) {
+        if let Some(m) = self.members.get_mut(idx) {
+            m.alive = false;
+            m.recv = false;
+            m.frame.iter_mut().for_each(|s| *s = 0);
+            // Don't reset deposit_count — other members cached it; changing
+            // it would make them see phantom rewind/catch-up.
+        }
+    }
+
+    /// Deposit a decoded frame for member `idx`. Silently truncates or pads
+    /// to `MIX_FRAME_SAMPLES` since the rest of the group expects that
+    /// fixed stride.
+    pub fn deposit(&mut self, idx: usize, samples: &[i16]) {
+        self.version = self.version.saturating_add(1);
+        if let Some(m) = self.members.get_mut(idx) {
+            let n = samples.len().min(MIX_FRAME_SAMPLES);
+            m.frame[..n].copy_from_slice(&samples[..n]);
+            if n < MIX_FRAME_SAMPLES {
+                m.frame[n..].iter_mut().for_each(|s| *s = 0);
+            }
+            m.deposit_count = m.deposit_count.saturating_add(1);
+        }
+    }
+}
 
 pub struct Member {
     pub state: ChannelState,

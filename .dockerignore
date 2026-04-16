@@ -11,5 +11,12 @@ build
 Dockerfile
 
 node_modules
-libilbc
+# libilbc/ used to be ignored because the C++ build linked `-lilbc` from
+# the host image. The Rust Docker build compiles it from this in-repo
+# tree (Alpine has no libilbc package), so the source must ship in the
+# build context. Exclude the .tar.gz snapshot and the pre-extracted
+# libilbc-3.0.4 copy instead — both are redundant with libilbc/.
+libilbc-3.0.4
+libilbc-3.0.4.tar.gz
+libilbc-3.0.4.tar.gz.1
 out

@@ -116,9 +116,22 @@ pub struct ChannelObject {
     /// program the mix-peer relay when JS calls `chan.mix(other)`.
     remote_addr: Option<SocketAddr>,
     /// Snapshot of the remote payload type from params.remote.codec.
+    /// For iLBC with dynamic-PT negotiation this is the ilbcpt value,
+    /// not the static 97 — i.e. the actual wire PT.
     remote_pt: u8,
     /// Snapshot of the remote rfc2833 PT (defaults to 101).
     rfc2833_pt: u8,
+    /// Snapshot of the iLBC wire PT (defaults to 97). Used when BindMixPeer
+    /// tells the peer how to recognise this side's iLBC packets.
+    ilbc_pt: u8,
+    /// N-way mix slot — the shared MixGroup this channel is a member of,
+    /// plus its index. `None` when not mixed. Facade-side state, guarded
+    /// by a std Mutex so the sync `mix()` / `unmix()` methods can update
+    /// it from JS without await.
+    mix_slot: std::sync::Mutex<Option<(
+        std::sync::Arc<parking_lot::Mutex<super::mixer::MixGroupShared>>,
+        usize,
+    )>>,
 }
 
 #[napi]
@@ -164,11 +177,11 @@ impl ChannelObject {
 
     /// JS calls `channel.direction({ send, recv })` with a single object.
     #[napi]
-    pub fn direction(&self, opts: DirectionOpts) {
-        let _ = self.handle.cmd.try_send(super::commands::Command::Direction(Direction {
+    pub fn direction(&self, opts: DirectionOpts) -> bool {
+        self.handle.cmd.try_send(super::commands::Command::Direction(Direction {
             send: opts.send.unwrap_or(true),
             recv: opts.recv.unwrap_or(true),
-        }));
+        })).is_ok()
     }
 
     /// Reconfigure the remote end for outbound RTP. JS calls
@@ -266,27 +279,73 @@ impl ChannelObject {
     /// case which is by far the most common in the test suite and in prod.
     /// Returns true even if one side has no `remote_addr` yet; a later
     /// `.remote(...)` call on that channel propagates the update to the peer.
+    /// Place both channels in a shared N-way mix group. Subsequent
+    /// `mix(c)` calls extend the existing group. Returns true unless
+    /// the channels are already in *different* groups (unsupported merge).
     #[napi]
     pub fn mix(&self, other: &ChannelObject) -> bool {
-        let _ = self.handle.cmd.try_send(super::commands::Command::BindMixPeer {
-            peer_handle: other.handle.cmd.clone(),
-            peer_remote: other.remote_addr,
-            peer_pt: other.remote_pt,
-            peer_rfc2833_pt: other.rfc2833_pt,
+        use std::sync::Arc;
+        use parking_lot::Mutex as PLMutex;
+        use super::mixer::MixGroupShared;
+
+        // Deadlock-avoidance: always lock in ascending channel-id order.
+        // `lock_in_order` returns two MutexGuards aliased to self/other.
+        let (mut self_guard, mut other_guard) = if self.handle.id < other.handle.id {
+            (self.mix_slot.lock().unwrap(), other.mix_slot.lock().unwrap())
+        } else if self.handle.id > other.handle.id {
+            let og = other.mix_slot.lock().unwrap();
+            let sg = self.mix_slot.lock().unwrap();
+            (sg, og)
+        } else {
+            // Same channel — mix(self, self) is a no-op.
+            return true;
+        };
+        let self_slot = &mut *self_guard;
+        let other_slot = &mut *other_guard;
+
+        let (group, self_idx, other_idx) = match (&self_slot, &other_slot) {
+            (None, None) => {
+                let shared = MixGroupShared::new(2);
+                (Arc::new(PLMutex::new(shared)), 0usize, 1usize)
+            }
+            (Some((g, self_idx)), None) => {
+                let other_idx = g.lock().push_member();
+                (g.clone(), *self_idx, other_idx)
+            }
+            (None, Some((g, other_idx))) => {
+                let self_idx = g.lock().push_member();
+                (g.clone(), self_idx, *other_idx)
+            }
+            (Some((ga, _)), Some((gb, _))) => {
+                if Arc::ptr_eq(ga, gb) {
+                    // Same group — no-op. Return true so callers can
+                    // safely re-assert the mix.
+                    return true;
+                }
+                // Different groups — merging is not supported yet.
+                return false;
+            }
+        };
+
+        *self_slot = Some((group.clone(), self_idx));
+        *other_slot = Some((group.clone(), other_idx));
+
+        let _ = self.handle.cmd.try_send(super::commands::Command::BindMixGroup {
+            group: group.clone(), own_idx: self_idx, own_handle: self.handle.cmd.clone(),
         });
-        let _ = other.handle.cmd.try_send(super::commands::Command::BindMixPeer {
-            peer_handle: self.handle.cmd.clone(),
-            peer_remote: self.remote_addr,
-            peer_pt: self.remote_pt,
-            peer_rfc2833_pt: self.rfc2833_pt,
+        let _ = other.handle.cmd.try_send(super::commands::Command::BindMixGroup {
+            group, own_idx: other_idx, own_handle: other.handle.cmd.clone(),
         });
         true
     }
 
     #[napi]
     pub fn unmix(&self, _other: Option<&ChannelObject>) -> bool {
-        // The actor will cascade the unbind to its peer.
-        let _ = self.handle.cmd.try_send(super::commands::Command::UnbindMixPeer);
+        // Tombstone our slot so other members still in the group see us
+        // contribute silence; drop the facade-side Arc so a later mix()
+        // starts fresh.
+        *self.mix_slot.lock().unwrap() = None;
+        let _ = self.handle.cmd.try_send(super::commands::Command::UnbindMixGroup);
         true
     }
 }
@@ -430,12 +489,31 @@ fn extract_remote_addr(params: &Object) -> Option<SocketAddr> {
 }
 
 fn extract_remote_pt(params: &Object) -> u8 {
+    let remote = params.get_named_property::<Object>("remote").ok();
+    let codec = remote
+        .as_ref()
+        .and_then(|r| r.get_named_property::<u32>("codec").ok())
+        .map(|v| v as u8)
+        .unwrap_or(0);
+    // For iLBC (logical codec id 97), JS may override the RTP wire PT via
+    // `remote.ilbcpt` (dynamic-PT negotiation). Use that as the effective
+    // wire PT so outbound packets carry the negotiated value.
+    if codec == 97 {
+        if let Some(pt) = remote.and_then(|r| r.get_named_property::<u32>("ilbcpt").ok()) {
+            return pt as u8;
+        }
+    }
+    codec
+}
+
+/// Read `params.remote.ilbcpt` — the dynamic wire PT for iLBC. Returns
+/// `None` when not set; callers default to 97.
+fn extract_ilbc_pt(params: &Object) -> Option<u8> {
     params
         .get_named_property::<Object>("remote")
         .ok()
-        .and_then(|r| r.get_named_property::<u32>("codec").ok())
+        .and_then(|r| r.get_named_property::<u32>("ilbcpt").ok())
         .map(|v| v as u8)
-        .unwrap_or(0)
 }
 
 fn extract_rfc2833_pt(params: &Object) -> Option<u8> {
@@ -449,6 +527,15 @@ fn extract_rfc2833_pt(params: &Object) -> Option<u8> {
         return Some(pt as u8);
     }
     params.get_named_property::<u32>("rfc2833pt").ok().map(|v| v as u8)
+}
+
+/// Parse `params.direction = { send, recv }`. Both fields default to true.
+/// Tests use this to create write-only or read-only channels in a mix.
+fn extract_direction(params: &Object) -> super::commands::Direction {
+    let d = params.get_named_property::<Object>("direction").ok();
+    let send = d.as_ref().and_then(|o| o.get_named_property::<bool>("send").ok()).unwrap_or(true);
+    let recv = d.and_then(|o| o.get_named_property::<bool>("recv").ok()).unwrap_or(true);
+    super::commands::Direction { send, recv }
 }
 
 fn extract_local_icepwd(params: &Object) -> Option<String> {
@@ -472,8 +559,10 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
     let remote_addr = extract_remote_addr(&params);
     let remote_pt = extract_remote_pt(&params);
     let rfc2833_pt = extract_rfc2833_pt(&params);
+    let ilbc_pt = extract_ilbc_pt(&params).unwrap_or(97);
     let override_local_icepwd = extract_local_icepwd(&params);
     let initial_remote_icepwd = extract_remote_icepwd(&params);
+    let initial_direction = extract_direction(&params);
     let tsfn: ThreadsafeFunction<EventPayload, ErrorStrategy::Fatal> = callback
         .create_threadsafe_function(0, |ctx: napi::threadsafe_function::ThreadSafeCallContext<EventPayload>| {
             let ev = ctx.value;
@@ -560,6 +649,13 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
     )
     .map_err(|e| Error::from_reason(format!("spawn channel: {e}")))?;
 
+    // Apply params.direction (if the caller supplied one) before anything
+    // else so the channel observes the right send/recv flags on its first
+    // tick. Skip the send if the user didn't override the defaults.
+    if initial_direction.send != true || initial_direction.recv != true {
+        let _ = handle.cmd.try_send(super::commands::Command::Direction(initial_direction));
+    }
+
     // If params.remote was supplied, push it into the actor as a fire-and-forget
     // — the actor will set state.remote_addr before any tick fires.
     if let Some(addr) = remote_addr {
@@ -571,7 +667,7 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
             let cfg = RemoteConfig {
                 addr,
                 payload_type: remote_pt,
-                ilbc_payload_type: None,
+                ilbc_payload_type: Some(ilbc_pt),
                 rfc2833_payload_type: rfc2833_pt,
                 dtls: None,
                 icepwd,
@@ -588,6 +684,8 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
         remote_addr,
         remote_pt,
         rfc2833_pt: rfc2833_pt.unwrap_or(101),
+        ilbc_pt,
+        mix_slot: std::sync::Mutex::new(None),
     })
 }
 

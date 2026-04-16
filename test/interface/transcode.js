@@ -307,11 +307,18 @@ async function looptest( acodec, bcodec, encode, decode, ilbcpt = -1 ) {
   const y = gensignal( frequency )
   const encoded = encode( Array.from( y ) )
 
+  /* Collect the sendpk setTimeout ids so we can clear any that haven't
+     fired by the time we close the dgram sockets below — otherwise a late
+     sendpk fires server.send() on a closed socket and throws
+     ERR_SOCKET_DGRAM_NOT_RUNNING, which mocha records as an uncaught
+     exception against the (passing) test. */
+  const pendingtimers = []
   for( let i = 0; 60 > i; i ++ ) {
-    sendpk( i, bchannel.local.port, b, bcodec, 44, encoded )
+    pendingtimers.push( sendpk( i, bchannel.local.port, b, bcodec, 44, encoded ) )
   }
 
   await receiveuntil
+  pendingtimers.forEach( clearTimeout )
   const y2 = decode( Array.from( received ) )
 
   achannel.close()
@@ -410,8 +417,11 @@ async function loopcounttest( acodec, bcodec, encode, decode, expectedval = 0 ) 
   const y = new Int16Array( datalength ).fill( 0 )
   const encoded = encode( Array.from( y ) )
 
+  /* See looptest above — clear any still-pending sendpk timers before close
+     so they don't fire against the soon-to-be-closed dgram sockets. */
+  const pendingtimers = []
   for( let i = 0; 60 > i; i ++ ) {
-    sendpk( i, bchannel.local.port, b, bcodec, 44, encoded, 0, () => { allstats.b.send.count++ } )
+    pendingtimers.push( sendpk( i, bchannel.local.port, b, bcodec, 44, encoded, 0, () => { allstats.b.send.count++ } ) )
   }
 
   const bufferdelay = 350
@@ -419,6 +429,7 @@ async function loopcounttest( acodec, bcodec, encode, decode, expectedval = 0 ) 
   const packettime = 20 * 60
   const totaltimerequired = packettime + bufferdelay + errormarin
   await new Promise( resolve => setTimeout( resolve, totaltimerequired ) )
+  pendingtimers.forEach( clearTimeout )
 
   achannel.close()
   await finished

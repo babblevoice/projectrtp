@@ -65,6 +65,17 @@ pub struct ChannelState {
     /// over as a `SetPeerRemote` so the peer's outbound targets stay in sync
     /// when JS calls `.remote()` after `.mix()`. None when unbound.
     pub mix_peer_handle: Option<tokio::sync::mpsc::Sender<Command>>,
+    /// N-way mix: shared group state. When set, tick.rs deposits this
+    /// channel's decoded inbound frame into the group and reads
+    /// (`summed - own`) back to encode + send. Mutually exclusive with
+    /// `mix_peer_*` (2-chan fast path) — the facade promotes 2-chan to
+    /// N-way on the second `mix()` call.
+    pub mix_group: Option<std::sync::Arc<parking_lot::Mutex<super::mixer::MixGroupShared>>>,
+    /// This channel's slot in the group.
+    pub mix_group_idx: usize,
+    /// Group version we last emitted an output packet at. Compare against
+    /// `group.max_other_deposit(idx)` to decide whether to emit this tick.
+    pub mix_last_emit: u64,
     /// Stateful transcoder (G.722 needs filter history) for the mix relay.
     pub transcoder: crate::codec::Transcoder,
 
@@ -133,6 +144,9 @@ impl ChannelState {
             mix_peer_pt: 0,
             mix_peer_rfc2833_pt: 101,
             mix_peer_handle: None,
+            mix_group: None,
+            mix_group_idx: 0,
+            mix_last_emit: 0,
             transcoder: crate::codec::Transcoder::new(),
             remote_pt: 0,
             tick_count: 0,

@@ -80,13 +80,20 @@ pub fn decode_pcmu_buf(payload: &[u8]) -> Vec<i16> {
     payload.iter().map(|&b| ulaw_to_linear(b)).collect()
 }
 
-/// Transcoder owning the per-direction codec state needed for G.722 (which
-/// has filter / predictor history — can't be one-shot like G.711). One per
-/// channel, used by tick.rs's mix-relay path when peers speak different
-/// codecs. iLBC remains TODO until a Rust crate or FFI wrapper lands.
+/// Transcoder owning the per-direction codec state needed for G.722 (filter
+/// history) and iLBC (linear-predictor state). One per channel, used by
+/// tick.rs's mix-relay path when peers speak different codecs.
 pub struct Transcoder {
     g722_encoder: Option<ezk_g722::libg722::encoder::Encoder>,
     g722_decoder: Option<ezk_g722::libg722::decoder::Decoder>,
+    ilbc_encoder: Option<crate::ilbc::Encoder>,
+    ilbc_decoder: Option<crate::ilbc::Decoder>,
+    /// Dynamic RTP PTs that should be treated as iLBC by decode/encode.
+    /// Slot 0 is the local side's configured iLBC wire PT; slot 1 is the
+    /// mix peer's (so the bridge can re-encode iLBC at the right PT on
+    /// both ends of an asymmetric-dynamic pair). Static PT 97 is always
+    /// accepted even when slots are set to something else.
+    ilbc_pts: [u8; 2],
 }
 
 impl Default for Transcoder {
@@ -95,7 +102,20 @@ impl Default for Transcoder {
 
 impl Transcoder {
     pub fn new() -> Self {
-        Self { g722_encoder: None, g722_decoder: None }
+        Self {
+            g722_encoder: None,
+            g722_decoder: None,
+            ilbc_encoder: None,
+            ilbc_decoder: None,
+            ilbc_pts: [97, 97],
+        }
+    }
+
+    pub fn set_local_ilbc_pt(&mut self, pt: u8) { self.ilbc_pts[0] = pt; }
+    pub fn set_peer_ilbc_pt(&mut self, pt: u8) { self.ilbc_pts[1] = pt; }
+
+    fn is_ilbc_pt(&self, pt: u8) -> bool {
+        pt == 97 || pt == self.ilbc_pts[0] || pt == self.ilbc_pts[1]
     }
 
     fn g722_enc(&mut self) -> &mut ezk_g722::libg722::encoder::Encoder {
@@ -122,6 +142,12 @@ impl Transcoder {
 
     /// Decode `payload` from `pt` to linear16 @ 8 kHz.
     pub fn decode(&mut self, pt: u8, payload: &[u8]) -> Option<Vec<i16>> {
+        if self.is_ilbc_pt(pt) {
+            let dec = self.ilbc_decoder.get_or_insert_with(|| {
+                crate::ilbc::Decoder::new().expect("ilbc decoder create")
+            });
+            return dec.decode(payload);
+        }
         match pt {
             0 => Some(payload.iter().map(|&b| ulaw_to_linear(b)).collect()),
             8 => Some(payload.iter().map(|&b| alaw_to_linear(b)).collect()),
@@ -132,6 +158,12 @@ impl Transcoder {
 
     /// Encode linear16 @ 8 kHz into `pt`.
     pub fn encode(&mut self, pt: u8, samples: &[i16]) -> Option<Vec<u8>> {
+        if self.is_ilbc_pt(pt) {
+            let enc = self.ilbc_encoder.get_or_insert_with(|| {
+                crate::ilbc::Encoder::new().expect("ilbc encoder create")
+            });
+            return enc.encode_20ms(samples);
+        }
         match pt {
             0 => Some(samples.iter().map(|&s| linear_to_ulaw(s as i32)).collect()),
             8 => Some(samples.iter().map(|&s| linear_to_alaw(s as i32)).collect()),

@@ -6,6 +6,7 @@ use napi_derive::napi;
 mod channel;
 mod codec;
 mod dtls;
+mod ilbc;
 mod portpool;
 mod rtpbuffer;
 mod firfilter;
