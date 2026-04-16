@@ -1,5 +1,10 @@
 # ProjectRTP
 
+Also see:
+[MIGRATE.md](./MIGRATE.md)
+[ARCHITECTURE.md](./ARCHITECTURE.md)
+
+
 [![Build](https://github.com/babblevoice/projectrtp/actions/workflows/buildimage.yaml/badge.svg)](https://github.com/babblevoice/projectrtp/actions/workflows/buildimage.yaml)
 
 An RTP node addon which offers functionality to process RTP data streams and mix it. All performance tasks are implemented in C++ and use boost::asio for IO completion ports for high concurrency.
