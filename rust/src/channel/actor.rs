@@ -60,6 +60,9 @@ pub struct SpawnConfig {
     pub bind_addr: SocketAddr,
     pub ssrc: u32,
     pub events: Arc<dyn EventSink>,
+    /// `Some` when the port came from the managed pool — handed to
+    /// ChannelState so the port is returned on actor exit.
+    pub port_reservation: Option<crate::portpool::PortReservation>,
 }
 
 pub async fn spawn(cfg: SpawnConfig) -> std::io::Result<Handle> {
@@ -79,7 +82,8 @@ pub fn spawn_with_sockets(
     rtcp_sock: UdpSocket,
     local_addr: SocketAddr,
 ) -> std::io::Result<Handle> {
-    let state = ChannelState::new(cfg.id, local_addr, rtp_sock, rtcp_sock, cfg.ssrc);
+    let mut state = ChannelState::new(cfg.id, local_addr, rtp_sock, rtcp_sock, cfg.ssrc);
+    state.port_reservation = cfg.port_reservation;
     let (tx, rx) = mpsc::channel::<Command>(DEFAULT_CMD_QUEUE_DEPTH);
     let events = cfg.events;
     tokio::spawn(async move { run(state, rx, events).await });
@@ -313,6 +317,7 @@ mod tests {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             ssrc: 1,
             events: sink,
+            port_reservation: None,
         }).await.unwrap();
 
         handle.close("test").await;
@@ -336,6 +341,7 @@ mod tests {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             ssrc: 1,
             events: sink.clone(),
+            port_reservation: None,
         }).await.unwrap();
 
         handle.direction(Direction { send: false, recv: false }).await;
@@ -361,6 +367,7 @@ mod tests {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             ssrc: 1,
             events: sink,
+            port_reservation: None,
         }).await.unwrap();
 
         handle.play(crate::channel::commands::SoundSoup { raw: "{}".into() }).await.unwrap();

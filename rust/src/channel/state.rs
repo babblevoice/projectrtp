@@ -91,6 +91,12 @@ pub struct ChannelState {
 
     // Close bookkeeping (populated by Command::Close).
     pub close_info: Option<CloseInfo>,
+
+    /// Port-pool reservation. `Some` when the channel's RTP/RTCP pair came
+    /// from the managed pool; drops back into the pool when the actor ends
+    /// and state falls out of scope. `None` when ephemeral ports were used
+    /// (pool uninitialized — primarily tests that don't call `run({ports})`).
+    pub port_reservation: Option<crate::portpool::PortReservation>,
 }
 
 impl ChannelState {
@@ -130,6 +136,7 @@ impl ChannelState {
             rfc2833_pt: 101,
             pending_events: Vec::new(),
             close_info: None,
+            port_reservation: None,
         }
     }
 }

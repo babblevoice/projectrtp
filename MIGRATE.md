@@ -127,10 +127,11 @@ graph LR
 
 | Rust module | Purpose |
 |---|---|
-| `channel/actor.rs` | tokio task runtime that the C++ thread-per-channel worker maps onto. |
+| `channel/actor.rs` | Per-channel tokio async task. Tasks (not OS threads) are multiplexed onto tokio's default multi-thread runtime, which runs one worker thread per core. This is close in spirit to the C++ IOCP model (N worker threads, 1 per core, work dispatched by event) but not identical: tokio work-steals tasks across workers, so a given channel can migrate between cores. The C++ build pins work more firmly. See the "Scheduler" section below. |
 | `channel/commands.rs` | `Command` enum + `Handle` — replaces the C++ lock-guarded method calls. |
 | `channel/dtmf.rs` | RFC 2833 send queue + receive FSM — was inline in `projectrtpchannel.cpp`. |
 | `channel/dtls_session.rs`, `dtls.rs` | Rustls-based DTLS; C++ used gnutls inline in `projectrtpsrtp.cpp`. |
+| `portpool.rs` | Even-port FIFO (RTP on P, RTCP on P+1). Port of the `availableports` queue in `projectrtpchannel.cpp`. Falls back to ephemeral bind-with-retry when the pool is uninitialized (test harnesses that skip `run({ports})`). |
 
 ## Ownership model at a glance
 
@@ -179,6 +180,35 @@ commands to track the peer relationship:
 This shape lets `channel.mix(other)` succeed regardless of whether each
 channel already has a `remote` configured — the test suite relies on this
 ("basic mix 2 channels with start 2 packets wrong payload type").
+
+## Scheduler (C++ IOCP vs tokio)
+
+The C++ build runs **N worker threads (1 per core)** with IOCP / io_uring,
+each thread dispatching work directly from kernel completions with no
+task-migration across cores. This keeps per-channel state hot in L1/L2
+cache and avoids kernel thread context-switches on the hot path.
+
+The Rust build currently runs each channel as an **async task** on
+tokio's default multi-thread runtime (also 1 worker thread per core by
+default). Per-channel OS-thread cost is *not* an issue — tokio tasks are
+stackless futures multiplexed onto the worker pool — but:
+
+- **Work-stealing** can migrate a task between workers. Good for load
+  imbalance; bad for cache locality on a steady-state channel.
+- **Task state-machine + waker overhead** per `select!` wakeup is small
+  but non-zero vs a plain "loop { poll() }" per-core reactor.
+
+Open question: whether this matters at production channel counts. Being
+addressed in two steps:
+
+1. `stress/perfbench.js` — a harness that opens N echoing channels and
+   measures throughput, drop rate, and per-packet latency against both
+   builds (see the file for how to run).
+2. If the bench shows material overhead, evaluate: (a) sharded
+   `current_thread` runtimes with CPU affinity — channels never migrate,
+   but probabilistic load imbalance when correlated-lifetime channels
+   close together; (b) a per-core epoll/io_uring reactor that drops
+   tokio entirely — matches the C++ model but a much larger rewrite.
 
 ## Keeping this doc honest
 

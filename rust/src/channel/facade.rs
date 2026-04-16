@@ -223,6 +223,61 @@ pub struct DirectionOpts {
 /// Synchronous — index.js treats the return as the channel object directly,
 /// not a Promise. Bind sockets via std::net, hand over to the tokio actor.
 /// Events route to JS via ThreadsafeFunction so async tests resolve.
+type BindTuple = (std::net::UdpSocket, std::net::UdpSocket, SocketAddr, Option<crate::portpool::PortReservation>);
+
+/// Bind RTP+RTCP from the managed port pool. The pool only hands out even
+/// ports and each is held exclusively, so both binds should always succeed
+/// when the pool is non-empty. If a bind *does* fail (port held by another
+/// process on the same box, say), we release back to the pool and try the
+/// next available entry — bounded by `MAX_POOL_TRIES` so a truly exhausted
+/// pool reports promptly.
+fn bind_from_pool() -> Result<BindTuple> {
+    const MAX_POOL_TRIES: usize = 16;
+    let mut last_err: Option<std::io::Error> = None;
+    for _ in 0..MAX_POOL_TRIES {
+        let Some(port) = crate::portpool::acquire() else {
+            return Err(Error::from_reason("no available rtp ports in pool"));
+        };
+        let rtp_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+        let rtcp_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port + 1);
+        let rtp = match std::net::UdpSocket::bind(rtp_addr) {
+            Ok(s) => s,
+            Err(e) => { last_err = Some(e); crate::portpool::release(port); continue; }
+        };
+        let rtcp = match std::net::UdpSocket::bind(rtcp_addr) {
+            Ok(s) => s,
+            Err(e) => { last_err = Some(e); crate::portpool::release(port); continue; }
+        };
+        return Ok((rtp, rtcp, rtp_addr, Some(crate::portpool::PortReservation::new(port))));
+    }
+    Err(Error::from_reason(format!(
+        "bind rtp/rtcp from pool: exhausted {MAX_POOL_TRIES} tries; last={last_err:?}"
+    )))
+}
+
+/// Ephemeral-bind fallback for when the pool is uninitialized — still
+/// requires an even RTP port so RTCP = P+1 is semantically correct.
+fn bind_ephemeral() -> Result<BindTuple> {
+    let mut last_err: Option<std::io::Error> = None;
+    for _ in 0..64 {
+        let rtp = match std::net::UdpSocket::bind("127.0.0.1:0") {
+            Ok(s) => s,
+            Err(e) => { last_err = Some(e); continue; }
+        };
+        let la = match rtp.local_addr() { Ok(a) => a, Err(e) => { last_err = Some(e); continue; } };
+        let p = la.port();
+        if p % 2 != 0 { continue; }
+        let rtcp_addr = SocketAddr::new(la.ip(), p + 1);
+        match std::net::UdpSocket::bind(rtcp_addr) {
+            Ok(rtcp) => return Ok((rtp, rtcp, la, None)),
+            Err(e) => { last_err = Some(e); continue; }
+        }
+    }
+    Err(Error::from_reason(format!(
+        "bind rtp/rtcp pair: exhausted ephemeral retries; last={last_err:?}"
+    )))
+}
+
 fn extract_remote_addr(params: &Object) -> Option<SocketAddr> {
     let remote: Object = params.get_named_property::<Object>("remote").ok()?;
     let address: String = remote.get_named_property::<String>("address").ok()?;
@@ -299,17 +354,19 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
     let id = NEXT_CHANNEL_ID.fetch_add(1, Ordering::Relaxed);
     let ssrc = rand_ssrc();
 
-    let std_rtp = std::net::UdpSocket::bind("127.0.0.1:0")
-        .map_err(|e| Error::from_reason(format!("bind rtp: {e}")))?;
+    // Port allocation. Prefer the managed pool (filled by `run({ports: {...}})`)
+    // — each port is held exclusively for the channel's lifetime, so RTP on P
+    // and RTCP on P+1 are both guaranteed free at bind time. If the pool is
+    // not initialized (e.g. a test harness that didn't call `run`), fall back
+    // to an ephemeral-bind loop that requires an even P.
+    let (std_rtp, std_rtcp, local_addr, port_reservation) = if crate::portpool::is_initialized() {
+        bind_from_pool()?
+    } else {
+        bind_ephemeral()?
+    };
     std_rtp.set_nonblocking(true).ok();
-    let local_addr = std_rtp.local_addr().map_err(|e| Error::from_reason(e.to_string()))?;
-    let port = local_addr.port();
-
-    // RTCP convention is RTP+1.
-    let rtcp_addr = SocketAddr::new(local_addr.ip(), port.checked_add(1).unwrap_or(port));
-    let std_rtcp = std::net::UdpSocket::bind(rtcp_addr)
-        .map_err(|e| Error::from_reason(format!("bind rtcp: {e}")))?;
     std_rtcp.set_nonblocking(true).ok();
+    let port = local_addr.port();
 
     // Convert std → tokio (requires being inside a tokio runtime, which the
     // napi-rs tokio_rt feature provides).
@@ -319,7 +376,7 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
         .map_err(|e| Error::from_reason(format!("rtcp tokio adopt: {e}")))?;
 
     let handle = actor::spawn_with_sockets(
-        SpawnConfig { id, bind_addr: local_addr, ssrc, events: sink },
+        SpawnConfig { id, bind_addr: local_addr, ssrc, events: sink, port_reservation },
         rtp_sock,
         rtcp_sock,
         local_addr,
