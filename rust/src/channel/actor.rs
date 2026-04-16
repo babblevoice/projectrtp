@@ -163,6 +163,17 @@ async fn run(mut state: ChannelState, mut cmds: mpsc::Receiver<Command>, events:
     // WavWriter's Drop finalizes headers regardless, but we emit JS events
     // before the Close payload so subscribers see the expected order.
     let reason = closing.unwrap_or_default();
+    // Player: if still active on close, emit `play/end reason=channelclosed`.
+    // Matches the C++ event ordering that proxy tests assert — messages
+    // appear as play/start → play/end → close, not play/start → close.
+    if subs.player.is_some() {
+        subs.player = None;
+        subs.bargein = None;
+        events.post(Event::Play {
+            state: PlayState::End,
+            reason: Some("channelclosed".into()),
+        });
+    }
     for mut rec in subs.recorders.drain(..) {
         let file_str = rec.file().to_string_lossy().into_owned();
         rec.close(FinishReason::ChannelClosed);

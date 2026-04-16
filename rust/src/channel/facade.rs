@@ -604,8 +604,20 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
                 in_o.set_named_property("mos", env.create_double(4.5)?)?;
                 let mut out_o = env.create_object()?;
                 out_o.set_named_property("count", env.create_int64(stats.out_count as i64)?)?;
+                // Matches the C++ close-stats shape used by lib/node.js + the
+                // proxy tests that assert `msg.stats.{in,out,tick}` exist.
+                // Values are placeholders — we don't yet measure per-tick
+                // wall time the way the C++ addon does.
+                out_o.set_named_property("skip",  env.create_int64(0)?)?;
+                out_o.set_named_property("drop",  env.create_int64(0)?)?;
+                out_o.set_named_property("write", env.create_int64(stats.out_count as i64)?)?;
+                let mut tick_o = env.create_object()?;
+                tick_o.set_named_property("count",  env.create_int64(0)?)?;
+                tick_o.set_named_property("meanus", env.create_double(0.0)?)?;
+                tick_o.set_named_property("maxus",  env.create_double(0.0)?)?;
                 s.set_named_property("in", in_o)?;
                 s.set_named_property("out", out_o)?;
+                s.set_named_property("tick", tick_o)?;
                 obj.set_named_property("stats", s)?;
             }
             Ok(vec![obj])

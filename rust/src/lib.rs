@@ -51,6 +51,10 @@ pub struct ChannelCounts {
 #[napi(object)]
 pub struct Stats {
     pub channel: ChannelCounts,
+    /// Number of worker threads in the tokio runtime — mirrors C++'s
+    /// `std::thread::hardware_concurrency()`. Used by lib/node.js to
+    /// help the control server with load balancing.
+    pub workercount: u32,
 }
 
 #[napi]
@@ -71,5 +75,8 @@ pub fn stats() -> napi::Result<Stats> {
             totalcreated: 0,
             totalclosed: 0,
         },
+        workercount: std::thread::available_parallelism()
+            .map(|n| n.get() as u32)
+            .unwrap_or(1),
     })
 }
