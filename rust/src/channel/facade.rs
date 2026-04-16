@@ -162,6 +162,7 @@ impl ChannelObject {
         let addr = params.get_named_property::<String>("address").ok();
         let port = params.get_named_property::<u32>("port").ok();
         let codec = params.get_named_property::<u32>("codec").ok().unwrap_or(0);
+        let icepwd = params.get_named_property::<String>("icepwd").ok();
         let Some(addr_s) = addr else { return Ok(()); };
         let Some(port_n) = port else { return Ok(()); };
         let Ok(ip) = addr_s.parse::<IpAddr>() else { return Ok(()); };
@@ -174,6 +175,7 @@ impl ChannelObject {
                 ilbc_payload_type: None,
                 rfc2833_payload_type: None,
                 dtls: None,
+                icepwd,
             },
             ack,
         });
@@ -358,11 +360,29 @@ fn extract_rfc2833_pt(params: &Object) -> Option<u8> {
     params.get_named_property::<u32>("rfc2833pt").ok().map(|v| v as u8)
 }
 
+fn extract_local_icepwd(params: &Object) -> Option<String> {
+    params
+        .get_named_property::<Object>("local")
+        .ok()
+        .and_then(|l| l.get_named_property::<String>("icepwd").ok())
+        .filter(|s| !s.is_empty())
+}
+
+fn extract_remote_icepwd(params: &Object) -> Option<String> {
+    params
+        .get_named_property::<Object>("remote")
+        .ok()
+        .and_then(|r| r.get_named_property::<String>("icepwd").ok())
+        .filter(|s| !s.is_empty())
+}
+
 #[napi(js_name = "openchannel")]
 pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObject> {
     let remote_addr = extract_remote_addr(&params);
     let remote_pt = extract_remote_pt(&params);
     let rfc2833_pt = extract_rfc2833_pt(&params);
+    let override_local_icepwd = extract_local_icepwd(&params);
+    let initial_remote_icepwd = extract_remote_icepwd(&params);
     let tsfn: ThreadsafeFunction<EventPayload, ErrorStrategy::Fatal> = callback
         .create_threadsafe_function(0, |ctx: napi::threadsafe_function::ThreadSafeCallContext<EventPayload>| {
             let ev = ctx.value;
@@ -425,8 +445,20 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
     let rtcp_sock = tokio::net::UdpSocket::from_std(std_rtcp)
         .map_err(|e| Error::from_reason(format!("rtcp tokio adopt: {e}")))?;
 
+    // Local ICE password — JS can override the generated value via
+    // `params.local.icepwd` (used by the STUN tests and by SIP stacks that
+    // negotiate the value in SDP). Falls back to a fresh random string.
+    let local_icepwd = override_local_icepwd.unwrap_or_else(rand_icepwd);
+
     let handle = actor::spawn_with_sockets(
-        SpawnConfig { id, bind_addr: local_addr, ssrc, events: sink, port_reservation },
+        SpawnConfig {
+            id,
+            bind_addr: local_addr,
+            ssrc,
+            events: sink,
+            port_reservation,
+            local_icepwd: local_icepwd.clone(),
+        },
         rtp_sock,
         rtcp_sock,
         local_addr,
@@ -437,6 +469,7 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
     // — the actor will set state.remote_addr before any tick fires.
     if let Some(addr) = remote_addr {
         let cmd_tx = handle.cmd.clone();
+        let icepwd = initial_remote_icepwd.clone();
         tokio::spawn(async move {
             use super::commands::{Command, RemoteConfig};
             let (ack, _) = tokio::sync::oneshot::channel();
@@ -446,6 +479,7 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
                 ilbc_payload_type: None,
                 rfc2833_payload_type: rfc2833_pt,
                 dtls: None,
+                icepwd,
             };
             let _ = cmd_tx.send(Command::Remote { cfg, ack }).await;
         });
@@ -455,7 +489,7 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
         handle,
         channel_ssrc: ssrc,
         channel_port: port,
-        channel_icepwd: rand_icepwd(),
+        channel_icepwd: local_icepwd,
         remote_addr,
         remote_pt,
         rfc2833_pt: rfc2833_pt.unwrap_or(101),

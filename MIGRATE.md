@@ -119,7 +119,7 @@ graph LR
 | `projectrtpsoundsoup.cpp/.h` | `channel/player.rs` | partial | JSON parsing lives in `channel/facade.rs::parse_soundsoup`; player is created on `Command::Play` and dropped on DTMF interrupt. Tick-level audio output (send player frames as RTP) is still TODO — needed to pass the full `projectrtpsound.js` suite but not the DTMF-interrupt tests. |
 | `projectrtprawsound.cpp/.h` | inlined in `soundfile.rs` / `channel/recorder.rs` | done | Standalone class wasn't needed once recorders had WAV writers. |
 | `projectrtpsrtp.cpp/.h` | `channel/srtp_ctx.rs` | stub | libsrtp2 FFI placeholder. DTLS-SRTP wiring lands with the DTLS handshake. |
-| `projectrtpstun.cpp/.h` | `stun.rs` | partial | Classification + HMAC works; ICE candidate wiring via `ChannelState` is TODO. |
+| `projectrtpstun.cpp/.h` | `stun.rs` | done (for the 2-party ICE use case) | Classification, HMAC-SHA1 integrity, CRC-32 fingerprint, XOR-MAPPED-ADDRESS. Local/remote ICE passwords threaded through `ChannelState` (`local_icepwd` / `remote_icepwd`); tick.rs intercepts inbound STUN and replies before the packet reaches the jitter buffer. |
 | `projectrtptonegen.cpp/.h` | `tone.rs` | done | |
 | `boostexception.cpp` | — | dropped | Boost exception shim not needed — Rust `Result` replaces it. |
 

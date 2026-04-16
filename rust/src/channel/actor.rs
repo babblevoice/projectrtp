@@ -63,6 +63,8 @@ pub struct SpawnConfig {
     /// `Some` when the port came from the managed pool — handed to
     /// ChannelState so the port is returned on actor exit.
     pub port_reservation: Option<crate::portpool::PortReservation>,
+    /// Our own ICE password — used for STUN Binding Request integrity checks.
+    pub local_icepwd: String,
 }
 
 pub async fn spawn(cfg: SpawnConfig) -> std::io::Result<Handle> {
@@ -84,6 +86,7 @@ pub fn spawn_with_sockets(
 ) -> std::io::Result<Handle> {
     let mut state = ChannelState::new(cfg.id, local_addr, rtp_sock, rtcp_sock, cfg.ssrc);
     state.port_reservation = cfg.port_reservation;
+    state.local_icepwd = cfg.local_icepwd;
     let (tx, rx) = mpsc::channel::<Command>(DEFAULT_CMD_QUEUE_DEPTH);
     let events = cfg.events;
     tokio::spawn(async move { run(state, rx, events).await });
@@ -190,6 +193,9 @@ async fn handle_command(
             state.remote_pt = cfg.payload_type;
             if let Some(pt) = cfg.rfc2833_payload_type {
                 state.rfc2833_pt = pt;
+            }
+            if let Some(pwd) = &cfg.icepwd {
+                state.remote_icepwd = pwd.clone();
             }
             // If we're already bound into a 2-chan mix, notify the peer of
             // our new remote so the packets it forwards to us via the relay
@@ -323,6 +329,7 @@ mod tests {
             ssrc: 1,
             events: sink,
             port_reservation: None,
+            local_icepwd: String::new(),
         }).await.unwrap();
 
         handle.close("test").await;
@@ -347,6 +354,7 @@ mod tests {
             ssrc: 1,
             events: sink.clone(),
             port_reservation: None,
+            local_icepwd: String::new(),
         }).await.unwrap();
 
         handle.direction(Direction { send: false, recv: false }).await;
@@ -373,6 +381,7 @@ mod tests {
             ssrc: 1,
             events: sink,
             port_reservation: None,
+            local_icepwd: String::new(),
         }).await.unwrap();
 
         handle.play(crate::channel::player::SoundSoupSpec {

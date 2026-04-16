@@ -15,6 +15,12 @@ pub struct RemoteConfig {
     pub ilbc_payload_type: Option<u8>,
     pub rfc2833_payload_type: Option<u8>,
     pub dtls: Option<RemoteDtls>,
+    /// ICE password of the *remote* agent. Per RFC 8445 §7.1.1, the remote
+    /// uses our local icepwd to sign STUN Binding Requests it sends us; our
+    /// Binding Responses are signed with the same key. This field is kept
+    /// for completeness (and for future outgoing connectivity checks) even
+    /// though the inbound request-integrity check uses `state.local_icepwd`.
+    pub icepwd: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -124,13 +124,26 @@ async fn classify_and_route(
     state: &mut ChannelState,
     subs: &mut Subsystems,
     pkt: &[u8],
-    _peer: SocketAddr,
+    peer: SocketAddr,
 ) {
     if pkt.is_empty() { return; }
 
     if stun::is_stun(pkt) {
-        // TODO: respond to Binding Request via stun::handle once we have the
-        // local/remote ICE keys on ChannelState.
+        // Per ICE (RFC 8445 §7.1.1), the remote agent signs its Binding
+        // Request with *our* ice-pwd, so we verify against `local_icepwd`
+        // and sign the response with the same key. Without a configured
+        // password we can't do integrity — silently drop rather than
+        // emitting an unauthenticated response.
+        if state.local_icepwd.is_empty() { return; }
+        let key = state.local_icepwd.as_bytes();
+        // Need a mutable copy because stun::handle temporarily adjusts the
+        // message-length field to compute the pre-integrity HMAC.
+        let mut req = pkt.to_vec();
+        let mut resp = [0u8; rtp::RTP_MAX_LENGTH];
+        let n = stun::handle(&mut req, &mut resp, peer, key, key);
+        if n > 0 {
+            let _ = state.rtp_sock.send_to(&resp[..n], peer).await;
+        }
         return;
     }
 

@@ -97,6 +97,13 @@ pub struct ChannelState {
     /// and state falls out of scope. `None` when ephemeral ports were used
     /// (pool uninitialized — primarily tests that don't call `run({ports})`).
     pub port_reservation: Option<crate::portpool::PortReservation>,
+
+    /// ICE password for this side of the channel (our own). Used to verify
+    /// MESSAGE-INTEGRITY on inbound STUN Binding Requests and to sign
+    /// Binding Responses we emit. Empty string disables STUN handling.
+    pub local_icepwd: String,
+    /// Peer's ICE password — informational only today (see `RemoteConfig`).
+    pub remote_icepwd: String,
 }
 
 impl ChannelState {
@@ -137,6 +144,8 @@ impl ChannelState {
             pending_events: Vec::new(),
             close_info: None,
             port_reservation: None,
+            local_icepwd: String::new(),
+            remote_icepwd: String::new(),
         }
     }
 }
