@@ -8,8 +8,8 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-napi = { version = "2", default-features = false, features = ["napi8", "async", "tokio_rt"] }
-napi-derive = "2"
+napi = { version = "2", default-features = false, features = ["napi8", "async", "tokio_rt", "compat-mode"] }
+napi-derive = { version = "2", features = ["compat-mode"] }
 tokio = { version = "1", features = ["full"] }
 bytes = "1"
 parking_lot = "0.12"

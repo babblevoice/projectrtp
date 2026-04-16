@@ -63,11 +63,13 @@ fn load_fingerprint() -> String {
     compute_fingerprint_from_pem(&pem).unwrap_or_default()
 }
 
-/// JS-facing: `dtls.fingerprint` — SHA-256 of the DER cert in colon-hex form.
-/// Matches the existing C++ export surface (string on the dtls namespace).
-#[napi(namespace = "dtls", js_name = "fingerprint")]
-pub fn js_fingerprint() -> String {
-    FINGERPRINT.get_or_init(load_fingerprint).clone()
+/// Internal accessor for the fingerprint. Not exported via `#[napi]` —
+/// we publish it as a *string property* on the `dtls` namespace, not a
+/// function, because the JS tests assert `projectrtp.dtls.fingerprint`
+/// is `.to.be.a("string")`. The namespace is populated in `lib.rs`
+/// `init_module_exports` via a `#[napi::module_exports]` hook.
+pub fn fingerprint() -> &'static str {
+    FINGERPRINT.get_or_init(load_fingerprint)
 }
 
 #[cfg(test)]

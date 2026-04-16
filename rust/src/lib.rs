@@ -57,6 +57,23 @@ pub struct Stats {
     pub workercount: u32,
 }
 
+/// Post-`#[napi]` module init. napi-rs auto-generates every `#[napi]`
+/// export; this hook runs afterwards and can mutate the exports object
+/// to publish things the macros can't — notably plain *values* on a
+/// namespace (as opposed to functions). The C++ addon exports
+/// `dtls.fingerprint` as a string, so we override it here.
+#[napi_derive::module_exports]
+fn init_module_exports(mut exports: napi::JsObject, env: napi::Env) -> napi::Result<()> {
+    let mut dtls_ns: napi::JsObject = match exports.get_named_property::<napi::JsObject>("dtls") {
+        Ok(o) => o,
+        Err(_) => env.create_object()?,
+    };
+    let fp: napi::JsString = env.create_string(dtls::fingerprint())?;
+    dtls_ns.set_named_property("fingerprint", fp)?;
+    exports.set_named_property("dtls", dtls_ns)?;
+    Ok(())
+}
+
 #[napi]
 pub fn stats() -> napi::Result<Stats> {
     // `current` / `totalcreated` / `totalclosed` still need a process-wide

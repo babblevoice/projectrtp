@@ -153,7 +153,7 @@ impl ChannelObject {
     pub fn icepwd(&self) -> String { self.channel_icepwd.clone() }
 
     #[napi(getter)]
-    pub fn dtlsfingerprint(&self) -> String { crate::dtls::js_fingerprint() }
+    pub fn dtlsfingerprint(&self) -> String { crate::dtls::fingerprint().to_string() }
 
     #[napi]
     pub async fn close(&self, reason: Option<String>) {
@@ -187,18 +187,22 @@ impl ChannelObject {
     /// Reconfigure the remote end for outbound RTP. JS calls
     /// `channel.remote({ address, port, codec })`. Synchronous so the test's
     /// `channel.remote(...)` sits on the same tick as `channel.echo()`.
+    /// Returns true when the params were valid enough to enqueue a Remote
+    /// command (address + port parseable). DTLS tests assert the return
+    /// value, so `false` for an invalid spec is how JS learns the call
+    /// was a no-op.
     #[napi]
-    pub fn remote(&self, params: Object) -> Result<()> {
+    pub fn remote(&self, params: Object) -> bool {
         let addr = params.get_named_property::<String>("address").ok();
         let port = params.get_named_property::<u32>("port").ok();
         let codec = params.get_named_property::<u32>("codec").ok().unwrap_or(0);
         let icepwd = params.get_named_property::<String>("icepwd").ok();
-        let Some(addr_s) = addr else { return Ok(()); };
-        let Some(port_n) = port else { return Ok(()); };
-        let Ok(ip) = addr_s.parse::<IpAddr>() else { return Ok(()); };
+        let Some(addr_s) = addr else { return false; };
+        let Some(port_n) = port else { return false; };
+        let Ok(ip) = addr_s.parse::<IpAddr>() else { return false; };
         let sa = SocketAddr::new(ip, port_n as u16);
         let (ack, _) = tokio::sync::oneshot::channel();
-        let _ = self.handle.cmd.try_send(super::commands::Command::Remote {
+        self.handle.cmd.try_send(super::commands::Command::Remote {
             cfg: super::commands::RemoteConfig {
                 addr: sa,
                 payload_type: codec as u8,
@@ -208,8 +212,7 @@ impl ChannelObject {
                 icepwd,
             },
             ack,
-        });
-        Ok(())
+        }).is_ok()
     }
 
     /// Start (or replace) a soundsoup playback on this channel. JS shape
