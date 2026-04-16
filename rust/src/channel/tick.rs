@@ -58,11 +58,17 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     let inbound_pkt = state.jitter.pop();
 
     // 5a. Advance the player one frame's worth (20 ms @ 8 kHz = 160 samples).
-    // We don't generate outbound RTP from it yet — the DTMF + barge-in tests
-    // only care about the play/end event firing when the soup completes.
-    // When outbound player audio lands, those samples go to `send_to` below.
+    // Samples captured here drive the outbound player branch below when this
+    // channel isn't in a mix. A player that finishes during read() fires a
+    // `play/end reason=completed` event and clears `subs.player`.
+    let mut player_frame: Option<Vec<i16>> = None;
     if let Some(player) = subs.player.as_mut() {
-        let _ = player.read(160).await;
+        let frame = player.read(160).await;
+        // Ignore short/empty frames — `frame.samples` is empty when the
+        // soup finishes mid-read; we emit nothing that tick.
+        if !frame.samples.is_empty() {
+            player_frame = Some(frame.samples);
+        }
         if player.is_finished() {
             subs.player = None;
             subs.bargein = None;
@@ -278,6 +284,11 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     } else if state.direction.send && state.remote_addr.is_some() {
         if let Some((event, payload)) = subs.dtmf_send.next_event() {
             send_dtmf(state, event, &payload).await;
+        } else if let Some(samples) = player_frame.as_ref() {
+            // Player is the audio source — encode this tick's frame to the
+            // channel's remote codec and send. Single-channel path; mix
+            // groups have their own emit path above.
+            send_player_frame(state, samples).await;
         } else if state.echo {
             if let Some(in_pk) = inbound_pkt.as_ref() {
                 send_echo(state, in_pk).await;
@@ -490,6 +501,27 @@ async fn send_dtmf_to_with_pt(
     out.set_timestamp(state.out_ts);
     out.set_payload(payload);
     state.out_sn = state.out_sn.wrapping_add(1);
+    if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
+        state.out_count += 1;
+    }
+}
+
+/// Encode a player frame to the remote codec and send it as one RTP packet.
+/// Sequence number advances every call; timestamp advances by the decoded
+/// sample count (160 for G.711 @ 8 kHz). Silently skips the send on an
+/// encoder error — likely because the remote PT is a codec we can't
+/// encode to (iLBC without libilbc, L16, ...).
+async fn send_player_frame(state: &mut ChannelState, samples: &[i16]) {
+    let Some(remote) = state.remote_addr else { return; };
+    let Some(payload) = state.transcoder.encode(state.remote_pt, samples) else { return; };
+    let mut out = RtpPacket::new();
+    out.init(state.ssrc);
+    out.set_payload_type(state.remote_pt);
+    out.set_sequence_number(state.out_sn);
+    out.set_timestamp(state.out_ts);
+    out.set_payload(&payload);
+    state.out_sn = state.out_sn.wrapping_add(1);
+    state.out_ts = state.out_ts.wrapping_add(samples.len() as u32);
     if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
         state.out_count += 1;
     }

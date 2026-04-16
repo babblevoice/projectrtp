@@ -430,11 +430,18 @@ fn parse_soundsoup(params: &Object) -> Option<super::player::SoundSoupSpec> {
         if wav.is_empty() { continue; }
         let path = std::path::PathBuf::from(wav);
         if !path.is_file() { continue; }
+        // Per-file loop: JS accepts `true` (infinite — encoded as Some(0)
+        // in player.rs) or a positive integer.
+        let max_loops = if entry.get_named_property::<bool>("loop").ok() == Some(true) {
+            Some(0)
+        } else {
+            entry.get_named_property::<u32>("loop").ok()
+        };
         files.push(super::player::SoundSoupFileSpec {
             path,
             start_ms: entry.get_named_property::<u32>("start").ok().map(|v| v as u64),
             stop_ms: entry.get_named_property::<u32>("stop").ok().map(|v| v as u64),
-            max_loops: entry.get_named_property::<u32>("loop").ok(),
+            max_loops,
         });
     }
     if files.is_empty() { return None; }

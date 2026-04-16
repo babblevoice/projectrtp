@@ -12,6 +12,10 @@ use std::path::PathBuf;
 
 use super::super::soundfile::WavReader;
 
+/// The channel's canonical output rate — everything downstream (G.711,
+/// iLBC, G.722 at its 8 kHz shim) operates at this sample rate.
+const OUTPUT_SR: u32 = 8000;
+
 #[derive(Debug, Clone)]
 pub struct SoundSoupFileSpec {
     /// Pick one encoding to prefer; unused for now — WavReader handles PCM-16.
@@ -36,6 +40,14 @@ pub struct Player {
     file_loop: u32,
     overall_loop: u32,
     finished: bool,
+    /// Samples remaining before the current file's `stop_ms` boundary. `None`
+    /// when the current file has no stop trim (read until EOF). Decremented
+    /// each successful read; when it hits 0 we advance like an EOF.
+    remaining_samples: Option<u64>,
+    /// Current file's sample rate. Used for resampling to the channel's
+    /// output rate (8 kHz) — stored separately so the ratio is a single
+    /// integer division rather than a Reader lookup on the hot path.
+    source_sr: u32,
 }
 
 /// One chunk of decoded audio (interleaved if multi-channel).
@@ -54,6 +66,8 @@ impl Player {
             file_loop: 0,
             overall_loop: 0,
             finished: false,
+            remaining_samples: None,
+            source_sr: 8000,
         }
     }
 
@@ -75,8 +89,22 @@ impl Player {
                 }
             }
 
-            let need = samples_wanted - out.len();
-            let read = match self.reader.as_mut().unwrap().read_samples(need).await {
+            // For a 16 kHz (or higher) source we read `ratio` source samples
+            // per output sample and decimate. `remaining_samples` is in
+            // SOURCE samples so cap still applies at the source side.
+            let ratio = (self.source_sr / OUTPUT_SR).max(1) as usize;
+            let want_out = samples_wanted - out.len();
+            let mut need_src = want_out.saturating_mul(ratio);
+            if let Some(rem) = self.remaining_samples {
+                if rem == 0 {
+                    self.reader = None;
+                    self.remaining_samples = None;
+                    self.advance().await;
+                    continue;
+                }
+                need_src = need_src.min(rem as usize);
+            }
+            let read = match self.reader.as_mut().unwrap().read_samples(need_src).await {
                 Ok(v) => v,
                 Err(_) => Vec::new(),
             };
@@ -85,10 +113,23 @@ impl Player {
                 // EOF for this file.
                 end_of_file = true;
                 self.reader = None;
+                self.remaining_samples = None;
                 self.advance().await;
                 continue;
             }
-            out.extend(read);
+            if let Some(rem) = self.remaining_samples.as_mut() {
+                *rem = rem.saturating_sub(read.len() as u64);
+            }
+            // Naive decimation. For 8 kHz source (ratio 1) this is a no-op.
+            // For 16 kHz source (ratio 2) we take every other sample — loses
+            // high-frequency detail (no anti-alias filter), but matches the
+            // test expectation that a 52 s 16 kHz clip plays for 52 s at the
+            // RTP rate rather than 26 s.
+            if ratio == 1 {
+                out.extend(read);
+            } else {
+                out.extend(read.into_iter().step_by(ratio));
+            }
         }
 
         PlayFrame { samples: out, end_of_file, end_of_soup: end_of_soup || self.finished }
@@ -106,6 +147,21 @@ impl Player {
         if let Some(start) = spec.start_ms {
             let _ = reader.seek_ms(start).await;
         }
+        self.source_sr = reader.header().sample_rate.max(OUTPUT_SR);
+        // If a stop_ms is set, compute the per-sample-rate remaining window
+        // so `read()` caps at that many samples for this file iteration.
+        self.remaining_samples = match (spec.start_ms, spec.stop_ms) {
+            (_, None) => None,
+            (start, Some(stop)) => {
+                let sr = reader.header().sample_rate as u64;
+                let start = start.unwrap_or(0);
+                if stop > start {
+                    Some((stop - start) * sr / 1000)
+                } else {
+                    Some(0)
+                }
+            }
+        };
         self.reader = Some(reader);
         true
     }
@@ -118,8 +174,11 @@ impl Player {
         self.file_loop += 1;
 
         let file_done = match cur.max_loops {
-            Some(n) => self.file_loop >= n.max(1),
-            None => true, // no per-file loop; move on
+            // Some(0) = infinite loop (matches JS `{ loop: true }`);
+            // Some(n) = play n times; None = play once and move on.
+            Some(0) => false,
+            Some(n) => self.file_loop >= n,
+            None => true,
         };
 
         if !file_done {
