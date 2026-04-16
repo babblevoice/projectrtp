@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 
 use super::actor::Event;
-use super::commands::{ChannelId, Direction, RemoteConfig};
+use super::commands::{ChannelId, Command, Direction, RemoteConfig};
 use super::jitter::JitterBuffer;
 use super::rtp::RtpPacket;
 
@@ -60,6 +60,11 @@ pub struct ChannelState {
     /// RFC 2833 PT to stamp onto DTMF packets we relay to the peer. Peer
     /// may have negotiated a different rfc2833pt to us.
     pub mix_peer_rfc2833_pt: u8,
+    /// Handle to the mix peer's actor — set by `BindMixPeer`. When set, this
+    /// channel is in a 2-chan mix; any change to *our* remote gets pushed
+    /// over as a `SetPeerRemote` so the peer's outbound targets stay in sync
+    /// when JS calls `.remote()` after `.mix()`. None when unbound.
+    pub mix_peer_handle: Option<tokio::sync::mpsc::Sender<Command>>,
     /// Stateful transcoder (G.722 needs filter history) for the mix relay.
     pub transcoder: crate::codec::Transcoder,
 
@@ -114,6 +119,7 @@ impl ChannelState {
             mix_peer_remote: None,
             mix_peer_pt: 0,
             mix_peer_rfc2833_pt: 101,
+            mix_peer_handle: None,
             transcoder: crate::codec::Transcoder::new(),
             remote_pt: 0,
             tick_count: 0,

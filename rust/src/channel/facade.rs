@@ -187,23 +187,29 @@ impl ChannelObject {
     /// 2-channel mix via a byte-relay (matches C++ mix2). n-way mix using
     /// a proper MixGroup is a follow-up — this function handles the 2-channel
     /// case which is by far the most common in the test suite and in prod.
+    /// Returns true even if one side has no `remote_addr` yet; a later
+    /// `.remote(...)` call on that channel propagates the update to the peer.
     #[napi]
     pub fn mix(&self, other: &ChannelObject) -> bool {
-        let (Some(a), Some(b)) = (self.remote_addr, other.remote_addr) else { return false; };
-        let _ = self.handle.cmd.try_send(super::commands::Command::SetMixPeer {
-            remote: Some(b), peer_pt: other.remote_pt, peer_rfc2833_pt: other.rfc2833_pt,
+        let _ = self.handle.cmd.try_send(super::commands::Command::BindMixPeer {
+            peer_handle: other.handle.cmd.clone(),
+            peer_remote: other.remote_addr,
+            peer_pt: other.remote_pt,
+            peer_rfc2833_pt: other.rfc2833_pt,
         });
-        let _ = other.handle.cmd.try_send(super::commands::Command::SetMixPeer {
-            remote: Some(a), peer_pt: self.remote_pt, peer_rfc2833_pt: self.rfc2833_pt,
+        let _ = other.handle.cmd.try_send(super::commands::Command::BindMixPeer {
+            peer_handle: self.handle.cmd.clone(),
+            peer_remote: self.remote_addr,
+            peer_pt: self.remote_pt,
+            peer_rfc2833_pt: self.rfc2833_pt,
         });
         true
     }
 
     #[napi]
     pub fn unmix(&self, _other: Option<&ChannelObject>) -> bool {
-        let _ = self.handle.cmd.try_send(super::commands::Command::SetMixPeer {
-            remote: None, peer_pt: 0, peer_rfc2833_pt: 101,
-        });
+        // The actor will cascade the unbind to its peer.
+        let _ = self.handle.cmd.try_send(super::commands::Command::UnbindMixPeer);
         true
     }
 }

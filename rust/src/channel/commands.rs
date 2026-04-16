@@ -80,8 +80,24 @@ pub enum Command {
     Direction(Direction),
     Mix { other_id: ChannelId, other_sender: tokio::sync::mpsc::Sender<Command>, ack: Ack },
     Unmix,
-    /// Set the 2-channel mix relay target. None clears it.
-    SetMixPeer { remote: Option<SocketAddr>, peer_pt: u8, peer_rfc2833_pt: u8 },
+    /// Attach a mix-relay peer. `peer_handle` lets us push remote-updates to
+    /// the peer when our own `Remote` changes. `peer_remote/pt/rfc2833_pt` are
+    /// the peer's outbound targets at bind time — may still be None if the
+    /// peer hasn't been configured yet, in which case the peer will push an
+    /// update to us via `SetPeerRemote` once its `Remote` lands.
+    BindMixPeer {
+        peer_handle: tokio::sync::mpsc::Sender<Command>,
+        peer_remote: Option<SocketAddr>,
+        peer_pt: u8,
+        peer_rfc2833_pt: u8,
+    },
+    /// Detach the mix-relay peer. Mirrors `Unmix` but scoped to the 2-chan
+    /// relay (clears peer handle + outbound targets + emits mix/finished).
+    UnbindMixPeer,
+    /// Peer-to-peer update: the peer's own `Remote` changed; refresh our
+    /// outbound targets accordingly. No mix start/finished event — the bind
+    /// state hasn't changed, only the target.
+    SetPeerRemote { remote: Option<SocketAddr>, pt: u8, rfc2833_pt: u8 },
     Close { reason: String },
 }
 

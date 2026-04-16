@@ -187,6 +187,17 @@ async fn handle_command(
             if let Some(pt) = cfg.rfc2833_payload_type {
                 state.rfc2833_pt = pt;
             }
+            // If we're already bound into a 2-chan mix, notify the peer of
+            // our new remote so the packets it forwards to us via the relay
+            // land on the correct address (and the correct PT for transcode).
+            if let Some(peer) = state.mix_peer_handle.clone() {
+                let update = super::commands::Command::SetPeerRemote {
+                    remote: Some(cfg.addr),
+                    pt: cfg.payload_type,
+                    rfc2833_pt: state.rfc2833_pt,
+                };
+                let _ = peer.try_send(update);
+            }
             state.remote = Some(cfg);
             state.remote_confirmed = true;
             let _ = ack.send(());
@@ -226,23 +237,51 @@ async fn handle_command(
         }
 
         Command::Unmix => {
+            // Legacy path. Prefer Command::UnbindMixPeer via facade.unmix.
+            let was_bound = state.mix_peer_handle.is_some() || state.mix_peer_remote.is_some();
+            state.mix_peer_handle = None;
             state.mix_peer_remote = None;
+            state.mix_peer_pt = 0;
+            state.mix_peer_rfc2833_pt = 101;
+            if was_bound {
+                events.post(Event::Mix { state: "finished".to_string() });
+            }
             None
         }
 
-        Command::SetMixPeer { remote, peer_pt, peer_rfc2833_pt } => {
-            let was_mixed = state.mix_peer_remote.is_some();
-            state.mix_peer_remote = remote;
+        Command::BindMixPeer { peer_handle, peer_remote, peer_pt, peer_rfc2833_pt } => {
+            let was_bound = state.mix_peer_handle.is_some();
+            state.mix_peer_handle = Some(peer_handle);
+            state.mix_peer_remote = peer_remote;
             state.mix_peer_pt = peer_pt;
             state.mix_peer_rfc2833_pt = peer_rfc2833_pt;
-            // Surface mix/unmix transitions as events — tests assert the JS
-            // callback receives `mix:start` and `mix:finished` alongside
-            // media / close events.
-            if remote.is_some() && !was_mixed {
+            if !was_bound {
                 events.post(Event::Mix { state: "start".to_string() });
-            } else if remote.is_none() && was_mixed {
+            }
+            None
+        }
+
+        Command::UnbindMixPeer => {
+            let was_bound = state.mix_peer_handle.is_some();
+            // Push an unbind to the peer so both sides release together.
+            if let Some(peer) = state.mix_peer_handle.take() {
+                let _ = peer.try_send(super::commands::Command::UnbindMixPeer);
+            }
+            state.mix_peer_remote = None;
+            state.mix_peer_pt = 0;
+            state.mix_peer_rfc2833_pt = 101;
+            if was_bound {
                 events.post(Event::Mix { state: "finished".to_string() });
             }
+            None
+        }
+
+        Command::SetPeerRemote { remote, pt, rfc2833_pt } => {
+            // Pure target refresh — no event. The bound state didn't change,
+            // only where we forward to.
+            state.mix_peer_remote = remote;
+            state.mix_peer_pt = pt;
+            state.mix_peer_rfc2833_pt = rfc2833_pt;
             None
         }
     }
