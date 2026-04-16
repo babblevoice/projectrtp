@@ -203,6 +203,18 @@ async fn classify_and_route(
         let sn = rtp::sequence_number(pkt);
         let payload = &pkt[rtp::RTP_FIXED_HEADER_LEN..];
         if let Some(digit) = subs.dtmf_recv.feed(sn, payload) {
+            // Interrupt an active play if it was started with interupt=true.
+            // play/end fires *before* the telephone-event so JS observes
+            // the causality: playback ended because a digit came in.
+            if let Some(p) = subs.player.as_ref() {
+                if p.interrupts() {
+                    subs.player = None;
+                    state.pending_events.push(Event::Play {
+                        state: super::actor::PlayState::End,
+                        reason: Some("telephone-event".into()),
+                    });
+                }
+            }
             state.pending_events.push(Event::TelephoneEvent { digit });
         }
         return;

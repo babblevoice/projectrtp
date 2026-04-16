@@ -26,13 +26,10 @@ pub struct RemoteDtls {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DtlsSetup { Active, Passive }
 
-#[derive(Debug, Clone)]
-pub struct SoundSoup {
-    // soundsoup is a JSON description of a playlist (files + loops + regions).
-    // Full structure will land in player.rs; keep opaque here so callers can
-    // compile against the Command surface before player.rs exists.
-    pub raw: String,
-}
+/// The play config carried on `Command::Play`. Alias for the parsed spec in
+/// `channel/player.rs` — commands used to carry a raw JSON string, but the
+/// facade now parses at the JS boundary so actors never see unparsed input.
+pub type SoundSoup = super::player::SoundSoupSpec;
 
 #[derive(Debug, Clone)]
 pub struct RecordConfig {

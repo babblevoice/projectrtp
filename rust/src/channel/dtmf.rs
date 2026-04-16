@@ -175,7 +175,9 @@ impl DtmfReceiver {
     /// Feed an RFC 2833 payload with its RTP sequence number. Returns the
     /// digit char on the first packet of a new distinct event; duplicate
     /// packets within the same burst (body repeats + end-of-event) return
-    /// None. Same digit seen after an unrelated digit counts as new.
+    /// None. A repeated digit after an end-marker counts as new — three
+    /// "1" presses in a row produce three reports, matching the PCAP
+    /// replay test in test/interface/projectrtpdtmf.js.
     pub fn feed(&mut self, sn: u16, payload: &[u8]) -> Option<char> {
         let ev = decode_event(payload)?;
         let advanced = match self.last_sn {
@@ -184,6 +186,14 @@ impl DtmfReceiver {
         };
         if !advanced { return None; }
         self.last_sn = Some(sn);
+
+        if ev.end {
+            // Burst terminator — clear last_event so the next body packet
+            // of any code (including the same digit re-pressed) starts a
+            // new burst and gets reported.
+            self.last_event = None;
+            return None;
+        }
 
         if self.last_event == Some(ev.event) {
             return None;

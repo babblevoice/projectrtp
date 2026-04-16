@@ -31,6 +31,14 @@ ezk-g722 = "0.1"
 napi-build = "2"
 
 [profile.release]
-lto = true
-codegen-units = 1
+# `lto = "thin"` instead of `true` (fat LTO). Fat LTO on Alpine/musl Docker
+# builds SIGSEGVs rustc when cross-crate inlining rustls (~3-4 GB per rustc
+# process under fat LTO; constrained Docker memory is the usual cause). Thin
+# LTO keeps most of the inlining benefit with much lower memory pressure.
+lto = "thin"
+# Codegen units = 16 (Cargo's release default) lets the linker parallelize
+# and further reduces per-unit memory. If we ever need the tiny binary-size
+# win from `codegen-units = 1`, do it only on the CI host image, not in the
+# Alpine builder.
+codegen-units = 16
 opt-level = 3

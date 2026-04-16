@@ -180,7 +180,17 @@ impl ChannelObject {
         Ok(())
     }
 
-    #[napi] pub async fn play(&self)       -> Result<()> { Ok(()) }
+    /// Start (or replace) a soundsoup playback on this channel. JS shape
+    /// matches `projectrtpsoundsoup.cpp`: `{ files:[{wav,start,stop,loop}],
+    /// loop: bool|number, interupt: bool }` — note the original C++ typo
+    /// "interupt" is preserved for JS compat. Returns false (and fires no
+    /// commands) when the spec is invalid so tests can assert failure.
+    #[napi]
+    pub fn play(&self, params: Object) -> bool {
+        let Some(spec) = parse_soundsoup(&params) else { return false; };
+        let (ack, _) = tokio::sync::oneshot::channel();
+        self.handle.cmd.try_send(super::commands::Command::Play { cfg: spec, ack }).is_ok()
+    }
     #[napi] pub async fn record(&self)     -> Result<()> { Ok(()) }
     #[napi] pub async fn playrecord(&self) -> Result<()> { Ok(()) }
 
@@ -276,6 +286,46 @@ fn bind_ephemeral() -> Result<BindTuple> {
     Err(Error::from_reason(format!(
         "bind rtp/rtcp pair: exhausted ephemeral retries; last={last_err:?}"
     )))
+}
+
+/// Parse a JS `play` / `playrecord` params object into a `SoundSoupSpec`.
+/// Matches the C++ parser in projectrtpsoundsoup.cpp: rejects when no files
+/// are supplied or when no file is loadable, honours per-file `start`/`stop`
+/// (ms) and `loop`, plus top-level `loop` (bool or integer) and `interupt`.
+fn parse_soundsoup(params: &Object) -> Option<super::player::SoundSoupSpec> {
+    let files_arr: Array = params.get_named_property::<Array>("files").ok()?;
+    let len = files_arr.len();
+    if len == 0 { return None; }
+    let mut files = Vec::with_capacity(len as usize);
+    for i in 0..len {
+        let Ok(entry) = files_arr.get::<Object>(i) else { continue; };
+        let Some(entry) = entry else { continue; };
+        let Ok(wav): Result<String> = entry.get_named_property("wav") else { continue; };
+        if wav.is_empty() { continue; }
+        let path = std::path::PathBuf::from(wav);
+        if !path.is_file() { continue; }
+        files.push(super::player::SoundSoupFileSpec {
+            path,
+            start_ms: entry.get_named_property::<u32>("start").ok().map(|v| v as u64),
+            stop_ms: entry.get_named_property::<u32>("stop").ok().map(|v| v as u64),
+            max_loops: entry.get_named_property::<u32>("loop").ok(),
+        });
+    }
+    if files.is_empty() { return None; }
+    // Top-level `loop`: bool (true → infinite, false/absent → once) or number
+    // (explicit loop count). We can't know the JS type here, so try number
+    // first then fall back to bool — matches how the C++ parser handles it.
+    let overall_loops = if let Ok(n) = params.get_named_property::<u32>("loop") {
+        // `loop: 0` means no looping in C++; treat as one-shot for parity.
+        if n == 0 { None } else { Some(n) }
+    } else if params.get_named_property::<bool>("loop").ok() == Some(true) {
+        Some(0) // 0 = infinite in player.rs
+    } else {
+        None
+    };
+    // Typo is intentional — C++ API uses "interupt".
+    let interrupt = params.get_named_property::<bool>("interupt").ok().unwrap_or(false);
+    Some(super::player::SoundSoupSpec { files, overall_loops, interrupt })
 }
 
 fn extract_remote_addr(params: &Object) -> Option<SocketAddr> {

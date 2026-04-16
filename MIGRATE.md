@@ -116,7 +116,7 @@ graph LR
 | `projectrtpcodecx.cpp/.h` | `codec.rs` | partial | G.711 transcode is pure Rust (port of spandsp tables). G.722 / iLBC / L16 still FFI. |
 | `projectrtpfirfilter.cpp/.h` | `firfilter.rs` | done | |
 | `projectrtpsoundfile.cpp/.h` | `soundfile.rs` | partial | Read/write WAV headers, raw PCM. SoundSoup playback overlap is in `channel/player.rs`. |
-| `projectrtpsoundsoup.cpp/.h` | `channel/player.rs` | partial | JSON parsing + segment selection; player tick integration pending. |
+| `projectrtpsoundsoup.cpp/.h` | `channel/player.rs` | partial | JSON parsing lives in `channel/facade.rs::parse_soundsoup`; player is created on `Command::Play` and dropped on DTMF interrupt. Tick-level audio output (send player frames as RTP) is still TODO — needed to pass the full `projectrtpsound.js` suite but not the DTMF-interrupt tests. |
 | `projectrtprawsound.cpp/.h` | inlined in `soundfile.rs` / `channel/recorder.rs` | done | Standalone class wasn't needed once recorders had WAV writers. |
 | `projectrtpsrtp.cpp/.h` | `channel/srtp_ctx.rs` | stub | libsrtp2 FFI placeholder. DTLS-SRTP wiring lands with the DTLS handshake. |
 | `projectrtpstun.cpp/.h` | `stun.rs` | partial | Classification + HMAC works; ICE candidate wiring via `ChannelState` is TODO. |

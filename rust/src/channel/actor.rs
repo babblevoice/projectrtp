@@ -208,11 +208,16 @@ async fn handle_command(
             None
         }
 
-        Command::Play { cfg: _, ack } => {
-            // TODO: parse SoundSoup.raw → SoundSoupSpec and construct Player.
-            // Deferred until the napi facade (Task #9) converts JS JSON →
-            // SoundSoupSpec at command creation time.
-            events.post(Event::Play { state: PlayState::Start, reason: None });
+        Command::Play { cfg, ack } => {
+            // If a prior player is still alive, C++ semantics are "replace,
+            // fire play/end reason=new on the old one". We emit that first
+            // so JS sees the transition before the new play/start.
+            if subs.player.is_some() {
+                subs.player = None;
+                events.post(Event::Play { state: PlayState::End, reason: Some("new".into()) });
+            }
+            subs.player = Some(Player::new(cfg));
+            events.post(Event::Play { state: PlayState::Start, reason: Some("new".into()) });
             let _ = ack.send(());
             None
         }
@@ -370,7 +375,11 @@ mod tests {
             port_reservation: None,
         }).await.unwrap();
 
-        handle.play(crate::channel::commands::SoundSoup { raw: "{}".into() }).await.unwrap();
+        handle.play(crate::channel::player::SoundSoupSpec {
+            files: vec![],
+            overall_loops: None,
+            interrupt: false,
+        }).await.unwrap();
 
         // Expect a play-start event.
         let mut saw_play = false;
