@@ -82,10 +82,13 @@ pub fn decode_pcmu_buf(payload: &[u8]) -> Vec<i16> {
 
 /// Transcoder owning the per-direction codec state needed for G.722 (filter
 /// history) and iLBC (linear-predictor state). One per channel, used by
-/// tick.rs's mix-relay path when peers speak different codecs.
+/// tick.rs's mix-relay path when peers speak different codecs. Both G.722
+/// and iLBC are thin FFI wrappers over the same C libraries the C++ addon
+/// uses (spandsp and libilbc respectively), so encoder output is bit-for-
+/// bit identical to the reference implementation.
 pub struct Transcoder {
-    g722_encoder: Option<ezk_g722::libg722::encoder::Encoder>,
-    g722_decoder: Option<ezk_g722::libg722::decoder::Decoder>,
+    g722_encoder: Option<crate::g722::Encoder>,
+    g722_decoder: Option<crate::g722::Decoder>,
     ilbc_encoder: Option<crate::ilbc::Encoder>,
     ilbc_decoder: Option<crate::ilbc::Decoder>,
     /// Dynamic RTP PTs that should be treated as iLBC by decode/encode.
@@ -118,25 +121,15 @@ impl Transcoder {
         pt == 97 || pt == self.ilbc_pts[0] || pt == self.ilbc_pts[1]
     }
 
-    fn g722_enc(&mut self) -> &mut ezk_g722::libg722::encoder::Encoder {
-        // 8kHz input mode — input is L16 at 8 kHz (since the upstream PCMU/PCMA
-        // path produces 8 kHz samples). Encoder handles the upsample internally.
+    fn g722_enc(&mut self) -> &mut crate::g722::Encoder {
         self.g722_encoder.get_or_insert_with(|| {
-            ezk_g722::libg722::encoder::Encoder::new(
-                ezk_g722::libg722::Bitrate::Mode1_64000,
-                true,  // eight_k
-                false, // packed
-            )
+            crate::g722::Encoder::new().expect("g722 encoder init")
         })
     }
 
-    fn g722_dec(&mut self) -> &mut ezk_g722::libg722::decoder::Decoder {
+    fn g722_dec(&mut self) -> &mut crate::g722::Decoder {
         self.g722_decoder.get_or_insert_with(|| {
-            ezk_g722::libg722::decoder::Decoder::new(
-                ezk_g722::libg722::Bitrate::Mode1_64000,
-                true,  // eight_k
-                false, // packed
-            )
+            crate::g722::Decoder::new().expect("g722 decoder init")
         })
     }
 
