@@ -50,9 +50,19 @@ pub struct Recorder {
     cfg: RecorderConfig,
     writer: WavWriter,
     state: RecorderState,
+    /// Moving average of *per-packet peak power* (not per-sample). Matches
+    /// the C++ pipeline (`incodec.power()` then `poweravg(power)` in
+    /// projectrtpchannel.cpp). Per-packet makes the convergence time =
+    /// `power_averaging_packets` * 20 ms, which is what tests expect.
     power_ma: MaFilter,
     samples_written: u64,
     samples_since_active: u64,
+    /// Last smoothed power value — fed to below-power / above-power checks.
+    last_power_calc: i32,
+    /// Peak smoothed power observed since the gate opened. The below-power
+    /// finish fires only if `max_since_active > threshold && last < threshold`,
+    /// matching the C++ gating in projectrtpchannel.cpp:917-925.
+    max_since_active_power: i32,
     finish_reason: Option<FinishReason>,
 }
 
@@ -77,6 +87,8 @@ impl Recorder {
             power_ma,
             samples_written: 0,
             samples_since_active: 0,
+            last_power_calc: 0,
+            max_since_active_power: 0,
             finish_reason: None,
         })
     }
@@ -85,6 +97,7 @@ impl Recorder {
     pub fn is_finished(&self) -> bool { self.state == RecorderState::Finished }
     pub fn finish_reason(&self) -> Option<&FinishReason> { self.finish_reason.as_ref() }
     pub fn file(&self) -> &std::path::Path { &self.cfg.file }
+    pub fn num_channels(&self) -> u16 { self.cfg.num_channels }
 
     pub fn pause(&mut self) {
         if matches!(self.state, RecorderState::Active | RecorderState::Pending) {
@@ -106,26 +119,46 @@ impl Recorder {
     }
 
     /// Feed a frame of samples (typically one 20 ms RTP tick's worth).
-    /// Returns true if samples were written to disk.
-    pub async fn write(&mut self, samples: &[i16]) -> std::io::Result<bool> {
+    /// `channel_in_count` is the channel-wide inbound packet counter (used
+    /// for the 100-packet RMS warm-up that mirrors `codecx::power()` in
+    /// projectrtpcodecx.cpp:576). Returns true if samples were written.
+    pub async fn write(&mut self, samples: &[i16], channel_in_count: u64) -> std::io::Result<bool> {
         if self.state == RecorderState::Finished { return Ok(false); }
         if self.state == RecorderState::Paused { return Ok(false); }
 
-        // Rolling power average.
-        let mut power = 0i32;
-        for s in samples {
-            let p = self.power_ma.execute(s.unsigned_abs() as i16) as i32;
-            power = power.max(p);
-        }
+        // RMS power for this packet — `sqrt(mean(s^2))`. Same shape as
+        // `codecx::power()`. Returns 0 during the first 100 packets to give
+        // the inbound stream time to establish (and avoids start-gating on
+        // initial RTP noise).
+        let pkt_power: i32 = if channel_in_count < 100 || samples.is_empty() {
+            0
+        } else {
+            // We compute on the interleaved frame; for 2-channel writes
+            // ch0 == ch1 so RMS is the same as the single-channel value.
+            let mut sum_sq: u64 = 0;
+            for s in samples {
+                let v = *s as i64;
+                sum_sq += (v * v) as u64;
+            }
+            ((sum_sq / samples.len() as u64) as f64).sqrt() as i32
+        };
+        let pkt_power16 = pkt_power.min(i16::MAX as i32) as i16;
+        self.last_power_calc = self.power_ma.execute(pkt_power16) as i32;
 
-        // Start gate.
+        // Start gate — open when smoothed peak crosses the threshold.
         if self.state == RecorderState::Pending {
-            if matches!(self.cfg.start_above_power, Some(th) if power >= th) {
+            if matches!(self.cfg.start_above_power, Some(th) if self.last_power_calc > th) {
                 self.state = RecorderState::Active;
                 self.samples_since_active = 0;
+                self.max_since_active_power = self.last_power_calc;
             } else {
                 return Ok(false);
             }
+        }
+
+        // Track peak smoothed power since gate opened.
+        if self.last_power_calc > self.max_since_active_power {
+            self.max_since_active_power = self.last_power_calc;
         }
 
         // Write.
@@ -137,25 +170,31 @@ impl Recorder {
         self.samples_written += n;
         self.samples_since_active += n;
 
-        // Duration-based finish.
-        if let Some(max_ms) = self.cfg.max_duration_ms {
-            let sr = self.cfg.sample_rate as u64 * self.cfg.num_channels as u64;
-            if sr > 0 {
-                let ms = self.samples_written * 1000 / sr;
-                if ms >= max_ms {
-                    self.request_finish(FinishReason::MaxDurationReached);
-                    return Ok(true);
-                }
+        // active_ms = elapsed since gate open. Frame length is samples per
+        // channel × channels, so divide by (sr * channels) to get seconds.
+        let sr = self.cfg.sample_rate as u64 * self.cfg.num_channels as u64;
+        let active_ms = if sr > 0 { self.samples_since_active * 1000 / sr } else { 0 };
+
+        if let Some(min) = self.cfg.min_duration_ms {
+            if active_ms < min {
+                // Below min duration — skip finish-checks (matches C++
+                // projectrtpchannel.cpp:908 `continue` if diff < minduration).
+                return Ok(true);
             }
         }
 
-        // Quiet-trailing-tail finish.
+        // Below-power finish: only after we've heard above-threshold once.
         if let Some(th) = self.cfg.finish_below_power {
-            let sr = self.cfg.sample_rate as u64 * self.cfg.num_channels as u64;
-            let active_ms = if sr > 0 { self.samples_since_active * 1000 / sr } else { 0 };
-            let min_ok = self.cfg.min_duration_ms.map_or(true, |m| active_ms >= m);
-            if min_ok && power < th {
+            if self.max_since_active_power > th && self.last_power_calc < th {
                 self.request_finish(FinishReason::BelowPowerThreshold);
+                return Ok(true);
+            }
+        }
+
+        // Max-duration finish.
+        if let Some(max_ms) = self.cfg.max_duration_ms {
+            if active_ms > max_ms {
+                self.request_finish(FinishReason::MaxDurationReached);
             }
         }
 
@@ -197,7 +236,7 @@ mod tests {
 
         let mut rec = Recorder::open(c).await.unwrap();
         for _ in 0..10 {
-            rec.write(&vec![100i16; 160]).await.unwrap();
+            rec.write(&vec![100i16; 160], 200).await.unwrap();
             if rec.is_finished() { break; }
         }
         assert!(rec.is_finished());
@@ -218,11 +257,11 @@ mod tests {
 
         let mut rec = Recorder::open(c).await.unwrap();
         // Silent frames — should not advance to Active.
-        for _ in 0..5 { rec.write(&vec![0i16; 160]).await.unwrap(); }
+        for _ in 0..5 { rec.write(&vec![0i16; 160], 200).await.unwrap(); }
         assert_eq!(rec.state(), RecorderState::Pending);
 
         // Loud frames — should open the gate.
-        for _ in 0..10 { rec.write(&vec![5000i16; 160]).await.unwrap(); }
+        for _ in 0..10 { rec.write(&vec![5000i16; 160], 200).await.unwrap(); }
         assert_eq!(rec.state(), RecorderState::Active);
 
         rec.close(FinishReason::Completed);

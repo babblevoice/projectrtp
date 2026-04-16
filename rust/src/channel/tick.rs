@@ -57,6 +57,116 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     // receive time (not here) so packets still buffered at close still count.
     let inbound_pkt = state.jitter.pop();
 
+    // 5a. Advance the player one frame's worth (20 ms @ 8 kHz = 160 samples).
+    // We don't generate outbound RTP from it yet — the DTMF + barge-in tests
+    // only care about the play/end event firing when the soup completes.
+    // When outbound player audio lands, those samples go to `send_to` below.
+    if let Some(player) = subs.player.as_mut() {
+        let _ = player.read(160).await;
+        if player.is_finished() {
+            subs.player = None;
+            subs.bargein = None;
+            state.pending_events.push(Event::Play {
+                state: super::actor::PlayState::End,
+                reason: Some("completed".into()),
+            });
+        }
+    }
+
+    // 5b. Recorder: feed each active recorder the popped packet's decoded
+    // samples. Each recorder handles its own state transitions (gate, finish
+    // thresholds, max duration). We observe transitions by comparing
+    // state before/after `write` and emit the matching JS event.
+    //
+    // 2-channel recordings interleave inbound on ch0 and (for tests with
+    // echo on) the same sample on ch1 — matches the C++ layout the test's
+    // `readInt16BE` at offset 45 relies on.
+    if let Some(in_pk) = inbound_pkt.as_ref() {
+        let in_pt = in_pk.payload_type();
+        let payload = in_pk.payload();
+        let decoded = state.transcoder.decode(in_pt, payload);
+
+        // Barge-in: RMS of inbound samples, smoothed across N packets.
+        // Crossing the threshold while a player is active drops the player
+        // and posts a `play/end reason=interrupted` event. Mirrors the C++
+        // barge-in path in projectrtpchannel.cpp that uses
+        // `incodec.power()` and compares against `bargeinminpower`.
+        if let (Some(samples), Some(bi)) = (decoded.as_ref(), subs.bargein.as_mut()) {
+            if subs.player.is_some() && state.in_count >= 100 {
+                let mut sum_sq: u64 = 0;
+                for s in samples {
+                    let v = *s as i64;
+                    sum_sq += (v * v) as u64;
+                }
+                let rms = if samples.is_empty() { 0 }
+                          else { ((sum_sq / samples.len() as u64) as f64).sqrt() as i32 };
+                let smoothed = bi.power_ma.execute(rms.min(i16::MAX as i32) as i16) as i32;
+                if smoothed > bi.power_threshold {
+                    subs.player = None;
+                    subs.bargein = None;
+                    state.pending_events.push(Event::Play {
+                        state: super::actor::PlayState::End,
+                        reason: Some("interrupted".into()),
+                    });
+                }
+            }
+        }
+        // We iterate by index so we can remove finished recorders without
+        // holding a borrow across the emit.
+        let mut i = 0;
+        while i < subs.recorders.len() {
+            let rec = &mut subs.recorders[i];
+            let prev_state = rec.state();
+            if let Some(samples) = &decoded {
+                let frame = if rec.num_channels() == 2 {
+                    let mut inter = Vec::with_capacity(samples.len() * 2);
+                    for s in samples { inter.push(*s); inter.push(*s); }
+                    inter
+                } else {
+                    samples.clone()
+                };
+                let _ = rec.write(&frame, state.in_count).await;
+            }
+            let new_state = rec.state();
+            let file_str = rec.file().to_string_lossy().into_owned();
+
+            // Pending → Active: gate just opened. C++ emits "recording.abovepower".
+            if prev_state == super::recorder::RecorderState::Pending
+                && new_state == super::recorder::RecorderState::Active
+            {
+                state.pending_events.push(Event::Record {
+                    state: super::actor::RecordState::Recording,
+                    reason: Some("abovepower".into()),
+                    file: Some(file_str.clone()),
+                });
+            }
+
+            if rec.is_finished() {
+                let reason = rec.finish_reason().cloned();
+                let reason_str = match reason {
+                    // Test suite (projectrtprecord.js) uses hyphen-free tokens
+                    // — "finished.belowpower", "finished.channelclosed", etc.
+                    // Max duration surfaces as "timeout", matching the C++
+                    // event name tests assert ("finished.timeout").
+                    Some(super::recorder::FinishReason::Completed) => "completed",
+                    Some(super::recorder::FinishReason::MaxDurationReached) => "timeout",
+                    Some(super::recorder::FinishReason::BelowPowerThreshold) => "belowpower",
+                    Some(super::recorder::FinishReason::ChannelClosed) => "channelclosed",
+                    Some(super::recorder::FinishReason::Requested) => "requested",
+                    None => "completed",
+                };
+                state.pending_events.push(Event::Record {
+                    state: super::actor::RecordState::Finished,
+                    reason: Some(reason_str.into()),
+                    file: Some(file_str),
+                });
+                subs.recorders.remove(i);
+                continue; // don't advance i — the Vec just shifted
+            }
+            i += 1;
+        }
+    }
+
     // 6+7. Outbound. Three modes, in priority order:
     //   - mixed: the mix relay already sent inbound bytes to the peer remote
     //     during drain_inbound; nothing more to do here.

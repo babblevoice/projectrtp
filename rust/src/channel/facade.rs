@@ -27,34 +27,51 @@ struct EventPayload {
     event: Option<String>,
     state: Option<String>,
     stats: Option<super::actor::ChannelStats>,
+    /// File path for record events — the JS tests assert
+    /// `{ action: "record", file: "...", event: "..." }`.
+    file: Option<String>,
 }
 
 fn event_to_payload(ev: Event) -> EventPayload {
     match ev {
         Event::Close { reason, stats } => EventPayload {
             action: "close", reason: Some(reason), event: None, state: None,
-            stats: Some(stats),
+            stats: Some(stats), file: None,
         },
         Event::Play { state, reason } => EventPayload {
             action: "play", reason,
             event: Some(match state { PlayState::Start => "start", PlayState::End => "end" }.into()),
             state: None,
             stats: None,
+            file: None,
         },
-        Event::Record { state, reason } => EventPayload {
-            action: "record", reason,
-            event: Some(match state { RecordState::Recording => "recording", RecordState::Finished => "finished" }.into()),
-            state: None,
-            stats: None,
-        },
+        Event::Record { state, reason, file } => {
+            // C++ surfaces both recording and finish transitions with a
+            // compound event name — `recording.abovepower` when a
+            // power-gated recorder starts writing, `finished.belowpower` /
+            // `finished.requested` / `finished.channelclosed` etc on stop.
+            // A bare `recording` (no reason) is the immediate-active case.
+            let prefix = match state {
+                RecordState::Recording => "recording",
+                RecordState::Finished => "finished",
+            };
+            let event = match &reason {
+                Some(r) => format!("{prefix}.{r}"),
+                None => prefix.to_string(),
+            };
+            EventPayload {
+                action: "record", reason, event: Some(event), state: None,
+                stats: None, file,
+            }
+        }
         Event::TelephoneEvent { digit } => EventPayload {
             action: "telephone-event", reason: None, event: Some(digit.to_string()), state: None,
-            stats: None,
+            stats: None, file: None,
         },
         Event::Mix { state } => EventPayload {
             // Tests read `d.event` for "start" / "finished", not `d.state`.
             action: "mix", reason: None, event: Some(state), state: None,
-            stats: None,
+            stats: None, file: None,
         },
     }
 }
@@ -193,8 +210,56 @@ impl ChannelObject {
         let (ack, _) = tokio::sync::oneshot::channel();
         self.handle.cmd.try_send(super::commands::Command::Play { cfg: spec, ack }).is_ok()
     }
-    #[napi] pub async fn record(&self)     -> Result<()> { Ok(()) }
-    #[napi] pub async fn playrecord(&self) -> Result<()> { Ok(()) }
+
+    /// Start (or finish / pause) a recording. Shapes:
+    /// - `{ file, numchannels, maxduration, startabovepower, ... }` — start
+    /// - `{ file, finish: true }` — finalize the recorder at that file path
+    /// - `{ file, pause: true|false }` — pause/resume the recorder
+    /// Matches the C++ `projectrtpchannelrecorder.cpp` JS API. Multiple
+    /// recorders (different `file`s) can coexist on one channel.
+    #[napi]
+    pub fn record(&self, params: Object) -> bool {
+        let file = params.get_named_property::<String>("file").ok().filter(|s| !s.is_empty());
+        if params.get_named_property::<bool>("finish").ok() == Some(true) {
+            let Some(file) = file else { return false; };
+            return self.handle.cmd.try_send(super::commands::Command::RecordFinish {
+                file: std::path::PathBuf::from(file),
+            }).is_ok();
+        }
+        if let Some(paused) = params.get_named_property::<bool>("pause").ok() {
+            let Some(file) = file else { return false; };
+            return self.handle.cmd.try_send(super::commands::Command::RecordSetPaused {
+                file: std::path::PathBuf::from(file),
+                paused,
+            }).is_ok();
+        }
+        let Some(cfg) = parse_recorder(&params) else { return false; };
+        let (ack, _) = tokio::sync::oneshot::channel();
+        self.handle.cmd.try_send(super::commands::Command::Record { cfg, ack }).is_ok()
+    }
+
+    /// Play a prompt then record; optionally barge-in on loud inbound audio.
+    /// JS shape: `{ soup: <soundsoup>, record: <record params>, interrupt,
+    /// bargeinpower, bargeinpoweraveragepackets }`.
+    #[napi]
+    pub fn playrecord(&self, params: Object) -> bool {
+        let Ok(soup_obj) = params.get_named_property::<Object>("soup") else { return false; };
+        let Some(player) = parse_soundsoup(&soup_obj) else { return false; };
+        let Ok(rec_obj) = params.get_named_property::<Object>("record") else { return false; };
+        let Some(recorder) = parse_recorder(&rec_obj) else { return false; };
+        let interrupt = params.get_named_property::<bool>("interrupt").ok().unwrap_or(false);
+        let bargein_power = params.get_named_property::<i32>("bargeinpower").ok();
+        let bargein_packets = params.get_named_property::<u32>("bargeinpoweraveragepackets").ok();
+        let cfg = super::commands::PlayRecordConfig {
+            player,
+            recorder,
+            interrupt,
+            bargein_power,
+            bargein_packets,
+        };
+        let (ack, _) = tokio::sync::oneshot::channel();
+        self.handle.cmd.try_send(super::commands::Command::PlayRecord { cfg, ack }).is_ok()
+    }
 
     /// 2-channel mix via a byte-relay (matches C++ mix2). n-way mix using
     /// a proper MixGroup is a follow-up — this function handles the 2-channel
@@ -330,6 +395,32 @@ fn parse_soundsoup(params: &Object) -> Option<super::player::SoundSoupSpec> {
     Some(super::player::SoundSoupSpec { files, overall_loops, interrupt })
 }
 
+/// Parse a JS `record` / `playrecord.record` params object into a
+/// `RecorderConfig`. Returns None for the common failure mode (no `file`)
+/// — the facade turns that into `record()`→false which tests assert.
+fn parse_recorder(params: &Object) -> Option<super::recorder::RecorderConfig> {
+    let file: String = params.get_named_property::<String>("file").ok()?;
+    if file.is_empty() { return None; }
+    // Default 2 channels matches the C++ recorder default — test/interface/
+    // projectrtprecord.js "record to file" asserts channelcount === 2.
+    let num_channels = params
+        .get_named_property::<u32>("numchannels")
+        .ok()
+        .map(|v| v as u16)
+        .unwrap_or(2);
+    Some(super::recorder::RecorderConfig {
+        file: std::path::PathBuf::from(file),
+        num_channels,
+        sample_rate: 8000,
+        max_duration_ms: params.get_named_property::<u32>("maxduration").ok().map(|v| v as u64),
+        start_above_power: params.get_named_property::<i32>("startabovepower").ok(),
+        finish_below_power: params.get_named_property::<i32>("finishbelowpower").ok(),
+        max_since_start_power: params.get_named_property::<i32>("maxsincestartpower").ok(),
+        min_duration_ms: params.get_named_property::<u32>("minduration").ok().map(|v| v as u64),
+        power_averaging_packets: params.get_named_property::<u32>("poweraveragepackets").ok(),
+    })
+}
+
 fn extract_remote_addr(params: &Object) -> Option<SocketAddr> {
     let remote: Object = params.get_named_property::<Object>("remote").ok()?;
     let address: String = remote.get_named_property::<String>("address").ok()?;
@@ -401,6 +492,10 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
             if let Some(s) = ev.state {
                 let v: napi::JsString = env.create_string(&s)?;
                 obj.set_named_property("state", v)?;
+            }
+            if let Some(f) = ev.file {
+                let v: napi::JsString = env.create_string(&f)?;
+                obj.set_named_property("file", v)?;
             }
             if let Some(stats) = ev.stats {
                 let mut s = env.create_object()?;

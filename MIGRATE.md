@@ -5,6 +5,33 @@ This document tracks the in-flight port of the projectrtp C++ NAPI addon
 builds and is the canonical reference for behavior; the tests in `test/` are
 the shared acceptance criteria.
 
+## Whilst testing
+
+Build the test image:
+```bash
+docker build -f Dockerfile.rust --target test -t projectrtp-test .
+```
+
+Build a production version
+```bash
+docker build -f Dockerfile.rust --target app -t projectrtp-app .
+```
+
+Run the full test suite:                                                                                                                                         
+
+```bash
+docker run --rm projectrtp-test
+
+# or just a file
+docker run --rm projectrtp-test \
+  ./node_modules/mocha/bin/_mocha \
+  test/interface/projectrtpserver.js \
+  test/interface/projectrtpplayrecord.js \
+  test/interface/projectrtprecord.js \
+  --exit
+
+```
+
 ## Migration strategy
 
 - **Behavior-preserving, not line-by-line.** The tests in `test/interface/`
@@ -109,14 +136,14 @@ graph LR
 | `projectrtpnodemain.cpp/.h` | `lib.rs` | stub | `run()` / `shutdown()` are no-ops; `stats()` returns a placeholder. Real counters pending. |
 | `projectrtpchannel.cpp/.h` | `channel/{facade,actor,commands,state,tick,rtp,jitter}.rs` + `channel/dtmf.rs` | in progress | Largest unit; split by concern. See `channel/mod.rs` header for port order. |
 | `projectrtpchannelmux.cpp/.h` | `channel/mixer.rs` (+ 2-chan fast path in `channel/tick.rs`) | partial | 2-channel byte relay works. N-way sum/sub pipeline is shape-only; codec-level decode/encode for mix is TODO. |
-| `projectrtpchannelrecorder.cpp/.h` | `channel/recorder.rs` | partial | WAV writer lands; power/pause/finish plumbing in progress. |
+| `projectrtpchannelrecorder.cpp/.h` | `channel/recorder.rs` | done (modulo tuning) | WAV writer, pause/resume, `finish` requests, power-gated start (`startabovepower`) and below-power finish (`finishbelowpower`) with RMS + MA and 100-packet channel warm-up. Multiple concurrent recorders via `Vec<Recorder>` in `Subsystems`. One test remains (dual recording) off by ~130 ms of audio — likely the C++ DC-filter biases RMS lower. |
 | `projectrtppacket.cpp/.h` | `channel/rtp.rs` | done (getters/setters) | Backing buffer is `BytesMut`; free-function parsers work on `&[u8]`. |
 | `projectrtpbuffer.cpp/.h` | `channel/jitter.rs`, `rtpbuffer.rs` | done | `jitter.rs` owns the reorder logic; `rtpbuffer.rs` is the std-level ring container. |
 | `projectrtpringbuffer.h` | folded into `channel/recorder.rs` / `soundfile.rs` | done | Tiny header — inlined where used. |
 | `projectrtpcodecx.cpp/.h` | `codec.rs` | partial | G.711 transcode is pure Rust (port of spandsp tables). G.722 / iLBC / L16 still FFI. |
 | `projectrtpfirfilter.cpp/.h` | `firfilter.rs` | done | |
 | `projectrtpsoundfile.cpp/.h` | `soundfile.rs` | partial | Read/write WAV headers, raw PCM. SoundSoup playback overlap is in `channel/player.rs`. |
-| `projectrtpsoundsoup.cpp/.h` | `channel/player.rs` | partial | JSON parsing lives in `channel/facade.rs::parse_soundsoup`; player is created on `Command::Play` and dropped on DTMF interrupt. Tick-level audio output (send player frames as RTP) is still TODO — needed to pass the full `projectrtpsound.js` suite but not the DTMF-interrupt tests. |
+| `projectrtpsoundsoup.cpp/.h` | `channel/player.rs` | partial | JSON parsing in `channel/facade.rs::parse_soundsoup`. Player is created on `Command::Play` / `Command::PlayRecord`, advanced one frame per tick, and drops on DTMF interrupt, barge-in (RMS > `bargeinpower` via `Subsystems::bargein`), or natural end (emits `play/end reason=completed`). Outbound player audio over RTP is still TODO — needed to pass the full `projectrtpsound.js` suite but not the `playrecord` suite (which passes 5/5). |
 | `projectrtprawsound.cpp/.h` | inlined in `soundfile.rs` / `channel/recorder.rs` | done | Standalone class wasn't needed once recorders had WAV writers. |
 | `projectrtpsrtp.cpp/.h` | `channel/srtp_ctx.rs` | stub | libsrtp2 FFI placeholder. DTLS-SRTP wiring lands with the DTLS handshake. |
 | `projectrtpstun.cpp/.h` | `stun.rs` | done (for the 2-party ICE use case) | Classification, HMAC-SHA1 integrity, CRC-32 fingerprint, XOR-MAPPED-ADDRESS. Local/remote ICE passwords threaded through `ChannelState` (`local_icepwd` / `remote_icepwd`); tick.rs intercepts inbound STUN and replies before the packet reaches the jitter buffer. |

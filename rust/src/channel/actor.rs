@@ -38,7 +38,7 @@ pub struct ChannelStats {
 pub enum Event {
     Close { reason: String, stats: ChannelStats },
     Play { state: PlayState, reason: Option<String> },
-    Record { state: RecordState, reason: Option<String> },
+    Record { state: RecordState, reason: Option<String>, file: Option<String> },
     TelephoneEvent { digit: char },
     Mix { state: String },
 }
@@ -100,7 +100,16 @@ pub fn spawn_with_sockets(
 #[derive(Default)]
 pub struct Subsystems {
     pub player: Option<Player>,
-    pub recorder: Option<Recorder>,
+    /// Multiple simultaneous recorders — one ongoing + one power-gated is the
+    /// primary use case (see test/interface/projectrtprecord.js "dual
+    /// recording"). Keyed informally by `recorder.file()`; same path replaces
+    /// the existing recorder, different path coexists.
+    pub recorders: Vec<Recorder>,
+    /// Barge-in detector for `playrecord`. When the player is playing and
+    /// inbound RMS crosses `power_threshold`, the player is interrupted and
+    /// a `play/end reason=interrupted` event fires. Cleared when the player
+    /// ends (naturally or via interrupt).
+    pub bargein: Option<BargeInState>,
     /// JS-initiated dtmf via `channel.dtmf(...)` — targets state.remote_addr.
     pub dtmf_send: DtmfSender,
     /// Mix-relay dtmf — when a digit is detected on inbound while mixed, a
@@ -109,6 +118,11 @@ pub struct Subsystems {
     /// burst rather than passing raw packets through.
     pub dtmf_relay: DtmfSender,
     pub dtmf_recv: DtmfReceiver,
+}
+
+pub struct BargeInState {
+    pub power_threshold: i32,
+    pub power_ma: crate::firfilter::MaFilter,
 }
 
 async fn run(mut state: ChannelState, mut cmds: mpsc::Receiver<Command>, events: Arc<dyn EventSink>) {
@@ -144,12 +158,19 @@ async fn run(mut state: ChannelState, mut cmds: mpsc::Receiver<Command>, events:
         }
     }
 
-    // Final flush — let the recorder finalize its WAV, drain any in-flight
-    // close-side bookkeeping. WavWriter Drop runs when `subs` falls out of
-    // scope, so the header is finalized regardless.
+    // Final flush — let recorders finalize their WAV files and surface
+    // per-file `record/finished.channelclosed` before the `close` event.
+    // WavWriter's Drop finalizes headers regardless, but we emit JS events
+    // before the Close payload so subscribers see the expected order.
     let reason = closing.unwrap_or_default();
-    if let Some(mut rec) = subs.recorder.take() {
+    for mut rec in subs.recorders.drain(..) {
+        let file_str = rec.file().to_string_lossy().into_owned();
         rec.close(FinishReason::ChannelClosed);
+        events.post(Event::Record {
+            state: RecordState::Finished,
+            reason: Some("channelclosed".into()),
+            file: Some(file_str),
+        });
     }
     // If the channel was still in a mix at close time, emit `mix/finished`
     // before the `close` event. Matches C++ teardown ordering.
@@ -228,14 +249,119 @@ async fn handle_command(
             None
         }
 
-        Command::Record { cfg: _, ack } => {
-            // TODO: build RecorderConfig from cfg and open Recorder.
-            events.post(Event::Record { state: RecordState::Recording, reason: None });
+        Command::Record { cfg, ack } => {
+            let file_str = cfg.file.to_string_lossy().into_owned();
+            let is_gated = cfg.start_above_power.is_some();
+            match Recorder::open(cfg.clone()).await {
+                Ok(rec) => {
+                    // If a recorder already exists for this exact file path,
+                    // replace it with an implicit "channelclosed" reason —
+                    // the old writer's Drop finalizes its header, and JS
+                    // observes a finished event followed by the new recording.
+                    if let Some(idx) = subs.recorders.iter().position(|r| r.file() == rec.file()) {
+                        let mut old = subs.recorders.remove(idx);
+                        old.close(FinishReason::ChannelClosed);
+                        events.post(Event::Record {
+                            state: RecordState::Finished,
+                            reason: Some("channelclosed".into()),
+                            file: Some(file_str.clone()),
+                        });
+                    }
+                    subs.recorders.push(rec);
+                    // A power-gated recorder stays silent until the gate opens;
+                    // the tick emits `recording.abovepower` on that transition.
+                    // Matches C++ event ordering in projectrtprecord.js.
+                    if !is_gated {
+                        events.post(Event::Record {
+                            state: RecordState::Recording,
+                            reason: None,
+                            file: Some(file_str),
+                        });
+                    }
+                }
+                Err(e) => {
+                    events.post(Event::Record {
+                        state: RecordState::Finished,
+                        reason: Some(format!("open-failed: {e}")),
+                        file: Some(file_str),
+                    });
+                }
+            }
             let _ = ack.send(());
             None
         }
 
-        Command::PlayRecord { cfg: _, ack } => {
+        Command::RecordFinish { file } => {
+            // JS targeted one specific recorder by file path.
+            if let Some(idx) = subs.recorders.iter().position(|r| r.file() == file) {
+                let mut rec = subs.recorders.remove(idx);
+                let file_str = rec.file().to_string_lossy().into_owned();
+                rec.close(FinishReason::Requested);
+                events.post(Event::Record {
+                    state: RecordState::Finished,
+                    reason: Some("requested".into()),
+                    file: Some(file_str),
+                });
+            }
+            None
+        }
+
+        Command::RecordSetPaused { file, paused } => {
+            if let Some(rec) = subs.recorders.iter_mut().find(|r| r.file() == file) {
+                if paused { rec.pause(); } else { rec.resume(); }
+            }
+            None
+        }
+
+        Command::PlayRecord { cfg, ack } => {
+            if subs.player.is_some() {
+                subs.player = None;
+                events.post(Event::Play { state: PlayState::End, reason: Some("new".into()) });
+            }
+            subs.player = Some(Player::new(cfg.player));
+            events.post(Event::Play { state: PlayState::Start, reason: Some("new".into()) });
+
+            // Barge-in setup. `interrupt:true` + `bargeinpower` is the
+            // trigger — without both, we never interrupt the player from
+            // loud inbound audio (DTMF interrupt is separate).
+            if cfg.interrupt {
+                if let Some(threshold) = cfg.bargein_power {
+                    let mut ma = crate::firfilter::MaFilter::new();
+                    if let Some(n) = cfg.bargein_packets {
+                        ma.reset(n as usize);
+                    }
+                    subs.bargein = Some(BargeInState {
+                        power_threshold: threshold,
+                        power_ma: ma,
+                    });
+                }
+            }
+
+            let file_str = cfg.recorder.file.to_string_lossy().into_owned();
+            let is_gated = cfg.recorder.start_above_power.is_some();
+            match Recorder::open(cfg.recorder).await {
+                Ok(rec) => {
+                    if let Some(idx) = subs.recorders.iter().position(|r| r.file() == rec.file()) {
+                        let mut old = subs.recorders.remove(idx);
+                        old.close(FinishReason::ChannelClosed);
+                    }
+                    subs.recorders.push(rec);
+                    if !is_gated {
+                        events.post(Event::Record {
+                            state: RecordState::Recording,
+                            reason: None,
+                            file: Some(file_str),
+                        });
+                    }
+                }
+                Err(e) => {
+                    events.post(Event::Record {
+                        state: RecordState::Finished,
+                        reason: Some(format!("open-failed: {e}")),
+                        file: Some(file_str),
+                    });
+                }
+            }
             let _ = ack.send(());
             None
         }

@@ -37,14 +37,9 @@ pub enum DtlsSetup { Active, Passive }
 /// facade now parses at the JS boundary so actors never see unparsed input.
 pub type SoundSoup = super::player::SoundSoupSpec;
 
-#[derive(Debug, Clone)]
-pub struct RecordConfig {
-    pub filename: String,
-    pub num_channels: u16,
-    pub max_duration_ms: Option<u64>,
-    pub power_threshold: Option<i32>,
-    pub power_packets: Option<u32>,
-}
+/// Same struct the recorder subsystem uses — the facade does all JS→Rust
+/// parsing, so Command payloads are already fully-typed.
+pub type RecordConfig = super::recorder::RecorderConfig;
 
 #[derive(Debug, Clone)]
 pub struct PlayRecordConfig {
@@ -77,6 +72,12 @@ pub enum Command {
     Remote { cfg: RemoteConfig, ack: Ack },
     Play { cfg: SoundSoup, ack: Ack },
     Record { cfg: RecordConfig, ack: Ack },
+    /// `channel.record({ finish: true, file: "..." })` — finalize the named
+    /// recorder (multiple can coexist, keyed by file path).
+    RecordFinish { file: std::path::PathBuf },
+    /// `channel.record({ pause: true, file: "..." })` — pause/resume toggle.
+    /// `resume=true` flips from Paused to Active; `resume=false` pauses.
+    RecordSetPaused { file: std::path::PathBuf, paused: bool },
     PlayRecord { cfg: PlayRecordConfig, ack: Ack },
     Dtmf { digits: String },
     Echo { enabled: bool },
