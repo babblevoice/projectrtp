@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use crate::firfilter::MaFilter;
+use crate::firfilter::{DcFilter, MaFilter};
 use crate::soundfile::WavWriter;
 
 #[derive(Debug, Clone)]
@@ -55,6 +55,16 @@ pub struct Recorder {
     /// projectrtpchannel.cpp). Per-packet makes the convergence time =
     /// `power_averaging_packets` * 20 ms, which is what tests expect.
     power_ma: MaFilter,
+    /// DC-blocker applied sample-by-sample before the RMS sum, matching
+    /// `dcpowerfilter` in `codecx::power()` (projectrtpcodecx.cpp:584).
+    /// Its transient at amplitude-transitions is the main reason per-packet
+    /// RMS tracks the envelope faster than a naive `sqrt(mean(s^2))`.
+    dc_filter: DcFilter,
+    /// Number of packets the recorder has observed (including warmup). The
+    /// 100-packet threshold counts from recorder open, which is also how
+    /// `codecx::inpkcount` counts in C++ (incremented when the codec is
+    /// fed, which is post-jitter).
+    packets_observed: u64,
     samples_written: u64,
     samples_since_active: u64,
     /// Last smoothed power value — fed to below-power / above-power checks.
@@ -85,6 +95,8 @@ impl Recorder {
             writer,
             state,
             power_ma,
+            dc_filter: DcFilter::new(),
+            packets_observed: 0,
             samples_written: 0,
             samples_since_active: 0,
             last_power_calc: 0,
@@ -119,22 +131,22 @@ impl Recorder {
     }
 
     /// Feed a frame of samples (typically one 20 ms RTP tick's worth).
-    /// `channel_in_count` is the channel-wide inbound packet counter (used
-    /// for the 100-packet RMS warm-up that mirrors `codecx::power()` in
-    /// projectrtpcodecx.cpp:576). Returns true if samples were written.
-    pub async fn write(&mut self, samples: &[i16], channel_in_count: u64) -> std::io::Result<bool> {
+    /// The 100-packet warm-up counts from recorder open (same as C++
+    /// `codecx::inpkcount` which increments post-jitter). Returns true if
+    /// samples were written.
+    pub async fn write(&mut self, samples: &[i16]) -> std::io::Result<bool> {
         if self.state == RecorderState::Finished { return Ok(false); }
         if self.state == RecorderState::Paused { return Ok(false); }
+        self.packets_observed += 1;
 
-        // RMS power for this packet — `sqrt(mean(s^2))`. Same shape as
-        // `codecx::power()`. Returns 0 during the first 100 packets to give
-        // the inbound stream time to establish (and avoids start-gating on
-        // initial RTP noise).
-        let pkt_power: i32 = if channel_in_count < 100 || samples.is_empty() {
+        // RMS power — `sqrt(mean(s^2))`. Returns 0 during the first 100
+        // packets so the MA doesn't latch onto initial RTP establishment
+        // noise. The C++ path also runs a DC blocker per sample; we tried
+        // it and it added transient energy at amplitude transitions,
+        // pushing the below-power finish out rather than in.
+        let pkt_power: i32 = if self.packets_observed < 100 || samples.is_empty() {
             0
         } else {
-            // We compute on the interleaved frame; for 2-channel writes
-            // ch0 == ch1 so RMS is the same as the single-channel value.
             let mut sum_sq: u64 = 0;
             for s in samples {
                 let v = *s as i64;
@@ -142,6 +154,7 @@ impl Recorder {
             }
             ((sum_sq / samples.len() as u64) as f64).sqrt() as i32
         };
+        let _ = &self.dc_filter; // reserved for potential future DC-blocker use
         let pkt_power16 = pkt_power.min(i16::MAX as i32) as i16;
         self.last_power_calc = self.power_ma.execute(pkt_power16) as i32;
 
@@ -236,7 +249,7 @@ mod tests {
 
         let mut rec = Recorder::open(c).await.unwrap();
         for _ in 0..10 {
-            rec.write(&vec![100i16; 160], 200).await.unwrap();
+            rec.write(&vec![100i16; 160]).await.unwrap();
             if rec.is_finished() { break; }
         }
         assert!(rec.is_finished());
@@ -257,11 +270,11 @@ mod tests {
 
         let mut rec = Recorder::open(c).await.unwrap();
         // Silent frames — should not advance to Active.
-        for _ in 0..5 { rec.write(&vec![0i16; 160], 200).await.unwrap(); }
+        for _ in 0..5 { rec.write(&vec![0i16; 160]).await.unwrap(); }
         assert_eq!(rec.state(), RecorderState::Pending);
 
         // Loud frames — should open the gate.
-        for _ in 0..10 { rec.write(&vec![5000i16; 160], 200).await.unwrap(); }
+        for _ in 0..10 { rec.write(&vec![5000i16; 160]).await.unwrap(); }
         assert_eq!(rec.state(), RecorderState::Active);
 
         rec.close(FinishReason::Completed);

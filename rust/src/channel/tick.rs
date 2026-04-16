@@ -125,7 +125,7 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
                 } else {
                     samples.clone()
                 };
-                let _ = rec.write(&frame, state.in_count).await;
+                let _ = rec.write(&frame).await;
             }
             let new_state = rec.state();
             let file_str = rec.file().to_string_lossy().into_owned();
