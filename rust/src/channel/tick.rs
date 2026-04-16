@@ -65,14 +65,19 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     // N-way mix group path: pull (summed - self), encode, send. Only sends
     // when something fresh is in the group this tick — matches C++ which
     // produces an output packet only when there's a source packet to mix.
-    if state.mix_peer_remote.is_some() {
+    if let Some(peer_remote) = state.mix_peer_remote {
         // 2-channel mix relay handles audio per-packet on receive. DTMF
-        // though must still flow: channel.dtmf() during a mix sends events
-        // to *this* channel's remote (not the peer's), so DTMF can be
-        // directed at one end of a bridge independently. Matches C++.
-        if state.direction.send && state.remote_addr.is_some() {
-            if let Some((event, payload)) = subs.dtmf_send.next_event() {
-                send_dtmf(state, event, &payload).await;
+        // splits into two streams while mixed:
+        //   - dtmf_send: JS-initiated, goes to *this* channel's remote.
+        //   - dtmf_relay: inbound-detected regenerated burst, goes to peer.
+        if state.direction.send {
+            if state.remote_addr.is_some() {
+                if let Some((_event, payload)) = subs.dtmf_send.next_event() {
+                    send_dtmf_to(state, state.remote_addr.unwrap(), &payload).await;
+                }
+            }
+            if let Some((_event, payload)) = subs.dtmf_relay.next_event() {
+                send_dtmf_to_with_pt(state, peer_remote, state.mix_peer_rfc2833_pt, &payload).await;
             }
         }
     } else if state.direction.send && state.remote_addr.is_some() {
@@ -149,8 +154,26 @@ async fn classify_and_route(
     if let Some(peer_remote) = state.mix_peer_remote {
         let in_pt = rtp::payload_type(pkt);
         // RFC 2833 telephone events pass through transparently regardless
-        // of codec — they're a separate PT and have no PCM payload.
-        let pass_through = in_pt == state.mix_peer_pt || in_pt == state.rfc2833_pt;
+        // of codec — they're a separate PT and have no PCM payload. We also
+        // decode locally so the channel's own JS callback sees the digit
+        // via a telephone-event.
+        if in_pt == state.rfc2833_pt {
+            let sn = rtp::sequence_number(pkt);
+            let payload = &pkt[rtp::RTP_FIXED_HEADER_LEN..];
+            if let Some(digit) = subs.dtmf_recv.feed(sn, payload) {
+                // Local event: channel's JS callback receives "telephone-event".
+                state.pending_events.push(Event::TelephoneEvent { digit });
+                // Mix relay: regenerate a full burst for the peer rather
+                // than forwarding the raw 4-ish detected packets. Matches
+                // the C++ mux DTMF regeneration behavior.
+                subs.dtmf_relay.enqueue(&digit.to_string());
+            }
+            // Drop the raw DTMF inbound here — the relay will send a clean
+            // burst instead.
+            state.in_count += 1;
+            return;
+        }
+        let pass_through = in_pt == state.mix_peer_pt;
         let send_ok = if pass_through {
             state.rtp_sock.send_to(pkt, peer_remote).await.is_ok()
         } else {
@@ -206,11 +229,25 @@ async fn send_silence(state: &mut ChannelState) {
     }
 }
 
-async fn send_dtmf(state: &mut ChannelState, _event: u8, payload: &[u8; 4]) {
+async fn send_dtmf(state: &mut ChannelState, event: u8, payload: &[u8; 4]) {
     let Some(remote) = state.remote_addr else { return; };
+    send_dtmf_to(state, remote, payload).await;
+    let _ = event;
+}
+
+async fn send_dtmf_to(state: &mut ChannelState, remote: SocketAddr, payload: &[u8; 4]) {
+    send_dtmf_to_with_pt(state, remote, state.rfc2833_pt, payload).await;
+}
+
+async fn send_dtmf_to_with_pt(
+    state: &mut ChannelState,
+    remote: SocketAddr,
+    pt: u8,
+    payload: &[u8; 4],
+) {
     let mut out = RtpPacket::new();
     out.init(state.ssrc);
-    out.set_payload_type(state.rfc2833_pt);
+    out.set_payload_type(pt);
     out.set_sequence_number(state.out_sn);
     out.set_timestamp(state.out_ts);
     out.set_payload(payload);

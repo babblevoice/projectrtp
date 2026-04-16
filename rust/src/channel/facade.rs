@@ -52,7 +52,8 @@ fn event_to_payload(ev: Event) -> EventPayload {
             stats: None,
         },
         Event::Mix { state } => EventPayload {
-            action: "mix", reason: None, event: None, state: Some(state),
+            // Tests read `d.event` for "start" / "finished", not `d.state`.
+            action: "mix", reason: None, event: Some(state), state: None,
             stats: None,
         },
     }
@@ -99,6 +100,8 @@ pub struct ChannelObject {
     remote_addr: Option<SocketAddr>,
     /// Snapshot of the remote payload type from params.remote.codec.
     remote_pt: u8,
+    /// Snapshot of the remote rfc2833 PT (defaults to 101).
+    rfc2833_pt: u8,
 }
 
 #[napi]
@@ -188,10 +191,10 @@ impl ChannelObject {
     pub fn mix(&self, other: &ChannelObject) -> bool {
         let (Some(a), Some(b)) = (self.remote_addr, other.remote_addr) else { return false; };
         let _ = self.handle.cmd.try_send(super::commands::Command::SetMixPeer {
-            remote: Some(b), peer_pt: other.remote_pt,
+            remote: Some(b), peer_pt: other.remote_pt, peer_rfc2833_pt: other.rfc2833_pt,
         });
         let _ = other.handle.cmd.try_send(super::commands::Command::SetMixPeer {
-            remote: Some(a), peer_pt: self.remote_pt,
+            remote: Some(a), peer_pt: self.remote_pt, peer_rfc2833_pt: self.rfc2833_pt,
         });
         true
     }
@@ -199,7 +202,7 @@ impl ChannelObject {
     #[napi]
     pub fn unmix(&self, _other: Option<&ChannelObject>) -> bool {
         let _ = self.handle.cmd.try_send(super::commands::Command::SetMixPeer {
-            remote: None, peer_pt: 0,
+            remote: None, peer_pt: 0, peer_rfc2833_pt: 101,
         });
         true
     }
@@ -342,6 +345,7 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
         channel_icepwd: rand_icepwd(),
         remote_addr,
         remote_pt,
+        rfc2833_pt: rfc2833_pt.unwrap_or(101),
     })
 }
 

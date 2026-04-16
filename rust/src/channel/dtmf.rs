@@ -161,7 +161,6 @@ impl DtmfSender {
 pub struct DtmfReceiver {
     last_sn: Option<u16>,
     last_event: Option<u8>,
-    last_end_reported: bool,
 }
 
 impl Default for DtmfReceiver {
@@ -170,17 +169,15 @@ impl Default for DtmfReceiver {
 
 impl DtmfReceiver {
     pub fn new() -> Self {
-        Self { last_sn: None, last_event: None, last_end_reported: false }
+        Self { last_sn: None, last_event: None }
     }
 
     /// Feed an RFC 2833 payload with its RTP sequence number. Returns the
-    /// digit char when the event should be reported to JS.
+    /// digit char on the first packet of a new distinct event; duplicate
+    /// packets within the same burst (body repeats + end-of-event) return
+    /// None. Same digit seen after an unrelated digit counts as new.
     pub fn feed(&mut self, sn: u16, payload: &[u8]) -> Option<char> {
         let ev = decode_event(payload)?;
-
-        // Ignore duplicates from the same burst — we only report on first
-        // sight of a given event, and again on the first end-marker.
-        let is_new_event = self.last_event != Some(ev.event) || self.last_end_reported;
         let advanced = match self.last_sn {
             Some(last) => sn.wrapping_sub(last) < 0x8000 && sn != last,
             None => true,
@@ -188,15 +185,11 @@ impl DtmfReceiver {
         if !advanced { return None; }
         self.last_sn = Some(sn);
 
-        if is_new_event {
-            self.last_event = Some(ev.event);
-            self.last_end_reported = ev.end;
-            return event_to_char(ev.event);
+        if self.last_event == Some(ev.event) {
+            return None;
         }
-        if ev.end && !self.last_end_reported {
-            self.last_end_reported = true;
-        }
-        None
+        self.last_event = Some(ev.event);
+        event_to_char(ev.event)
     }
 }
 

@@ -94,7 +94,13 @@ pub fn spawn_with_sockets(
 pub struct Subsystems {
     pub player: Option<Player>,
     pub recorder: Option<Recorder>,
+    /// JS-initiated dtmf via `channel.dtmf(...)` — targets state.remote_addr.
     pub dtmf_send: DtmfSender,
+    /// Mix-relay dtmf — when a digit is detected on inbound while mixed, a
+    /// full RFC 2833 burst is enqueued here and emitted to mix_peer_remote.
+    /// Matches the C++ behavior where the mux side regenerates a proper
+    /// burst rather than passing raw packets through.
+    pub dtmf_relay: DtmfSender,
     pub dtmf_recv: DtmfReceiver,
 }
 
@@ -137,6 +143,12 @@ async fn run(mut state: ChannelState, mut cmds: mpsc::Receiver<Command>, events:
     let reason = closing.unwrap_or_default();
     if let Some(mut rec) = subs.recorder.take() {
         rec.close(FinishReason::ChannelClosed);
+    }
+    // If the channel was still in a mix at close time, emit `mix/finished`
+    // before the `close` event. Matches C++ teardown ordering.
+    if state.mix_peer_remote.is_some() {
+        state.mix_peer_remote = None;
+        events.post(Event::Mix { state: "finished".to_string() });
     }
     let stats = ChannelStats {
         in_count: state.in_count,
@@ -218,9 +230,19 @@ async fn handle_command(
             None
         }
 
-        Command::SetMixPeer { remote, peer_pt } => {
+        Command::SetMixPeer { remote, peer_pt, peer_rfc2833_pt } => {
+            let was_mixed = state.mix_peer_remote.is_some();
             state.mix_peer_remote = remote;
             state.mix_peer_pt = peer_pt;
+            state.mix_peer_rfc2833_pt = peer_rfc2833_pt;
+            // Surface mix/unmix transitions as events — tests assert the JS
+            // callback receives `mix:start` and `mix:finished` alongside
+            // media / close events.
+            if remote.is_some() && !was_mixed {
+                events.post(Event::Mix { state: "start".to_string() });
+            } else if remote.is_none() && was_mixed {
+                events.post(Event::Mix { state: "finished".to_string() });
+            }
             None
         }
     }

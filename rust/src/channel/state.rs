@@ -57,6 +57,9 @@ pub struct ChannelState {
     /// Outbound payload type for the peer when forwarding via mix relay. If
     /// it differs from the inbound PT we transcode (G.711 only).
     pub mix_peer_pt: u8,
+    /// RFC 2833 PT to stamp onto DTMF packets we relay to the peer. Peer
+    /// may have negotiated a different rfc2833pt to us.
+    pub mix_peer_rfc2833_pt: u8,
     /// Stateful transcoder (G.722 needs filter history) for the mix relay.
     pub transcoder: crate::codec::Transcoder,
 
@@ -110,6 +113,7 @@ impl ChannelState {
             remote_confirmed: false,
             mix_peer_remote: None,
             mix_peer_pt: 0,
+            mix_peer_rfc2833_pt: 101,
             transcoder: crate::codec::Transcoder::new(),
             remote_pt: 0,
             tick_count: 0,
