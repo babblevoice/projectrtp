@@ -1,16 +1,17 @@
 // ChannelState — the single owner of per-channel state.
-//
-// The actor task holds `Ownership` (Local / Mixed / Closing); when Local, it
-// holds a `Box<ChannelState>` that `tick::run()` mutates directly. When a
-// channel joins a mix, the state moves into the MixGroup actor. See the
-// channel-port design note for the rationale.
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
+use parking_lot::Mutex as PLMutex;
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use super::actor::Event;
 use super::commands::{ChannelId, Direction, RemoteConfig};
+use super::dtls_session::SrtpKeyingMaterial;
 use super::jitter::JitterBuffer;
 use super::rtp::RtpPacket;
 
@@ -20,73 +21,54 @@ pub struct CloseInfo {
     pub reason: String,
 }
 
-/// Minimal, flesh out as tick.rs / player.rs / recorder.rs land.
 pub struct ChannelState {
     pub id: ChannelId,
     pub local_addr: SocketAddr,
-    pub remote_addr: Option<SocketAddr>,
+    pub remote_addr: Arc<PLMutex<Option<SocketAddr>>>,
     pub remote: Option<RemoteConfig>,
     pub direction: Direction,
 
-    // Sockets owned for the channel's lifetime.
-    pub rtp_sock: UdpSocket,
+    pub rtp_sock: Arc<UdpSocket>,
     pub rtcp_sock: UdpSocket,
 
-    // Inbound path.
-    pub jitter: JitterBuffer,
+    pub jitter: Arc<PLMutex<JitterBuffer>>,
 
-    // Outbound path — packet pool (each BytesMut == RTP_MAX_LENGTH capacity).
-    // Pool wiring lands alongside tick.rs; for now just a fixed Vec of reusable
-    // buffers so the shape is committed.
     pub out_pool: Vec<RtpPacket>,
 
-    // RTP send-side state.
     pub out_sn: u16,
     pub out_ts: u32,
     pub ssrc: u32,
 
-    // Echo / recv-confirmed / remote-confirmed flags — filled as features land.
     pub echo: bool,
     pub remote_confirmed: bool,
 
-    /// Stateful transcoder (G.722 needs filter history).
     pub transcoder: crate::codec::Transcoder,
-
-    /// Outbound payload type for our own remote (set from params.remote.codec).
     pub remote_pt: u8,
 
-    // Tick counters — for idle timeout, stats.
     pub tick_count: u64,
 
-    // Stats reported in the close event.
-    pub in_count: u64,
+    pub in_count: Arc<AtomicU64>,
     pub in_dropped: u64,
     pub in_skip: u64,
     pub out_count: u64,
 
-    // RFC 2833 payload type — defaults to 101 unless the remote config
-    // negotiates a different one.
     pub rfc2833_pt: u8,
-
-    // Events the tick wants the actor to forward to the JS callback. Drained
-    // after each tick.run().
     pub pending_events: Vec<Event>,
-
-    // Close bookkeeping (populated by Command::Close).
     pub close_info: Option<CloseInfo>,
-
-    /// Port-pool reservation. `Some` when the channel's RTP/RTCP pair came
-    /// from the managed pool; drops back into the pool when the actor ends
-    /// and state falls out of scope. `None` when ephemeral ports were used
-    /// (pool uninitialized — primarily tests that don't call `run({ports})`).
     pub port_reservation: Option<crate::portpool::PortReservation>,
 
-    /// ICE password for this side of the channel (our own). Used to verify
-    /// MESSAGE-INTEGRITY on inbound STUN Binding Requests and to sign
-    /// Binding Responses we emit. Empty string disables STUN handling.
-    pub local_icepwd: String,
-    /// Peer's ICE password — informational only today (see `RemoteConfig`).
+    pub local_icepwd: Arc<PLMutex<String>>,
     pub remote_icepwd: String,
+
+    // Recv loop — runs for the channel's lifetime, reads socket continuously.
+    pub recv_cancel: Option<CancellationToken>,
+
+    // DTLS
+    pub dtls_inbound_tx: Arc<PLMutex<Option<mpsc::Sender<Vec<u8>>>>>,
+    pub dtls_result_rx: Option<tokio::sync::oneshot::Receiver<Option<super::dtls_session::HandshakeResult>>>,
+    pub srtp_keys: Option<SrtpKeyingMaterial>,
+    pub srtp_encrypt: Option<webrtc_srtp::context::Context>,
+    pub srtp_decrypt: Option<webrtc_srtp::context::Context>,
 }
 
 impl ChannelState {
@@ -100,12 +82,12 @@ impl ChannelState {
         Self {
             id,
             local_addr,
-            remote_addr: None,
+            remote_addr: Arc::new(PLMutex::new(None)),
             remote: None,
             direction: Direction::default(),
-            rtp_sock,
+            rtp_sock: Arc::new(rtp_sock),
             rtcp_sock,
-            jitter: JitterBuffer::new(32, 10),
+            jitter: Arc::new(PLMutex::new(JitterBuffer::new(32, 10))),
             out_pool: Vec::new(),
             out_sn: 0,
             out_ts: 0,
@@ -115,7 +97,7 @@ impl ChannelState {
             transcoder: crate::codec::Transcoder::new(),
             remote_pt: 0,
             tick_count: 0,
-            in_count: 0,
+            in_count: Arc::new(AtomicU64::new(0)),
             in_dropped: 0,
             in_skip: 0,
             out_count: 0,
@@ -123,8 +105,22 @@ impl ChannelState {
             pending_events: Vec::new(),
             close_info: None,
             port_reservation: None,
-            local_icepwd: String::new(),
+            local_icepwd: Arc::new(PLMutex::new(String::new())),
             remote_icepwd: String::new(),
+            recv_cancel: None,
+            dtls_inbound_tx: Arc::new(PLMutex::new(None)),
+            dtls_result_rx: None,
+            srtp_keys: None,
+            srtp_encrypt: None,
+            srtp_decrypt: None,
         }
+    }
+
+    pub fn get_remote_addr(&self) -> Option<SocketAddr> {
+        *self.remote_addr.lock()
+    }
+
+    pub fn set_remote_addr(&self, addr: SocketAddr) {
+        *self.remote_addr.lock() = Some(addr);
     }
 }

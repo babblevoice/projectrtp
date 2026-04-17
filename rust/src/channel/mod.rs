@@ -25,6 +25,7 @@ pub mod jitter;
 pub mod mixer;
 pub mod player;
 pub mod recorder;
+pub mod recv_loop;
 pub mod rtp;
 pub mod srtp_ctx;
 pub mod state;

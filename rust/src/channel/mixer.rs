@@ -26,7 +26,6 @@
 //   Phase 5: drain `state.pending_events` through each member's EventSink.
 
 use std::collections::HashMap;
-use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -41,7 +40,6 @@ use super::player::Player;
 use super::recorder::{FinishReason, Recorder, RecorderState};
 use super::rtp::{self, RtpPacket};
 use super::state::ChannelState;
-use crate::stun;
 
 pub const MIX_FRAME_SAMPLES: usize = 160;
 
@@ -177,23 +175,11 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
         }
     }
 
-    // ----- Phase 1: drain inbound into jitter. -----
+    // No socket drain — the recv_loop continuously reads and pushes
+    // RTP/DTMF into jitter. DTMF is classified at pop time (Phase 2).
     let mut dtmf_broadcast: Vec<(ChannelId, char)> = Vec::new();
     for m in members.values_mut() {
         m.state.tick_count += 1;
-        let digits = drain_all_inbound(m).await;
-        for d in digits {
-            dtmf_broadcast.push((m.state.id, d));
-        }
-    }
-
-    // Fan out detected DTMF digits to peers' relay queues.
-    for (origin, digit) in &dtmf_broadcast {
-        let digit_str = digit.to_string();
-        for (&id, m) in members.iter_mut() {
-            if id == *origin { continue; }
-            m.subs.dtmf_relay.enqueue(&digit_str);
-        }
     }
 
     // ----- Phase 2: pop jitter, decode, cache frame, recorder, player, barge-in. -----
@@ -202,7 +188,31 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
         m.frame_present = false;
         m.inbound_this_tick = false;
 
-        let popped = m.state.jitter.pop();
+        let popped = m.state.jitter.lock().pop();
+
+        // DTMF at pop time — recv_loop pushes all RTP/DTMF into jitter.
+        if let Some(ref pk) = popped {
+            let pt = pk.payload_type();
+            if pt == m.state.rfc2833_pt {
+                let sn = pk.sequence_number();
+                let payload = &pk.as_slice()[super::rtp::RTP_FIXED_HEADER_LEN..pk.len()];
+                if let Some(digit) = m.subs.dtmf_recv.feed(sn, payload) {
+                    if let Some(p) = m.subs.player.as_ref() {
+                        if p.interrupts() {
+                            m.subs.player = None;
+                            m.state.pending_events.push(Event::Play {
+                                state: PlayState::End,
+                                reason: Some("telephone-event".into()),
+                            });
+                        }
+                    }
+                    m.state.pending_events.push(Event::TelephoneEvent { digit });
+                    // Broadcast to other members.
+                    dtmf_broadcast.push((m.state.id, digit));
+                }
+                continue; // DTMF consumed — skip audio processing for this member.
+            }
+        }
 
         // Player: advance one frame. Player output becomes this member's
         // mix contribution (its "voice") when no inbound is present.
@@ -248,7 +258,7 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
 
         // Barge-in on inbound power.
         if let (Some(samples), Some(bi)) = (inbound_samples.as_ref(), m.subs.bargein.as_mut()) {
-            if m.subs.player.is_some() && m.state.in_count >= 100 {
+            if m.subs.player.is_some() && m.state.in_count.load(Ordering::Relaxed) >= 100 {
                 let mut sum_sq: u64 = 0;
                 for s in samples {
                     let v = *s as i64;
@@ -266,6 +276,15 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
                     });
                 }
             }
+        }
+    }
+
+    // Fan out detected DTMF digits to peers' relay queues.
+    for (origin, digit) in &dtmf_broadcast {
+        let digit_str = digit.to_string();
+        for (&id, m) in members.iter_mut() {
+            if id == *origin { continue; }
+            m.subs.dtmf_relay.enqueue(&digit_str);
         }
     }
 
@@ -292,7 +311,7 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
             ids.iter().map(|&id| {
                 let peer_id = ids.iter().find(|&&k| k != id).copied().unwrap_or(id);
                 let peer = members.get(&peer_id).unwrap();
-                (id, peer_id, peer.state.remote_addr, peer.state.remote_pt)
+                (id, peer_id, peer.state.get_remote_addr(), peer.state.remote_pt)
             }).collect()
         };
 
@@ -341,7 +360,7 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
         // N≥3: summed - own, encode to own codec, send to own remote.
         for m in members.values_mut() {
             if !m.state.direction.send { continue; }
-            let Some(remote) = m.state.remote_addr else { continue; };
+            let Some(remote) = m.state.get_remote_addr() else { continue; };
 
             let mut out_samples = vec![0i16; MIX_FRAME_SAMPLES];
             if m.frame_present {
@@ -364,7 +383,7 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
     // DTMF: send to own remote for all mix sizes. Audio and DTMF coexist.
     for m in members.values_mut() {
         if !m.state.direction.send { continue; }
-        let Some(remote) = m.state.remote_addr else { continue; };
+        let Some(remote) = m.state.get_remote_addr() else { continue; };
         if let Some((_ev, payload)) = m.subs.dtmf_send.next_event() {
             let pt = m.state.rfc2833_pt;
             send_dtmf_to_remote(&mut m.state, remote, pt, &payload).await;
@@ -439,81 +458,6 @@ async fn feed_recorders(
     }
 }
 
-/// Drain inbound packets from the member's socket into its jitter buffer.
-/// Drains up to a generous cap — enough to clear a backed-up kernel buffer
-/// from a delayed tick, but bounded so a malicious flood can't spin the
-/// mixer. The jitter buffer drops out-of-window packets on push.
-async fn drain_all_inbound(m: &mut Member) -> Vec<char> {
-    const MAX_DRAIN_PER_TICK: usize = 50;
-    let mut digits = Vec::new();
-    let mut scratch = [0u8; rtp::RTP_MAX_LENGTH];
-    for _ in 0..MAX_DRAIN_PER_TICK {
-        match m.state.rtp_sock.try_recv_from(&mut scratch) {
-            Ok((n, peer)) => {
-                m.state.remote_addr = Some(peer);
-                if let Some(d) = classify_inbound(m, &scratch[..n], peer).await {
-                    digits.push(d);
-                }
-            }
-            Err(e) if e.kind() == ErrorKind::WouldBlock => break,
-            Err(_) => break,
-        }
-    }
-    digits
-}
-
-/// Classify an inbound packet: STUN → respond, DTLS → ignore (TODO),
-/// DTMF → detect + return digit, RTP → push to jitter.
-async fn classify_inbound(
-    m: &mut Member,
-    pkt: &[u8],
-    peer: SocketAddr,
-) -> Option<char> {
-    if pkt.is_empty() { return None; }
-
-    if stun::is_stun(pkt) {
-        if m.state.local_icepwd.is_empty() { return None; }
-        let key = m.state.local_icepwd.as_bytes();
-        let mut req = pkt.to_vec();
-        let mut resp = [0u8; rtp::RTP_MAX_LENGTH];
-        let n = stun::handle(&mut req, &mut resp, peer, key, key);
-        if n > 0 {
-            let _ = m.state.rtp_sock.send_to(&resp[..n], peer).await;
-        }
-        return None;
-    }
-
-    let first = pkt[0];
-    if (20..=23).contains(&first) { return None; }
-
-    if pkt.len() < rtp::RTP_FIXED_HEADER_LEN { return None; }
-    m.state.in_count += 1;
-
-    let pt = rtp::payload_type(pkt);
-    if pt == m.state.rfc2833_pt {
-        let sn = rtp::sequence_number(pkt);
-        let payload = &pkt[rtp::RTP_FIXED_HEADER_LEN..];
-        if let Some(digit) = m.subs.dtmf_recv.feed(sn, payload) {
-            if let Some(p) = m.subs.player.as_ref() {
-                if p.interrupts() {
-                    m.subs.player = None;
-                    m.state.pending_events.push(Event::Play {
-                        state: PlayState::End,
-                        reason: Some("telephone-event".into()),
-                    });
-                }
-            }
-            m.state.pending_events.push(Event::TelephoneEvent { digit });
-            return Some(digit);
-        }
-        return None;
-    }
-
-    let mut rp = RtpPacket::new();
-    rp.as_mut_slice_for_fill(pkt.len()).copy_from_slice(pkt);
-    m.state.jitter.push(rp);
-    None
-}
 
 async fn send_encoded(state: &mut ChannelState, remote: SocketAddr, payload: &[u8]) {
     let mut pkt = RtpPacket::new();
@@ -555,7 +499,7 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
         Command::Echo { enabled } => { m.state.echo = enabled; }
         Command::Dtmf { digits } => { m.subs.dtmf_send.enqueue(&digits); }
         Command::Remote { cfg, ack } => {
-            m.state.remote_addr = Some(cfg.addr);
+            m.state.set_remote_addr(cfg.addr);
             m.state.remote_pt = cfg.payload_type;
             if let Some(pt) = cfg.rfc2833_payload_type {
                 m.state.rfc2833_pt = pt;

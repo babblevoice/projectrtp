@@ -1,60 +1,60 @@
 // Per-tick pipeline — the core of the channel actor in Local mode.
 //
-// Mirrors the order of C++ `projectrtpchannel::handletick()` (channel.cpp:558).
-// Each call is one 20 ms step:
-//
-//   1. Close-requested check — handled by the actor loop, not here.
-//   2. DTLS handshake step (bail early if still negotiating).
-//   3. Drain inbound UDP socket: classify STUN / DTLS / RTP.
-//   4. For RTP: feed jitter buffer.
-//   5. Peek jitter; decode; hand samples to recorders; DTMF detect.
-//   6. Generate outbound frame: echo / player / silence.
-//   7. Encode → SRTP-protect → UDP send.
-//   8. Bookkeeping: tick_count, idle timeout, counters.
-//
-// Mix-group behaviour is owned by `channel/mixer.rs`: when a channel joins a
-// mix, its state + subs migrate into the mixer actor which runs its own tick
-// loop. Only Local (unmixed) channels end up in this file.
+// The recv_loop task reads the socket continuously and pushes RTP/DTMF
+// packets to the jitter buffer. This tick pops one per 20ms cycle,
+// decodes, runs subsystems (recorder, player, barge-in), and sends
+// outbound (echo, player, DTMF, silence).
 
-use std::io::ErrorKind;
 use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
 
 use super::actor::{Event, Subsystems};
 use super::rtp::{self, RtpPacket};
 use super::state::ChannelState;
-use crate::stun;
 
-/// Outcome of a tick — used by the actor to decide whether to keep running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TickOutcome {
-    /// Continue ticking.
     Continue,
-    /// DTLS is mid-handshake; skipped the media pipeline this tick.
     Handshaking,
-    /// Idle-timeout reached or fatal error — actor should close.
     Stop,
 }
 
-const IDLE_TICK_LIMIT: u64 = 50 * 20; // 20 s @ 20 ms/tick, matches C++ line 528.
-/// Matches the C++ handletick behavior of consuming roughly one RTP source
-/// packet per tick. A burst that arrives inside a single 20 ms window fills
-/// the OS socket buffer; excess packets are dropped by the kernel. The
-/// "stalled connection" test depends on this drop behavior being visible as
-/// TS gaps in the echoed stream.
-const MAX_INBOUND_PER_TICK: usize = 2;
+const IDLE_TICK_LIMIT: u64 = 50 * 20;
 
 pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome {
     state.tick_count += 1;
 
-    // 3+4. Drain inbound UDP, route by packet type. Inbound DTMF is consumed
-    // here and routed to subs.dtmf_recv → state.pending_events.
-    drain_inbound(state, subs).await;
+    // Check if DTLS handshake completed since last tick.
+    poll_dtls_handshake(state);
 
-    // 5. Consume next in-order RTP from jitter. in_count is incremented at
-    // receive time (not here) so packets still buffered at close still count.
-    let inbound_pkt = state.jitter.pop();
+    // Pop from jitter (filled continuously by recv_loop).
+    let inbound_pkt = state.jitter.lock().pop();
 
-    // 5a. Advance the player one frame's worth (20 ms @ 8 kHz = 160 samples).
+    // DTMF classification at pop time — recv_loop pushes all RTP/DTMF
+    // into jitter; we check PT here since we need access to Subsystems.
+    if let Some(ref pk) = inbound_pkt {
+        let pt = pk.payload_type();
+        if pt == state.rfc2833_pt {
+            let sn = pk.sequence_number();
+            let payload = &pk.as_slice()[rtp::RTP_FIXED_HEADER_LEN..pk.len()];
+            if let Some(digit) = subs.dtmf_recv.feed(sn, payload) {
+                if let Some(p) = subs.player.as_ref() {
+                    if p.interrupts() {
+                        subs.player = None;
+                        state.pending_events.push(Event::Play {
+                            state: super::actor::PlayState::End,
+                            reason: Some("telephone-event".into()),
+                        });
+                    }
+                }
+                state.pending_events.push(Event::TelephoneEvent { digit });
+            }
+            // DTMF consumed — don't process as audio.
+            return TickOutcome::Continue;
+        }
+    }
+
+    // Player.
     let mut player_frame: Option<Vec<i16>> = None;
     if let Some(player) = subs.player.as_mut() {
         let frame = player.read(160).await;
@@ -71,22 +71,16 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
         }
     }
 
-    // 5b. Recorder: feed each active recorder the popped packet's decoded
-    // samples. Each recorder handles its own state transitions (gate, finish
-    // thresholds, max duration).
+    // Recorder + barge-in.
     if let Some(in_pk) = inbound_pkt.as_ref() {
         let in_pt = in_pk.payload_type();
         let payload = in_pk.payload();
         let decoded = state.transcoder.decode(in_pt, payload);
 
-        // Barge-in: RMS of inbound samples, smoothed across N packets.
         if let (Some(samples), Some(bi)) = (decoded.as_ref(), subs.bargein.as_mut()) {
-            if subs.player.is_some() && state.in_count >= 100 {
+            if subs.player.is_some() && state.in_count.load(Ordering::Relaxed) >= 100 {
                 let mut sum_sq: u64 = 0;
-                for s in samples {
-                    let v = *s as i64;
-                    sum_sq += (v * v) as u64;
-                }
+                for s in samples { let v = *s as i64; sum_sq += (v * v) as u64; }
                 let rms = if samples.is_empty() { 0 }
                           else { ((sum_sq / samples.len() as u64) as f64).sqrt() as i32 };
                 let smoothed = bi.power_ma.execute(rms.min(i16::MAX as i32) as i16) as i32;
@@ -100,8 +94,7 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
                 }
             }
         }
-        // We iterate by index so we can remove finished recorders without
-        // holding a borrow across the emit.
+
         let mut i = 0;
         while i < subs.recorders.len() {
             let rec = &mut subs.recorders[i];
@@ -118,7 +111,6 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
             }
             let new_state = rec.state();
             let file_str = rec.file().to_string_lossy().into_owned();
-
             if prev_state == super::recorder::RecorderState::Pending
                 && new_state == super::recorder::RecorderState::Active
             {
@@ -128,7 +120,6 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
                     file: Some(file_str.clone()),
                 });
             }
-
             if rec.is_finished() {
                 let reason = rec.finish_reason().cloned();
                 let reason_str = match reason {
@@ -151,101 +142,65 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
         }
     }
 
-    // 6+7. Outbound. Priority: dtmf → player → echo → silence.
-    if state.direction.send && state.remote_addr.is_some() {
+    // Outbound.
+    let remote = state.get_remote_addr();
+    if state.direction.send && remote.is_some() {
+        let remote = remote.unwrap();
         if let Some((event, payload)) = subs.dtmf_send.next_event() {
-            send_dtmf(state, event, &payload).await;
+            send_dtmf(state, event, &payload, remote).await;
         } else if let Some(samples) = player_frame.as_ref() {
-            send_player_frame(state, samples).await;
+            send_player_frame(state, samples, remote).await;
         } else if state.echo {
             if let Some(in_pk) = inbound_pkt.as_ref() {
-                send_echo(state, in_pk).await;
+                send_echo(state, in_pk, remote).await;
             }
         }
-        // Otherwise: stay silent.
     }
 
-    // 8. Idle timeout — only when not actively receiving.
-    if state.tick_count >= IDLE_TICK_LIMIT && state.in_count == 0 {
+    // Idle timeout.
+    if state.tick_count >= IDLE_TICK_LIMIT && state.in_count.load(Ordering::Relaxed) == 0 {
         return TickOutcome::Stop;
     }
 
     TickOutcome::Continue
 }
 
-async fn drain_inbound(state: &mut ChannelState, subs: &mut Subsystems) {
-    let mut scratch = [0u8; rtp::RTP_MAX_LENGTH];
-    for _ in 0..MAX_INBOUND_PER_TICK {
-        match state.rtp_sock.try_recv_from(&mut scratch) {
-            Ok((n, peer)) => {
-                // Autocorrect: latch onto the observed remote (C++ NAT-
-                // hairpin behaviour).
-                state.remote_addr = Some(peer);
-                classify_and_route(state, subs, &scratch[..n], peer).await;
+fn poll_dtls_handshake(state: &mut ChannelState) {
+    if let Some(rx) = state.dtls_result_rx.as_mut() {
+        match rx.try_recv() {
+            Ok(Some(result)) => {
+                let keys = super::dtls_session::split_keying_material(
+                    &result.keying_material, result.profile, result.is_client,
+                );
+                let (our_key, our_salt) = if keys.local_is_server {
+                    (&keys.server_write_key, &keys.server_write_salt)
+                } else {
+                    (&keys.client_write_key, &keys.client_write_salt)
+                };
+                let (their_key, their_salt) = if keys.local_is_server {
+                    (&keys.client_write_key, &keys.client_write_salt)
+                } else {
+                    (&keys.server_write_key, &keys.server_write_salt)
+                };
+                if let Ok(enc) = webrtc_srtp::context::Context::new(
+                    our_key, our_salt, keys.profile, None, None,
+                ) { state.srtp_encrypt = Some(enc); }
+                if let Ok(dec) = webrtc_srtp::context::Context::new(
+                    their_key, their_salt, keys.profile, None, None,
+                ) { state.srtp_decrypt = Some(dec); }
+                state.srtp_keys = Some(keys);
+                state.dtls_result_rx = None;
             }
-            Err(e) if e.kind() == ErrorKind::WouldBlock => break,
-            Err(_) => break,
+            Ok(None) => { state.dtls_result_rx = None; }
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                state.dtls_result_rx = None;
+            }
         }
     }
 }
 
-async fn classify_and_route(
-    state: &mut ChannelState,
-    subs: &mut Subsystems,
-    pkt: &[u8],
-    peer: SocketAddr,
-) {
-    if pkt.is_empty() { return; }
-
-    if stun::is_stun(pkt) {
-        if state.local_icepwd.is_empty() { return; }
-        let key = state.local_icepwd.as_bytes();
-        let mut req = pkt.to_vec();
-        let mut resp = [0u8; rtp::RTP_MAX_LENGTH];
-        let n = stun::handle(&mut req, &mut resp, peer, key, key);
-        if n > 0 {
-            let _ = state.rtp_sock.send_to(&resp[..n], peer).await;
-        }
-        return;
-    }
-
-    let first = pkt[0];
-    if (20..=23).contains(&first) {
-        // TODO: forward to DtlsSession.step_incoming and drain outgoing.
-        return;
-    }
-
-    if pkt.len() < rtp::RTP_FIXED_HEADER_LEN { return; }
-
-    state.in_count += 1;
-
-    // RFC 2833 telephone events: decode → emit "telephone-event".
-    let pt = rtp::payload_type(pkt);
-    if pt == state.rfc2833_pt {
-        let sn = rtp::sequence_number(pkt);
-        let payload = &pkt[rtp::RTP_FIXED_HEADER_LEN..];
-        if let Some(digit) = subs.dtmf_recv.feed(sn, payload) {
-            if let Some(p) = subs.player.as_ref() {
-                if p.interrupts() {
-                    subs.player = None;
-                    state.pending_events.push(Event::Play {
-                        state: super::actor::PlayState::End,
-                        reason: Some("telephone-event".into()),
-                    });
-                }
-            }
-            state.pending_events.push(Event::TelephoneEvent { digit });
-        }
-        return;
-    }
-
-    let mut rp = RtpPacket::new();
-    rp.as_mut_slice_for_fill(pkt.len()).copy_from_slice(pkt);
-    state.jitter.push(rp);
-}
-
-async fn send_dtmf(state: &mut ChannelState, _event: u8, payload: &[u8; 4]) {
-    let Some(remote) = state.remote_addr else { return; };
+async fn send_dtmf(state: &mut ChannelState, _event: u8, payload: &[u8; 4], remote: SocketAddr) {
     let mut out = RtpPacket::new();
     out.init(state.ssrc);
     out.set_payload_type(state.rfc2833_pt);
@@ -258,9 +213,7 @@ async fn send_dtmf(state: &mut ChannelState, _event: u8, payload: &[u8; 4]) {
     }
 }
 
-/// Encode a player frame to the remote codec and send it as one RTP packet.
-async fn send_player_frame(state: &mut ChannelState, samples: &[i16]) {
-    let Some(remote) = state.remote_addr else { return; };
+async fn send_player_frame(state: &mut ChannelState, samples: &[i16], remote: SocketAddr) {
     let Some(payload) = state.transcoder.encode(state.remote_pt, samples) else { return; };
     let mut out = RtpPacket::new();
     out.init(state.ssrc);
@@ -275,24 +228,19 @@ async fn send_player_frame(state: &mut ChannelState, samples: &[i16]) {
     }
 }
 
-async fn send_echo(state: &mut ChannelState, in_pk: &RtpPacket) {
-    let Some(remote) = state.remote_addr else { return; };
+async fn send_echo(state: &mut ChannelState, in_pk: &RtpPacket, remote: SocketAddr) {
     let mut out = RtpPacket::new();
     out.init(state.ssrc);
     out.set_payload_type(in_pk.payload_type());
     out.set_sequence_number(state.out_sn);
     out.set_timestamp(in_pk.timestamp());
-    let payload = in_pk.payload();
-    out.set_payload(payload);
+    out.set_payload(in_pk.payload());
     state.out_sn = state.out_sn.wrapping_add(1);
     if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
         state.out_count += 1;
     }
 }
 
-// Small extension on RtpPacket used above — lets tick.rs copy a full datagram
-// into the packet buffer and set the live length in one call without poking
-// RtpPacket's internals.
 impl RtpPacket {
     pub fn as_mut_slice_for_fill(&mut self, n: usize) -> &mut [u8] {
         debug_assert!(n <= self.buf.capacity());
@@ -305,29 +253,23 @@ impl RtpPacket {
 mod tests {
     use super::*;
     use crate::channel::commands::Direction;
-    use crate::channel::jitter::JitterBuffer;
     use crate::channel::state::ChannelState;
     use tokio::net::UdpSocket;
 
-    async fn socket_on_loopback() -> (UdpSocket, SocketAddr) {
-        let s = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let a = s.local_addr().unwrap();
-        (s, a)
-    }
-
-    async fn fresh_state() -> (ChannelState, SocketAddr, UdpSocket, SocketAddr) {
-        let (rtp_sock, rtp_addr) = socket_on_loopback().await;
-        let (rtcp_sock, _) = socket_on_loopback().await;
-        let (peer_sock, peer_addr) = socket_on_loopback().await;
+    async fn fresh_state() -> (ChannelState, UdpSocket, SocketAddr) {
+        let rtp_sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let rtp_addr = rtp_sock.local_addr().unwrap();
+        let rtcp_sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer_sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = peer_sock.local_addr().unwrap();
         let mut state = ChannelState::new(1, rtp_addr, rtp_sock, rtcp_sock, 0xC0FFEE);
-        state.jitter = JitterBuffer::new(32, 2);
         state.direction = Direction { send: true, recv: true };
-        (state, rtp_addr, peer_sock, peer_addr)
+        (state, peer_sock, peer_addr)
     }
 
     #[tokio::test]
     async fn tick_skips_send_without_remote() {
-        let (mut state, _rtp_addr, peer_sock, _peer_addr) = fresh_state().await;
+        let (mut state, peer_sock, _peer_addr) = fresh_state().await;
         let mut subs = crate::channel::actor::Subsystems::default();
         run(&mut state, &mut subs).await;
 
@@ -335,14 +277,14 @@ mod tests {
             std::time::Duration::from_millis(30),
             peer_sock.recv_from(&mut [0u8; 2000]),
         ).await;
-        assert!(r.is_err(), "should not have received a packet without remote");
+        assert!(r.is_err());
     }
 
     #[tokio::test]
     async fn tick_respects_direction_send_false() {
-        let (mut state, _, peer_sock, peer_addr) = fresh_state().await;
+        let (mut state, peer_sock, peer_addr) = fresh_state().await;
         let mut subs = crate::channel::actor::Subsystems::default();
-        state.remote_addr = Some(peer_addr);
+        state.set_remote_addr(peer_addr);
         state.direction.send = false;
 
         run(&mut state, &mut subs).await;

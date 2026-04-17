@@ -15,11 +15,13 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Interval, MissedTickBehavior};
+use tokio_util::sync::CancellationToken;
 
 use super::commands::{Command, Handle};
 use super::dtmf::{DtmfReceiver, DtmfSender};
@@ -94,7 +96,22 @@ pub fn spawn_with_sockets(
 ) -> std::io::Result<Handle> {
     let mut state = ChannelState::new(cfg.id, local_addr, rtp_sock, rtcp_sock, cfg.ssrc);
     state.port_reservation = cfg.port_reservation;
-    state.local_icepwd = cfg.local_icepwd;
+    *state.local_icepwd.lock() = cfg.local_icepwd;
+
+    // Spawn the recv_loop — reads the socket continuously, classifies
+    // STUN/DTLS/RTP and feeds jitter/DTLS-mpsc immediately.
+    let cancel = CancellationToken::new();
+    super::recv_loop::spawn(super::recv_loop::RecvLoopConfig {
+        sock: state.rtp_sock.clone(),
+        jitter: state.jitter.clone(),
+        remote_addr: state.remote_addr.clone(),
+        in_count: state.in_count.clone(),
+        local_icepwd: state.local_icepwd.clone(),
+        dtls_tx: state.dtls_inbound_tx.clone(),
+        cancel: cancel.clone(),
+    });
+    state.recv_cancel = Some(cancel);
+
     let (tx, rx) = mpsc::channel::<Command>(DEFAULT_CMD_QUEUE_DEPTH);
     let events = cfg.events;
     let handle_cmd = tx.clone();
@@ -171,7 +188,7 @@ async fn run(
                         let (mut state_out, mut subs_out) = take_local(&mut mode);
                         // Clear jitter so a remixed channel that restarts
                         // its SN counter doesn't get rejected as out-of-window.
-                        state_out.jitter.clear();
+                        state_out.jitter.lock().clear();
                         // If a player is active, keep it — the summed-minus
                         // emit path (non-relay) will carry its audio to the
                         // peer. C++ mix2 killed the player, but the old Rust
@@ -274,9 +291,13 @@ async fn run(
             file: Some(file_str),
         });
     }
+    // Cancel the recv_loop before collecting stats.
+    if let Some(cancel) = state.recv_cancel.take() {
+        cancel.cancel();
+    }
     let stats = ChannelStats {
-        in_count: state.in_count,
-        in_dropped: state.in_dropped + state.jitter.dropped,
+        in_count: state.in_count.load(Ordering::Relaxed),
+        in_dropped: state.in_dropped + state.jitter.lock().dropped,
         in_skip: state.in_skip,
         out_count: state.out_count,
     };
@@ -388,7 +409,7 @@ async fn handle_command_local(
         }
 
         Command::Remote { cfg, ack } => {
-            state.remote_addr = Some(cfg.addr);
+            state.set_remote_addr(cfg.addr);
             state.remote_pt = cfg.payload_type;
             if let Some(pt) = cfg.rfc2833_payload_type {
                 state.rfc2833_pt = pt;
@@ -399,6 +420,23 @@ async fn handle_command_local(
             if let Some(pwd) = &cfg.icepwd {
                 state.remote_icepwd = pwd.clone();
             }
+
+            // DTLS: if the remote config includes DTLS setup, start the handshake.
+            if let Some(ref dtls) = cfg.dtls {
+                let (dtls_tx, dtls_rx) = mpsc::channel::<Vec<u8>>(64);
+                *state.dtls_inbound_tx.lock() = Some(dtls_tx);
+                let cert = webrtc_dtls::crypto::Certificate::generate_self_signed(
+                    vec!["projectrtp".into()],
+                ).expect("generate dtls cert");
+                state.dtls_result_rx = Some(super::dtls_session::spawn_handshake(
+                    dtls.setup,
+                    state.local_addr,
+                    state.rtp_sock.clone(),
+                    dtls_rx,
+                    cert,
+                ));
+            }
+
             state.remote = Some(cfg);
             state.remote_confirmed = true;
             let _ = ack.send(());
