@@ -171,19 +171,13 @@ stateDiagram-v2
   Mixed --> Closing: channel.close()
   Closing --> [*]: Event::Close
 
-  note right of Local
-    Actor owns ChannelState.
-    tick.rs drives 20ms pipeline.
-    Commands arrive via mpsc.
-  end note
+  Local : Actor owns ChannelState
+  Local : tick.rs drives 20ms pipeline
+  Local : Commands arrive via mpsc
 
-  note right of Mixed
-    For 2 channels: both stay in Local
-    mode with mix_peer_remote set.
-    For N>2: ChannelState migrates into
-    MixGroup actor; channel actor is a
-    forwarder until Remove fires.
-  end note
+  Mixed : N=2 — relay in lockstep tick
+  Mixed : N>2 — state migrates into MixGroup
+  Mixed : channel actor becomes forwarder
 ```
 
 ### 2-chan mix bind protocol
