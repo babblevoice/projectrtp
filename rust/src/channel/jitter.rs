@@ -14,7 +14,7 @@
 
 use super::rtp::RtpPacket;
 
-pub const DEFAULT_BUFFER_PACKET_COUNT: usize = 32;
+pub const DEFAULT_BUFFER_PACKET_COUNT: usize = 20;
 pub const DEFAULT_BUFFER_WATER_LEVEL: usize = 10;
 
 pub struct JitterBuffer {
@@ -33,7 +33,7 @@ pub struct JitterBuffer {
 
 impl JitterBuffer {
     pub fn new(buffer_count: usize, water_level: usize) -> Self {
-        assert!(buffer_count.is_power_of_two(), "buffer_count must be power of 2");
+        assert!(buffer_count > 0, "buffer_count must be > 0");
         let slots: Vec<Option<RtpPacket>> = (0..buffer_count).map(|_| None).collect();
         Self {
             slots: slots.into_boxed_slice(),
@@ -81,7 +81,7 @@ impl JitterBuffer {
             }
         }
 
-        let idx = (sn as usize) & (self.buffer_count - 1);
+        let idx = (sn as usize) % self.buffer_count;
         if self.slots[idx].is_none() {
             self.slots[idx] = Some(pk);
             self.pushed += 1;
@@ -95,7 +95,7 @@ impl JitterBuffer {
     /// or holds a stale SN, advances out_sn past it and returns None.
     pub fn peek(&mut self) -> Option<&RtpPacket> {
         if !self.primed { return None; }
-        let idx = (self.out_sn as usize) & (self.buffer_count - 1);
+        let idx = (self.out_sn as usize) % self.buffer_count;
         match &self.slots[idx] {
             None => {
                 // Hole — skip past it.

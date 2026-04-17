@@ -84,9 +84,6 @@ pub fn create(opts: Option<BufferOptions>) -> Result<RtpJitterBuffer> {
         ),
         None => (DEFAULT_BUFFER_PACKET_COUNT, DEFAULT_BUFFER_WATER_LEVEL),
     };
-    if !size.is_power_of_two() {
-        return Err(Error::from_reason("size must be a power of 2"));
-    }
     Ok(RtpJitterBuffer {
         inner: JitterBuffer::new(size, water),
     })
