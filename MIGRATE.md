@@ -169,7 +169,7 @@ stateDiagram-v2
   Mixed --> Local: channel.unmix()
   Local --> Closing: channel.close()
   Mixed --> Closing: channel.close()
-  Closing --> [*]: Event::Close
+  Closing --> [*]: Close event
 ```
 
 **Local** — actor owns `ChannelState`, `tick.rs` drives the 20 ms pipeline, commands arrive via mpsc.
