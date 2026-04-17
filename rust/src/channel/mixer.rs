@@ -163,13 +163,8 @@ async fn run(mut cmds: mpsc::Receiver<MixerCommand>) {
 async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
     // Snapshot alive-member count. Branch between 2-chan byte relay and
     // N≥3 summed mix. One map lookup per tick; matches C++ mix2 vs mixall.
-    // If any member has an active player, fall through to the N≥3 emit path
-    // which handles player contributions via the frame/summed pipeline —
-    // the byte relay only forwards inbound UDP packets and would miss player
-    // audio entirely.
     let n_alive = members.len();
-    let has_player = members.values().any(|m| m.subs.player.is_some());
-    let use_relay = n_alive == 2 && !has_player;
+    let use_relay = n_alive == 2;
 
     // ----- Phase 1: drain inbound on every member. -----
     // A two-member group gets byte-relay forwarding inline. Collect DTMF
@@ -360,11 +355,22 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
             }
         }
     } else {
-        // 2-chan path — byte relay handled in Phase 1. We only need to emit
-        // DTMF here (send queue = JS-initiated, relay queue = peer DTMF
-        // regenerated). Matches C++ `mix2` which forwards media inline and
-        // handles DTMF via the send/relay queues on the tick.
-        for m in members.values_mut() {
+        // 2-chan path — byte relay handled in Phase 1. Here we emit DTMF
+        // queues + player frames. Player audio goes to the PEER's remote
+        // (not own remote) so the other end of the call hears hold music /
+        // prompts. The relay carries inbound peer audio; the player inject
+        // carries our generated audio — both coexist, matching C++ mix2.
+        let peer_targets: HashMap<ChannelId, PeerForRelay> = members
+            .iter()
+            .map(|(&id, m)| (id, PeerForRelay {
+                remote: m.state.remote_addr,
+                pt: m.state.remote_pt,
+                rfc2833_pt: m.state.rfc2833_pt,
+            }))
+            .collect();
+        let ids: Vec<ChannelId> = members.keys().copied().collect();
+        for id in ids {
+            let m = members.get_mut(&id).unwrap();
             if !m.state.direction.send { continue; }
             let Some(remote) = m.state.remote_addr else { continue; };
             if let Some((_ev, payload)) = m.subs.dtmf_send.next_event() {
@@ -375,6 +381,29 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
             if let Some((_ev, payload)) = m.subs.dtmf_relay.next_event() {
                 let pt = m.state.rfc2833_pt;
                 send_dtmf_to_remote(&mut m.state, remote, pt, &payload).await;
+                continue;
+            }
+            // Player: encode frame to the peer's codec and send to the
+            // peer's remote — the player voices "our side" into the mix.
+            if m.subs.player.is_some() && m.frame_present {
+                let peer_id = peer_targets.keys().find(|&&k| k != id).copied();
+                if let Some(peer) = peer_id.and_then(|pid| peer_targets.get(&pid)) {
+                    if let Some(peer_remote) = peer.remote {
+                        if let Some(payload) = m.state.transcoder.encode(peer.pt, &m.frame) {
+                            let mut pkt = RtpPacket::new();
+                            pkt.init(m.state.ssrc);
+                            pkt.set_payload_type(peer.pt);
+                            pkt.set_sequence_number(m.state.out_sn);
+                            pkt.set_timestamp(m.state.out_ts);
+                            pkt.set_payload(&payload);
+                            m.state.out_sn = m.state.out_sn.wrapping_add(1);
+                            m.state.out_ts = m.state.out_ts.wrapping_add(MIX_FRAME_SAMPLES as u32);
+                            if m.state.rtp_sock.send_to(pkt.as_slice(), peer_remote).await.is_ok() {
+                                m.state.out_count += 1;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
