@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 
 use super::actor::Event;
-use super::commands::{ChannelId, Command, Direction, RemoteConfig};
+use super::commands::{ChannelId, Direction, RemoteConfig};
 use super::jitter::JitterBuffer;
 use super::rtp::RtpPacket;
 
@@ -49,36 +49,8 @@ pub struct ChannelState {
     pub echo: bool,
     pub remote_confirmed: bool,
 
-    // 2-channel mix relay target — when Some, every inbound packet is
-    // forwarded straight to this address (the *other* channel's remote) and
-    // the normal echo/silence outbound is skipped. n>2 mixing requires real
-    // sample-level mix math and lands in mixer.rs.
-    pub mix_peer_remote: Option<SocketAddr>,
-    /// Outbound payload type for the peer when forwarding via mix relay. If
-    /// it differs from the inbound PT we transcode (G.711 only).
-    pub mix_peer_pt: u8,
-    /// RFC 2833 PT to stamp onto DTMF packets we relay to the peer. Peer
-    /// may have negotiated a different rfc2833pt to us.
-    pub mix_peer_rfc2833_pt: u8,
-    /// Handle to the mix peer's actor — set by `BindMixPeer`. When set, this
-    /// channel is in a 2-chan mix; any change to *our* remote gets pushed
-    /// over as a `SetPeerRemote` so the peer's outbound targets stay in sync
-    /// when JS calls `.remote()` after `.mix()`. None when unbound.
-    pub mix_peer_handle: Option<tokio::sync::mpsc::Sender<Command>>,
-    /// N-way mix: shared group state. When set, tick.rs deposits this
-    /// channel's decoded inbound frame into the group and reads
-    /// (`summed - own`) back to encode + send. Mutually exclusive with
-    /// `mix_peer_*` (2-chan fast path) — the facade promotes 2-chan to
-    /// N-way on the second `mix()` call.
-    pub mix_group: Option<std::sync::Arc<parking_lot::Mutex<super::mixer::MixGroupShared>>>,
-    /// This channel's slot in the group.
-    pub mix_group_idx: usize,
-    /// Group version we last emitted an output packet at. Compare against
-    /// `group.max_other_deposit(idx)` to decide whether to emit this tick.
-    pub mix_last_emit: u64,
-    /// Stateful transcoder (G.722 needs filter history) for the mix relay.
+    /// Stateful transcoder (G.722 needs filter history).
     pub transcoder: crate::codec::Transcoder,
-
 
     /// Outbound payload type for our own remote (set from params.remote.codec).
     pub remote_pt: u8,
@@ -140,13 +112,6 @@ impl ChannelState {
             ssrc,
             echo: false,
             remote_confirmed: false,
-            mix_peer_remote: None,
-            mix_peer_pt: 0,
-            mix_peer_rfc2833_pt: 101,
-            mix_peer_handle: None,
-            mix_group: None,
-            mix_group_idx: 0,
-            mix_last_emit: 0,
             transcoder: crate::codec::Transcoder::new(),
             remote_pt: 0,
             tick_count: 0,

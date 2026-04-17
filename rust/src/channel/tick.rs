@@ -1,4 +1,4 @@
-// Per-tick pipeline — the core of the channel actor.
+// Per-tick pipeline — the core of the channel actor in Local mode.
 //
 // Mirrors the order of C++ `projectrtpchannel::handletick()` (channel.cpp:558).
 // Each call is one 20 ms step:
@@ -12,13 +12,12 @@
 //   7. Encode → SRTP-protect → UDP send.
 //   8. Bookkeeping: tick_count, idle timeout, counters.
 //
-// Subsystems not yet online are no-ops behind TODOs so the pipeline shape is
-// pinned now and infill happens without reshaping.
+// Mix-group behaviour is owned by `channel/mixer.rs`: when a channel joins a
+// mix, its state + subs migrate into the mixer actor which runs its own tick
+// loop. Only Local (unmixed) channels end up in this file.
 
 use std::io::ErrorKind;
 use std::net::SocketAddr;
-
-use bytes::Bytes;
 
 use super::actor::{Event, Subsystems};
 use super::rtp::{self, RtpPacket};
@@ -47,8 +46,6 @@ const MAX_INBOUND_PER_TICK: usize = 2;
 pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome {
     state.tick_count += 1;
 
-    // 2. DTLS handshake step. TODO: drive DtlsSession when live.
-
     // 3+4. Drain inbound UDP, route by packet type. Inbound DTMF is consumed
     // here and routed to subs.dtmf_recv → state.pending_events.
     drain_inbound(state, subs).await;
@@ -58,14 +55,9 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     let inbound_pkt = state.jitter.pop();
 
     // 5a. Advance the player one frame's worth (20 ms @ 8 kHz = 160 samples).
-    // Samples captured here drive the outbound player branch below when this
-    // channel isn't in a mix. A player that finishes during read() fires a
-    // `play/end reason=completed` event and clears `subs.player`.
     let mut player_frame: Option<Vec<i16>> = None;
     if let Some(player) = subs.player.as_mut() {
         let frame = player.read(160).await;
-        // Ignore short/empty frames — `frame.samples` is empty when the
-        // soup finishes mid-read; we emit nothing that tick.
         if !frame.samples.is_empty() {
             player_frame = Some(frame.samples);
         }
@@ -81,33 +73,13 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
 
     // 5b. Recorder: feed each active recorder the popped packet's decoded
     // samples. Each recorder handles its own state transitions (gate, finish
-    // thresholds, max duration). We observe transitions by comparing
-    // state before/after `write` and emit the matching JS event.
-    //
-    // 2-channel recordings interleave inbound on ch0 and (for tests with
-    // echo on) the same sample on ch1 — matches the C++ layout the test's
-    // `readInt16BE` at offset 45 relies on.
+    // thresholds, max duration).
     if let Some(in_pk) = inbound_pkt.as_ref() {
         let in_pt = in_pk.payload_type();
         let payload = in_pk.payload();
         let decoded = state.transcoder.decode(in_pt, payload);
 
-        // N-way mix: deposit our decoded frame into the shared group so
-        // other members can read it when they emit this tick. Honour
-        // `direction.recv=false` — if JS disabled inbound mixing, we stay
-        // silent in the group so (summed - self) on other members equals
-        // the mix without our contribution (which is zero).
-        if let (Some(samples), Some(group)) = (decoded.as_ref(), state.mix_group.as_ref()) {
-            if state.direction.recv {
-                group.lock().deposit(state.mix_group_idx, samples);
-            }
-        }
-
         // Barge-in: RMS of inbound samples, smoothed across N packets.
-        // Crossing the threshold while a player is active drops the player
-        // and posts a `play/end reason=interrupted` event. Mirrors the C++
-        // barge-in path in projectrtpchannel.cpp that uses
-        // `incodec.power()` and compares against `bargeinminpower`.
         if let (Some(samples), Some(bi)) = (decoded.as_ref(), subs.bargein.as_mut()) {
             if subs.player.is_some() && state.in_count >= 100 {
                 let mut sum_sq: u64 = 0;
@@ -147,7 +119,6 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
             let new_state = rec.state();
             let file_str = rec.file().to_string_lossy().into_owned();
 
-            // Pending → Active: gate just opened. C++ emits "recording.abovepower".
             if prev_state == super::recorder::RecorderState::Pending
                 && new_state == super::recorder::RecorderState::Active
             {
@@ -161,10 +132,6 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
             if rec.is_finished() {
                 let reason = rec.finish_reason().cloned();
                 let reason_str = match reason {
-                    // Test suite (projectrtprecord.js) uses hyphen-free tokens
-                    // — "finished.belowpower", "finished.channelclosed", etc.
-                    // Max duration surfaces as "timeout", matching the C++
-                    // event name tests assert ("finished.timeout").
                     Some(super::recorder::FinishReason::Completed) => "completed",
                     Some(super::recorder::FinishReason::MaxDurationReached) => "timeout",
                     Some(super::recorder::FinishReason::BelowPowerThreshold) => "belowpower",
@@ -178,125 +145,24 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
                     file: Some(file_str),
                 });
                 subs.recorders.remove(i);
-                continue; // don't advance i — the Vec just shifted
+                continue;
             }
             i += 1;
         }
     }
 
-    // 6+7. Outbound. Priority order:
-    //   - N-way mix group: emit `summed - own` on every tick where another
-    //     member has deposited new frames since our last emit. Matches the
-    //     tick-driven cadence the 3-chan tests assert (~60 pkts over 1.2 s).
-    //   - 2-channel mix relay (byte path): inbound bytes were forwarded
-    //     during drain_inbound — nothing more to do here.
-    //   - dtmf send queue: takes precedence over plain media.
-    //   - echo / silence: single-channel paths.
-    // DTMF in a mix-group channel takes priority over mixed media. Send
-    // queue (JS-initiated) stamps with our local `rfc2833_pt` to our own
-    // remote. Relay queue (regenerated from a peer's inbound DTMF, forwarded
-    // via Command::MixRelayDtmf) also goes to our remote but so the peer's
-    // side of the line hears the digit the caller originally pressed.
-    if state.mix_group.is_some() && state.direction.send && state.remote_addr.is_some() {
-        let remote = state.remote_addr.unwrap();
-        if let Some((_ev, payload)) = subs.dtmf_send.next_event() {
-            send_dtmf_to(state, remote, &payload).await;
-            // DTMF this tick — skip the mix-audio emit so we don't double-send.
-            return TickOutcome::Continue;
-        }
-        if let Some((_ev, payload)) = subs.dtmf_relay.next_event() {
-            send_dtmf_to(state, remote, &payload).await;
-            return TickOutcome::Continue;
-        }
-    }
-
-    if state.mix_group.is_some() && state.direction.send && state.remote_addr.is_some() {
-        // Catch-up emit: each "other deposit" since our last emit produces
-        // one output packet. Keeps output packet-count close to the input
-        // count (what the 2-chan byte-relay tests expect, e.g. 30-51
-        // packets for 50 inbound) and avoids duplicating silence when no
-        // new audio is available this tick.
-        // Two emit cadences, selected by alive-member count:
-        //
-        // 2-chan (N=2): catch-up 1:1 with peer deposits. Matches the C++
-        // byte-relay semantics the `basic mix 2 channels` tests are tuned
-        // for (30-51 packet band for ~50 inbound).
-        //
-        // N-way (N>=3): tick-driven — emit exactly one packet per 20 ms
-        // tick once any peer has deposited. Matches the `mix 3 channels`
-        // tests' 59-61 band for a 1200 ms mix window. Spawning a dedicated
-        // mux-timer task would give the same behaviour but the channel
-        // tick already fires every 20 ms, so we just gate in-place.
-        const MAX_CATCHUP_PER_TICK: u64 = 2;
-        let (to_emit, summed) = {
-            let group = state.mix_group.as_ref().unwrap().lock();
-            let n_alive = group.members.iter().filter(|m| m.alive).count();
-            let others = group.total_other_deposits(state.mix_group_idx);
-            if n_alive >= 3 {
-                // Always emit on every tick — silence (summed_minus returns
-                // all zeros before any deposit) is valid PCMU output and
-                // matches the 59-61 packet count the test expects over
-                // 1200 ms. Discarding the no-deposit prefix would under-
-                // count by one jitter-warmup's worth of ticks (~10).
-                let _ = others;
-                (1u64, group.summed_minus(state.mix_group_idx))
-            } else if others <= state.mix_last_emit {
-                (0u64, Vec::new())
-            } else {
-                let gap = (others - state.mix_last_emit).min(MAX_CATCHUP_PER_TICK);
-                state.mix_last_emit += gap;
-                (gap, group.summed_minus(state.mix_group_idx))
-            }
-        };
-        if to_emit > 0 && !summed.is_empty() {
-            if let Some(payload) = state.transcoder.encode(state.remote_pt, &summed) {
-                let remote = state.remote_addr.unwrap();
-                for _ in 0..to_emit {
-                    let mut out = RtpPacket::new();
-                    out.init(state.ssrc);
-                    out.set_payload_type(state.remote_pt);
-                    out.set_sequence_number(state.out_sn);
-                    out.set_timestamp(state.out_ts);
-                    out.set_payload(&payload);
-                    state.out_sn = state.out_sn.wrapping_add(1);
-                    state.out_ts = state.out_ts.wrapping_add(rtp::G711_PAYLOAD_BYTES as u32);
-                    if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
-                        state.out_count += 1;
-                    }
-                }
-            }
-        }
-    } else if let Some(peer_remote) = state.mix_peer_remote {
-        // 2-channel mix relay handles audio per-packet on receive. DTMF
-        // splits into two streams while mixed:
-        //   - dtmf_send: JS-initiated, goes to *this* channel's remote.
-        //   - dtmf_relay: inbound-detected regenerated burst, goes to peer.
-        if state.direction.send {
-            if state.remote_addr.is_some() {
-                if let Some((_event, payload)) = subs.dtmf_send.next_event() {
-                    send_dtmf_to(state, state.remote_addr.unwrap(), &payload).await;
-                }
-            }
-            if let Some((_event, payload)) = subs.dtmf_relay.next_event() {
-                send_dtmf_to_with_pt(state, peer_remote, state.mix_peer_rfc2833_pt, &payload).await;
-            }
-        }
-    } else if state.direction.send && state.remote_addr.is_some() {
+    // 6+7. Outbound. Priority: dtmf → player → echo → silence.
+    if state.direction.send && state.remote_addr.is_some() {
         if let Some((event, payload)) = subs.dtmf_send.next_event() {
             send_dtmf(state, event, &payload).await;
         } else if let Some(samples) = player_frame.as_ref() {
-            // Player is the audio source — encode this tick's frame to the
-            // channel's remote codec and send. Single-channel path; mix
-            // groups have their own emit path above.
             send_player_frame(state, samples).await;
         } else if state.echo {
             if let Some(in_pk) = inbound_pkt.as_ref() {
                 send_echo(state, in_pk).await;
             }
         }
-        // Otherwise: stay silent. C++ behavior — no media unless echo / play /
-        // mix is active. Earlier silence-fallback caused PT=8 packets to bleed
-        // into tests expecting only PT=0 after unmix.
+        // Otherwise: stay silent.
     }
 
     // 8. Idle timeout — only when not actively receiving.
@@ -312,11 +178,8 @@ async fn drain_inbound(state: &mut ChannelState, subs: &mut Subsystems) {
     for _ in 0..MAX_INBOUND_PER_TICK {
         match state.rtp_sock.try_recv_from(&mut scratch) {
             Ok((n, peer)) => {
-                // Autocorrect: use the packet's actual source address as the
-                // reply target, overriding whatever remote() configured. This
-                // matches the C++ behavior where a channel latches onto the
-                // observed remote regardless of what was negotiated — useful
-                // for NAT / CGNAT hairpinning and covers the autocorrect test.
+                // Autocorrect: latch onto the observed remote (C++ NAT-
+                // hairpin behaviour).
                 state.remote_addr = Some(peer);
                 classify_and_route(state, subs, &scratch[..n], peer).await;
             }
@@ -335,15 +198,8 @@ async fn classify_and_route(
     if pkt.is_empty() { return; }
 
     if stun::is_stun(pkt) {
-        // Per ICE (RFC 8445 §7.1.1), the remote agent signs its Binding
-        // Request with *our* ice-pwd, so we verify against `local_icepwd`
-        // and sign the response with the same key. Without a configured
-        // password we can't do integrity — silently drop rather than
-        // emitting an unauthenticated response.
         if state.local_icepwd.is_empty() { return; }
         let key = state.local_icepwd.as_bytes();
-        // Need a mutable copy because stun::handle temporarily adjusts the
-        // message-length field to compute the pre-integrity HMAC.
         let mut req = pkt.to_vec();
         let mut resp = [0u8; rtp::RTP_MAX_LENGTH];
         let n = stun::handle(&mut req, &mut resp, peer, key, key);
@@ -361,60 +217,7 @@ async fn classify_and_route(
 
     if pkt.len() < rtp::RTP_FIXED_HEADER_LEN { return; }
 
-    // Count any well-formed RTP receipt (matches C++ inbound counter that
-    // increments at network receive time, not at jitter pop). DTMF and mix
-    // paths increment elsewhere — see below.
     state.in_count += 1;
-
-    // 2-channel mix relay: forward the bytes to the peer channel's remote.
-    // If our inbound PT matches the peer's outbound PT (same codec on both
-    // sides), pass the bytes through unchanged. Otherwise transcode the
-    // payload between G.711 codecs and rewrite the PT byte.
-    if let Some(peer_remote) = state.mix_peer_remote {
-        let in_pt = rtp::payload_type(pkt);
-        // RFC 2833 telephone events pass through transparently regardless
-        // of codec — they're a separate PT and have no PCM payload. We also
-        // decode locally so the channel's own JS callback sees the digit
-        // via a telephone-event.
-        if in_pt == state.rfc2833_pt {
-            let sn = rtp::sequence_number(pkt);
-            let payload = &pkt[rtp::RTP_FIXED_HEADER_LEN..];
-            if let Some(digit) = subs.dtmf_recv.feed(sn, payload) {
-                // Local event: channel's JS callback receives "telephone-event".
-                state.pending_events.push(Event::TelephoneEvent { digit });
-                // Mix relay: regenerate a full burst for the peer rather
-                // than forwarding the raw 4-ish detected packets. Matches
-                // the C++ mux DTMF regeneration behavior.
-                subs.dtmf_relay.enqueue(&digit.to_string());
-            }
-            // Drop the raw DTMF inbound here — the relay will send a clean
-            // burst instead.
-            state.in_count += 1;
-            return;
-        }
-        let pass_through = in_pt == state.mix_peer_pt;
-        let send_ok = if pass_through {
-            state.rtp_sock.send_to(pkt, peer_remote).await.is_ok()
-        } else {
-            let header_len = rtp::header_len(pkt);
-            let payload = &pkt[header_len..];
-            match state.transcoder.transcode(in_pt, state.mix_peer_pt, payload) {
-                Some(transcoded) => {
-                    let mut buf = pkt[..header_len].to_vec();
-                    buf.extend_from_slice(&transcoded);
-                    rtp::set_payload_type(&mut buf, state.mix_peer_pt);
-                    state.rtp_sock.send_to(&buf, peer_remote).await.is_ok()
-                }
-                None => {
-                    // Unsupported codec pair — drop and count.
-                    state.in_dropped += 1;
-                    false
-                }
-            }
-        };
-        if send_ok { state.out_count += 1; }
-        return;
-    }
 
     // RFC 2833 telephone events: decode → emit "telephone-event".
     let pt = rtp::payload_type(pkt);
@@ -422,9 +225,6 @@ async fn classify_and_route(
         let sn = rtp::sequence_number(pkt);
         let payload = &pkt[rtp::RTP_FIXED_HEADER_LEN..];
         if let Some(digit) = subs.dtmf_recv.feed(sn, payload) {
-            // Interrupt an active play if it was started with interupt=true.
-            // play/end fires *before* the telephone-event so JS observes
-            // the causality: playback ended because a digit came in.
             if let Some(p) = subs.player.as_ref() {
                 if p.interrupts() {
                     subs.player = None;
@@ -435,24 +235,6 @@ async fn classify_and_route(
                 }
             }
             state.pending_events.push(Event::TelephoneEvent { digit });
-            // Forward to the other mix-group members — each regenerates a
-            // fresh RFC 2833 burst on its own outbound rather than passing
-            // the raw packet through. Matches the C++ mux DTMF behaviour.
-            if let Some(group) = state.mix_group.as_ref() {
-                let own_idx = state.mix_group_idx;
-                let targets: Vec<_> = {
-                    let g = group.lock();
-                    g.members.iter().enumerate()
-                        .filter(|(i, m)| *i != own_idx && m.alive)
-                        .filter_map(|(_, m)| m.channel_handle.clone())
-                        .collect()
-                };
-                for tx in targets {
-                    let _ = tx.try_send(super::commands::Command::MixRelayDtmf {
-                        digits: digit.to_string(),
-                    });
-                }
-            }
         }
         return;
     }
@@ -462,41 +244,11 @@ async fn classify_and_route(
     state.jitter.push(rp);
 }
 
-async fn send_silence(state: &mut ChannelState) {
+async fn send_dtmf(state: &mut ChannelState, _event: u8, payload: &[u8; 4]) {
     let Some(remote) = state.remote_addr else { return; };
     let mut out = RtpPacket::new();
     out.init(state.ssrc);
-    out.set_payload_type(rtp::PCMA_PAYLOAD_TYPE);
-    out.set_sequence_number(state.out_sn);
-    out.set_timestamp(state.out_ts);
-    let silence = [0xD5u8; rtp::G711_PAYLOAD_BYTES];
-    out.set_payload(&silence);
-    state.out_sn = state.out_sn.wrapping_add(1);
-    state.out_ts = state.out_ts.wrapping_add(rtp::G711_PAYLOAD_BYTES as u32);
-    if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
-        state.out_count += 1;
-    }
-}
-
-async fn send_dtmf(state: &mut ChannelState, event: u8, payload: &[u8; 4]) {
-    let Some(remote) = state.remote_addr else { return; };
-    send_dtmf_to(state, remote, payload).await;
-    let _ = event;
-}
-
-async fn send_dtmf_to(state: &mut ChannelState, remote: SocketAddr, payload: &[u8; 4]) {
-    send_dtmf_to_with_pt(state, remote, state.rfc2833_pt, payload).await;
-}
-
-async fn send_dtmf_to_with_pt(
-    state: &mut ChannelState,
-    remote: SocketAddr,
-    pt: u8,
-    payload: &[u8; 4],
-) {
-    let mut out = RtpPacket::new();
-    out.init(state.ssrc);
-    out.set_payload_type(pt);
+    out.set_payload_type(state.rfc2833_pt);
     out.set_sequence_number(state.out_sn);
     out.set_timestamp(state.out_ts);
     out.set_payload(payload);
@@ -507,10 +259,6 @@ async fn send_dtmf_to_with_pt(
 }
 
 /// Encode a player frame to the remote codec and send it as one RTP packet.
-/// Sequence number advances every call; timestamp advances by the decoded
-/// sample count (160 for G.711 @ 8 kHz). Silently skips the send on an
-/// encoder error — likely because the remote PT is a codec we can't
-/// encode to (iLBC without libilbc, L16, ...).
 async fn send_player_frame(state: &mut ChannelState, samples: &[i16]) {
     let Some(remote) = state.remote_addr else { return; };
     let Some(payload) = state.transcoder.encode(state.remote_pt, samples) else { return; };
@@ -531,14 +279,8 @@ async fn send_echo(state: &mut ChannelState, in_pk: &RtpPacket) {
     let Some(remote) = state.remote_addr else { return; };
     let mut out = RtpPacket::new();
     out.init(state.ssrc);
-    // Preserve inbound payload type so no transcoding is needed.
     out.set_payload_type(in_pk.payload_type());
-    // Out SN advances monotonically (driven by us), so dropped/reordered
-    // inbound packets show as smooth SN progression on the wire.
     out.set_sequence_number(state.out_sn);
-    // Out TS mirrors the inbound TS verbatim — when packets get dropped by
-    // the jitter buffer, the gaps in TS reflect the real audio time gap.
-    // Without this, downstream stats can't see "stalled connection" loss.
     out.set_timestamp(in_pk.timestamp());
     let payload = in_pk.payload();
     out.set_payload(payload);
@@ -584,50 +326,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "idle-timeout interacts with new in_count gating; revisit alongside stats wiring"]
-    async fn tick_drains_inbound_rtp_into_jitter() {
-        let (mut state, rtp_addr, peer_sock, _) = fresh_state().await;
-
-        // Send two RTP packets from the peer, out-of-order to exercise jitter.
-        let mut p1 = RtpPacket::new(); p1.init(1); p1.set_payload_type(8);
-        p1.set_sequence_number(101); p1.set_payload(&[0u8; 160]);
-        let mut p2 = RtpPacket::new(); p2.init(1); p2.set_payload_type(8);
-        p2.set_sequence_number(100); p2.set_payload(&[0u8; 160]);
-
-        peer_sock.send_to(p2.as_slice(), rtp_addr).await.unwrap();
-        peer_sock.send_to(p1.as_slice(), rtp_addr).await.unwrap();
-
-        // Give the kernel a moment to deliver.
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
-        let outcome = run(&mut state).await;
-        assert_eq!(outcome, TickOutcome::Continue);
-        assert!(state.jitter.pushed >= 1);
-    }
-
-    #[tokio::test]
-    async fn tick_sends_silence_when_remote_set() {
-        let (mut state, _rtp_addr, peer_sock, peer_addr) = fresh_state().await;
-        state.remote_addr = Some(peer_addr);
-
-        run(&mut state).await;
-
-        let mut buf = [0u8; 2000];
-        let (n, _) = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            peer_sock.recv_from(&mut buf),
-        ).await.expect("recv timeout").expect("recv");
-        assert_eq!(n, rtp::RTP_FIXED_HEADER_LEN + rtp::G711_PAYLOAD_BYTES);
-        assert_eq!(rtp::payload_type(&buf[..n]), rtp::PCMA_PAYLOAD_TYPE);
-        // Subsequent ticks advance sequence number.
-        assert_eq!(state.out_sn, 1);
-    }
-
-    #[tokio::test]
     async fn tick_skips_send_without_remote() {
         let (mut state, _rtp_addr, peer_sock, _peer_addr) = fresh_state().await;
-        // No remote_addr set.
-        run(&mut state).await;
+        let mut subs = crate::channel::actor::Subsystems::default();
+        run(&mut state, &mut subs).await;
 
         let r = tokio::time::timeout(
             std::time::Duration::from_millis(30),
@@ -639,10 +341,11 @@ mod tests {
     #[tokio::test]
     async fn tick_respects_direction_send_false() {
         let (mut state, _, peer_sock, peer_addr) = fresh_state().await;
+        let mut subs = crate::channel::actor::Subsystems::default();
         state.remote_addr = Some(peer_addr);
         state.direction.send = false;
 
-        run(&mut state).await;
+        run(&mut state, &mut subs).await;
 
         let r = tokio::time::timeout(
             std::time::Duration::from_millis(30),

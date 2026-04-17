@@ -82,44 +82,13 @@ pub enum Command {
     Dtmf { digits: String },
     Echo { enabled: bool },
     Direction(Direction),
-    Mix { other_id: ChannelId, other_sender: tokio::sync::mpsc::Sender<Command>, ack: Ack },
-    Unmix,
-    /// Attach a mix-relay peer. `peer_handle` lets us push remote-updates to
-    /// the peer when our own `Remote` changes. `peer_remote/pt/rfc2833_pt` are
-    /// the peer's outbound targets at bind time — may still be None if the
-    /// peer hasn't been configured yet, in which case the peer will push an
-    /// update to us via `SetPeerRemote` once its `Remote` lands. `peer_ilbc_pt`
-    /// tells our transcoder which dynamic PT value to accept as iLBC when
-    /// decoding/encoding for the peer.
-    BindMixPeer {
-        peer_handle: tokio::sync::mpsc::Sender<Command>,
-        peer_remote: Option<SocketAddr>,
-        peer_pt: u8,
-        peer_rfc2833_pt: u8,
-        peer_ilbc_pt: u8,
-    },
-    /// Detach the mix-relay peer. Mirrors `Unmix` but scoped to the 2-chan
-    /// relay (clears peer handle + outbound targets + emits mix/finished).
-    UnbindMixPeer,
-    /// Peer-to-peer update: the peer's own `Remote` changed; refresh our
-    /// outbound targets accordingly. No mix start/finished event — the bind
-    /// state hasn't changed, only the target.
-    SetPeerRemote { remote: Option<SocketAddr>, pt: u8, rfc2833_pt: u8 },
-    /// N-way mix: attach to a shared MixGroup. Mutually exclusive with
-    /// `BindMixPeer`; the actor clears any 2-chan state on bind.
-    /// `own_handle` is the actor's own command sender — published into the
-    /// group so other members can forward DTMF bursts directly.
-    BindMixGroup {
-        group: std::sync::Arc<parking_lot::Mutex<super::mixer::MixGroupShared>>,
-        own_idx: usize,
-        own_handle: tokio::sync::mpsc::Sender<Command>,
-    },
-    /// Detach from any mix (2-chan or N-way). Emits `mix/finished` once.
-    UnbindMixGroup,
-    /// Relay a regenerated RFC 2833 burst from a peer mix member. The
-    /// receiver enqueues it into `dtmf_relay` so its next tick sends the
-    /// full burst on its own remote.
-    MixRelayDtmf { digits: String },
+    /// Migrate this channel's state + subs into a mix group actor. The actor
+    /// transitions from Local to Mixed mode; subsequent commands are
+    /// forwarded into the mixer. `ack` fires once the migration completes.
+    EnterMix { mix: super::mixer::MixHandle, ack: Ack },
+    /// Migrate state + subs back out of the mix group. The actor returns to
+    /// Local mode and resumes its own ticker. Used for `channel.unmix()`.
+    LeaveMix { ack: Ack },
     Close { reason: String },
 }
 

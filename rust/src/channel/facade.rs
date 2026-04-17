@@ -124,14 +124,12 @@ pub struct ChannelObject {
     /// Snapshot of the iLBC wire PT (defaults to 97). Used when BindMixPeer
     /// tells the peer how to recognise this side's iLBC packets.
     ilbc_pt: u8,
-    /// N-way mix slot — the shared MixGroup this channel is a member of,
-    /// plus its index. `None` when not mixed. Facade-side state, guarded
+    /// Mix-group handle — `Some` when this channel is currently part of a
+    /// mix (state has migrated into the mixer actor). Facade-side only;
+    /// the channel actor carries a parallel Mode::Mixed reference. Guarded
     /// by a std Mutex so the sync `mix()` / `unmix()` methods can update
     /// it from JS without await.
-    mix_slot: std::sync::Mutex<Option<(
-        std::sync::Arc<parking_lot::Mutex<super::mixer::MixGroupShared>>,
-        usize,
-    )>>,
+    mix_slot: std::sync::Mutex<Option<super::mixer::MixHandle>>,
 }
 
 #[napi]
@@ -277,22 +275,14 @@ impl ChannelObject {
         self.handle.cmd.try_send(super::commands::Command::PlayRecord { cfg, ack }).is_ok()
     }
 
-    /// 2-channel mix via a byte-relay (matches C++ mix2). n-way mix using
-    /// a proper MixGroup is a follow-up — this function handles the 2-channel
-    /// case which is by far the most common in the test suite and in prod.
-    /// Returns true even if one side has no `remote_addr` yet; a later
-    /// `.remote(...)` call on that channel propagates the update to the peer.
-    /// Place both channels in a shared N-way mix group. Subsequent
-    /// `mix(c)` calls extend the existing group. Returns true unless
-    /// the channels are already in *different* groups (unsupported merge).
+    /// Place both channels in a shared mix group. The channels' state and
+    /// subsystems migrate into the mix actor (which owns the tick for all
+    /// members in lockstep — see `channel/mixer.rs`). Subsequent `mix(c)`
+    /// calls extend the existing group. Returns true unless the channels
+    /// are already in *different* groups (unsupported merge).
     #[napi]
     pub fn mix(&self, other: &ChannelObject) -> bool {
-        use std::sync::Arc;
-        use parking_lot::Mutex as PLMutex;
-        use super::mixer::MixGroupShared;
-
         // Deadlock-avoidance: always lock in ascending channel-id order.
-        // `lock_in_order` returns two MutexGuards aliased to self/other.
         let (mut self_guard, mut other_guard) = if self.handle.id < other.handle.id {
             (self.mix_slot.lock().unwrap(), other.mix_slot.lock().unwrap())
         } else if self.handle.id > other.handle.id {
@@ -306,49 +296,45 @@ impl ChannelObject {
         let self_slot = &mut *self_guard;
         let other_slot = &mut *other_guard;
 
-        let (group, self_idx, other_idx) = match (&self_slot, &other_slot) {
-            (None, None) => {
-                let shared = MixGroupShared::new(2);
-                (Arc::new(PLMutex::new(shared)), 0usize, 1usize)
-            }
-            (Some((g, self_idx)), None) => {
-                let other_idx = g.lock().push_member();
-                (g.clone(), *self_idx, other_idx)
-            }
-            (None, Some((g, other_idx))) => {
-                let self_idx = g.lock().push_member();
-                (g.clone(), self_idx, *other_idx)
-            }
-            (Some((ga, _)), Some((gb, _))) => {
-                if Arc::ptr_eq(ga, gb) {
-                    // Same group — no-op. Return true so callers can
-                    // safely re-assert the mix.
-                    return true;
+        let mix = match (&self_slot, &other_slot) {
+            (None, None) => super::mixer::spawn(),
+            (Some(mix), None) | (None, Some(mix)) => mix.clone(),
+            (Some(ma), Some(mb)) => {
+                if ma.id == mb.id {
+                    // Same group — still fire a fresh mix/start on both sides
+                    // by re-sending EnterMix (the actor is idempotent when
+                    // already in this mix).
+                    ma.clone()
+                } else {
+                    return false;
                 }
-                // Different groups — merging is not supported yet.
-                return false;
             }
         };
 
-        *self_slot = Some((group.clone(), self_idx));
-        *other_slot = Some((group.clone(), other_idx));
-
-        let _ = self.handle.cmd.try_send(super::commands::Command::BindMixGroup {
-            group: group.clone(), own_idx: self_idx, own_handle: self.handle.cmd.clone(),
+        // Always send EnterMix to both channels. The channel actor migrates
+        // on first entry and posts a `mix/start` event; on a re-mix into the
+        // same group it just posts the event again (matches C++ behaviour
+        // where every `mix()` call fires `mix/start` on both sides).
+        *self_slot = Some(mix.clone());
+        *other_slot = Some(mix.clone());
+        let (ack, _) = tokio::sync::oneshot::channel();
+        let _ = self.handle.cmd.try_send(super::commands::Command::EnterMix {
+            mix: mix.clone(),
+            ack,
         });
-        let _ = other.handle.cmd.try_send(super::commands::Command::BindMixGroup {
-            group, own_idx: other_idx, own_handle: other.handle.cmd.clone(),
+        let (ack, _) = tokio::sync::oneshot::channel();
+        let _ = other.handle.cmd.try_send(super::commands::Command::EnterMix {
+            mix,
+            ack,
         });
         true
     }
 
     #[napi]
     pub fn unmix(&self, _other: Option<&ChannelObject>) -> bool {
-        // Tombstone our slot so other members still in the group see us
-        // contribute silence; drop the facade-side Arc so a later mix()
-        // starts fresh.
         *self.mix_slot.lock().unwrap() = None;
-        let _ = self.handle.cmd.try_send(super::commands::Command::UnbindMixGroup);
+        let (ack, _) = tokio::sync::oneshot::channel();
+        let _ = self.handle.cmd.try_send(super::commands::Command::LeaveMix { ack });
         true
     }
 }

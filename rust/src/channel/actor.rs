@@ -1,10 +1,17 @@
-// Channel actor — the tokio task that owns ChannelState.
+// Channel actor — the tokio task that owns ChannelState while Local.
 //
-// The actor is the sole mutator of per-channel state. Everything else — JS,
-// the mixer group, another channel — talks to it via `Handle`'s mpsc. When a
-// channel joins a mix group, the state migrates into the MixGroup actor; the
-// channel actor becomes a thin forwarder until the group releases it back.
-// See the Task #7 design note for the full ownership model.
+// The actor has two modes:
+//
+//   Local  — owns Box<ChannelState> + Subsystems and runs its own 20 ms
+//            ticker. Handles every command in-process.
+//   Mixed  — state + subs have migrated into a MixGroup actor. The channel
+//            actor becomes a forwarder: JS commands get relayed into the
+//            mixer via `MixHandle::forward()`. Close / LeaveMix pull the
+//            Member back out of the mixer and restore Local ownership.
+//
+// This is the "bite the bullet" design the MIGRATE.md note describes: the
+// mixer owns the tick so all the cross-channel math (summed_minus, DTMF fan-
+// out) runs in lockstep, free of the old deposit/emit race.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -12,10 +19,11 @@ use std::time::Duration;
 
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::time::{interval, Interval, MissedTickBehavior};
 
-use super::commands::{Command, Direction, Handle};
+use super::commands::{Command, Handle};
 use super::dtmf::{DtmfReceiver, DtmfSender};
+use super::mixer::{Member, MixHandle};
 use super::player::Player;
 use super::recorder::{FinishReason, Recorder};
 use super::state::{ChannelState, CloseInfo};
@@ -89,7 +97,8 @@ pub fn spawn_with_sockets(
     state.local_icepwd = cfg.local_icepwd;
     let (tx, rx) = mpsc::channel::<Command>(DEFAULT_CMD_QUEUE_DEPTH);
     let events = cfg.events;
-    tokio::spawn(async move { run(state, rx, events).await });
+    let handle_cmd = tx.clone();
+    tokio::spawn(async move { run(Box::new(state), rx, events, handle_cmd).await });
     Ok(Handle { id: cfg.id, cmd: tx })
 }
 
@@ -112,10 +121,9 @@ pub struct Subsystems {
     pub bargein: Option<BargeInState>,
     /// JS-initiated dtmf via `channel.dtmf(...)` — targets state.remote_addr.
     pub dtmf_send: DtmfSender,
-    /// Mix-relay dtmf — when a digit is detected on inbound while mixed, a
-    /// full RFC 2833 burst is enqueued here and emitted to mix_peer_remote.
-    /// Matches the C++ behavior where the mux side regenerates a proper
-    /// burst rather than passing raw packets through.
+    /// Mix-relay dtmf — when a digit is detected on a peer's inbound while
+    /// mixed, a full RFC 2833 burst is enqueued here and emitted to the
+    /// local remote on the next tick. Matches the C++ mux DTMF behaviour.
     pub dtmf_relay: DtmfSender,
     pub dtmf_recv: DtmfReceiver,
 }
@@ -125,47 +133,121 @@ pub struct BargeInState {
     pub power_ma: crate::firfilter::MaFilter,
 }
 
-async fn run(mut state: ChannelState, mut cmds: mpsc::Receiver<Command>, events: Arc<dyn EventSink>) {
-    let mut subs = Subsystems::default();
+/// Top-level actor ownership. `Local` runs the per-channel ticker; `Mixed`
+/// delegates ticks + most commands to the mix actor.
+enum Mode {
+    Local {
+        state: Box<ChannelState>,
+        subs: Subsystems,
+    },
+    Mixed {
+        mix: MixHandle,
+    },
+}
+
+async fn run(
+    initial_state: Box<ChannelState>,
+    mut cmds: mpsc::Receiver<Command>,
+    events: Arc<dyn EventSink>,
+    self_cmd: mpsc::Sender<Command>,
+) {
+    let id = initial_state.id;
+    let mut mode = Mode::Local { state: initial_state, subs: Subsystems::default() };
     let mut ticker = interval(Duration::from_millis(TICK_MS));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     let mut closing: Option<String> = None;
 
     while closing.is_none() {
-        tokio::select! {
-            biased;
-
-            cmd = cmds.recv() => {
-                match cmd {
-                    Some(cmd) => if let Some(reason) = handle_command(&mut state, &mut subs, cmd, &events).await {
-                        closing = Some(reason);
-                    },
-                    None => closing = Some("handle-dropped".to_string()),
+        match &mut mode {
+            Mode::Local { state, subs } => {
+                match step_local(state, subs, &mut cmds, &mut ticker, &events).await {
+                    LocalStep::Continue => {}
+                    LocalStep::Close(reason) => closing = Some(reason),
+                    LocalStep::EnterMix { mix, ack } => {
+                        // Migrate into the mixer. Need to move out of `mode`
+                        // which requires taking ownership — swap to a temp
+                        // Local with a dummy then rebuild the real Mixed.
+                        let (state_out, subs_out) = take_local(&mut mode);
+                        match mix.add(Box::new(Member::new(state_out, subs_out, events.clone()))).await {
+                            Ok(()) => {
+                                events.post(Event::Mix { state: "start".to_string() });
+                                mode = Mode::Mixed { mix };
+                                let _ = ack.send(());
+                            }
+                            Err(()) => {
+                                // Mixer is gone (shouldn't happen in normal
+                                // flow). Fall back to Local mode — state was
+                                // consumed into the `Member` that got
+                                // dropped. Repopulate a zero-state placeholder
+                                // and close so the channel doesn't hang.
+                                closing = Some("mix-add-failed".to_string());
+                            }
+                        }
+                    }
                 }
             }
-
-            _ = ticker.tick() => {
-                let outcome = tick::run(&mut state, &mut subs).await;
-                // Drain any events the tick generated (e.g. inbound DTMF).
-                for ev in state.pending_events.drain(..) {
-                    events.post(ev);
-                }
-                if outcome == TickOutcome::Stop {
-                    closing = Some("idle-timeout".to_string());
+            Mode::Mixed { mix } => {
+                match cmds.recv().await {
+                    None => closing = Some("handle-dropped".to_string()),
+                    Some(Command::Close { reason }) => {
+                        if let Some(member) = mix.remove(id).await {
+                            restore_local(&mut mode, member);
+                            events.post(Event::Mix { state: "finished".to_string() });
+                        }
+                        closing = Some(reason);
+                    }
+                    Some(Command::LeaveMix { ack }) => {
+                        if let Some(member) = mix.remove(id).await {
+                            restore_local(&mut mode, member);
+                            events.post(Event::Mix { state: "finished".to_string() });
+                        }
+                        let _ = ack.send(());
+                    }
+                    Some(Command::EnterMix { mix: new_mix, ack }) => {
+                        // Already in a mix. If it's the same one (facade
+                        // re-asserts on same-group mix()), post a fresh
+                        // `mix/start` event so JS sees one per mix() call.
+                        // Different-group migration isn't supported yet.
+                        if new_mix.id == mix.id {
+                            events.post(Event::Mix { state: "start".to_string() });
+                        }
+                        let _ = ack.send(());
+                    }
+                    Some(cmd) => {
+                        // All other commands get forwarded to the mixer for
+                        // application against this member's state/subs.
+                        mix.forward(id, cmd).await;
+                    }
                 }
             }
         }
     }
 
-    // Final flush — let recorders finalize their WAV files and surface
-    // per-file `record/finished.channelclosed` before the `close` event.
-    // WavWriter's Drop finalizes headers regardless, but we emit JS events
-    // before the Close payload so subscribers see the expected order.
     let reason = closing.unwrap_or_default();
+
+    // If we arrived here via a path that left us mixed (shouldn't happen
+    // since close/leavemix above pull out first, but be defensive), still
+    // try to reclaim state for the stats payload. Use a timeout so a dead
+    // mixer doesn't strand the actor.
+    if let Mode::Mixed { mix } = &mode {
+        if let Ok(Some(member)) = tokio::time::timeout(Duration::from_millis(100), mix.remove(id)).await {
+            restore_local(&mut mode, member);
+            events.post(Event::Mix { state: "finished".to_string() });
+        }
+    }
+
+    let (state, subs) = match &mut mode {
+        Mode::Local { state, subs } => (state, subs),
+        Mode::Mixed { .. } => {
+            // Last-resort: emit a minimal Close event without stats.
+            events.post(Event::Close { reason, stats: ChannelStats::default() });
+            drop(self_cmd);
+            return;
+        }
+    };
+
     // Player: if still active on close, emit `play/end reason=channelclosed`.
-    // Matches the C++ event ordering that proxy tests assert — messages
-    // appear as play/start → play/end → close, not play/start → close.
     if subs.player.is_some() {
         subs.player = None;
         subs.bargein = None;
@@ -183,41 +265,117 @@ async fn run(mut state: ChannelState, mut cmds: mpsc::Receiver<Command>, events:
             file: Some(file_str),
         });
     }
-    // If the channel was still in a mix at close time, emit `mix/finished`
-    // before the `close` event. Matches C++ teardown ordering.
-    if state.mix_peer_remote.is_some() {
-        state.mix_peer_remote = None;
-        events.post(Event::Mix { state: "finished".to_string() });
-    }
     let stats = ChannelStats {
         in_count: state.in_count,
-        // Jitter-side drops (out-of-window SN, duplicates) plus any drops
-        // counted directly on state (e.g. mix-relay transcode failures).
         in_dropped: state.in_dropped + state.jitter.dropped,
         in_skip: state.in_skip,
         out_count: state.out_count,
     };
     state.close_info = Some(CloseInfo { reason: reason.clone() });
     events.post(Event::Close { reason, stats });
+    drop(self_cmd);
 }
 
-async fn handle_command(
+/// Replaces `mode` temporarily with a placeholder Mixed so we can move the
+/// owned state + subs out. Caller must immediately rebuild `mode` on the
+/// success path. On failure the placeholder Mixed is left in place and the
+/// actor proceeds to close.
+fn take_local(mode: &mut Mode) -> (Box<ChannelState>, Subsystems) {
+    // Swap out with a temporary Mixed placeholder — we'll overwrite mode
+    // right after. The placeholder MixHandle is never used because the
+    // caller transitions mode before any further command handling runs.
+    let placeholder = Mode::Mixed { mix: MixHandle { id: 0, cmd: mpsc::channel(1).0 } };
+    let taken = std::mem::replace(mode, placeholder);
+    match taken {
+        Mode::Local { state, subs } => (state, subs),
+        Mode::Mixed { .. } => unreachable!("take_local called from non-Local mode"),
+    }
+}
+
+fn restore_local(mode: &mut Mode, member: Box<Member>) {
+    let Member { state, subs, .. } = *member;
+    *mode = Mode::Local { state, subs };
+}
+
+enum LocalStep {
+    Continue,
+    Close(String),
+    EnterMix {
+        mix: MixHandle,
+        ack: tokio::sync::oneshot::Sender<()>,
+    },
+}
+
+async fn step_local(
+    state: &mut ChannelState,
+    subs: &mut Subsystems,
+    cmds: &mut mpsc::Receiver<Command>,
+    ticker: &mut Interval,
+    events: &Arc<dyn EventSink>,
+) -> LocalStep {
+    tokio::select! {
+        biased;
+
+        cmd = cmds.recv() => {
+            match cmd {
+                None => LocalStep::Close("handle-dropped".to_string()),
+                Some(cmd) => match handle_command_local(state, subs, cmd, events).await {
+                    LocalOutcome::Continue => LocalStep::Continue,
+                    LocalOutcome::Close(r) => LocalStep::Close(r),
+                    LocalOutcome::EnterMix { mix, ack } => LocalStep::EnterMix { mix, ack },
+                }
+            }
+        }
+
+        _ = ticker.tick() => {
+            let outcome = tick::run(state, subs).await;
+            for ev in state.pending_events.drain(..) {
+                events.post(ev);
+            }
+            if outcome == TickOutcome::Stop {
+                LocalStep::Close("idle-timeout".to_string())
+            } else {
+                LocalStep::Continue
+            }
+        }
+    }
+}
+
+enum LocalOutcome {
+    Continue,
+    Close(String),
+    EnterMix {
+        mix: MixHandle,
+        ack: tokio::sync::oneshot::Sender<()>,
+    },
+}
+
+async fn handle_command_local(
     state: &mut ChannelState,
     subs: &mut Subsystems,
     cmd: Command,
     events: &Arc<dyn EventSink>,
-) -> Option<String> {
+) -> LocalOutcome {
     match cmd {
-        Command::Close { reason } => Some(reason),
+        Command::Close { reason } => LocalOutcome::Close(reason),
+
+        Command::EnterMix { mix, ack } => LocalOutcome::EnterMix { mix, ack },
+
+        Command::LeaveMix { ack } => {
+            // Not in a mix — ack immediately. Matches C++ `unmix()` returning
+            // true even when the channel wasn't mixed.
+            let _ = ack.send(());
+            LocalOutcome::Continue
+        }
 
         Command::Direction(d) => {
             state.direction = d;
-            None
+            LocalOutcome::Continue
         }
 
         Command::Echo { enabled } => {
             state.echo = enabled;
-            None
+            LocalOutcome::Continue
         }
 
         Command::Remote { cfg, ack } => {
@@ -232,27 +390,13 @@ async fn handle_command(
             if let Some(pwd) = &cfg.icepwd {
                 state.remote_icepwd = pwd.clone();
             }
-            // If we're already bound into a 2-chan mix, notify the peer of
-            // our new remote so the packets it forwards to us via the relay
-            // land on the correct address (and the correct PT for transcode).
-            if let Some(peer) = state.mix_peer_handle.clone() {
-                let update = super::commands::Command::SetPeerRemote {
-                    remote: Some(cfg.addr),
-                    pt: cfg.payload_type,
-                    rfc2833_pt: state.rfc2833_pt,
-                };
-                let _ = peer.try_send(update);
-            }
             state.remote = Some(cfg);
             state.remote_confirmed = true;
             let _ = ack.send(());
-            None
+            LocalOutcome::Continue
         }
 
         Command::Play { cfg, ack } => {
-            // If a prior player is still alive, C++ semantics are "replace,
-            // fire play/end reason=new on the old one". We emit that first
-            // so JS sees the transition before the new play/start.
             if subs.player.is_some() {
                 subs.player = None;
                 events.post(Event::Play { state: PlayState::End, reason: Some("new".into()) });
@@ -260,7 +404,7 @@ async fn handle_command(
             subs.player = Some(Player::new(cfg));
             events.post(Event::Play { state: PlayState::Start, reason: Some("new".into()) });
             let _ = ack.send(());
-            None
+            LocalOutcome::Continue
         }
 
         Command::Record { cfg, ack } => {
@@ -268,10 +412,6 @@ async fn handle_command(
             let is_gated = cfg.start_above_power.is_some();
             match Recorder::open(cfg.clone()).await {
                 Ok(rec) => {
-                    // If a recorder already exists for this exact file path,
-                    // replace it with an implicit "channelclosed" reason —
-                    // the old writer's Drop finalizes its header, and JS
-                    // observes a finished event followed by the new recording.
                     if let Some(idx) = subs.recorders.iter().position(|r| r.file() == rec.file()) {
                         let mut old = subs.recorders.remove(idx);
                         old.close(FinishReason::ChannelClosed);
@@ -282,9 +422,6 @@ async fn handle_command(
                         });
                     }
                     subs.recorders.push(rec);
-                    // A power-gated recorder stays silent until the gate opens;
-                    // the tick emits `recording.abovepower` on that transition.
-                    // Matches C++ event ordering in projectrtprecord.js.
                     if !is_gated {
                         events.post(Event::Record {
                             state: RecordState::Recording,
@@ -302,11 +439,10 @@ async fn handle_command(
                 }
             }
             let _ = ack.send(());
-            None
+            LocalOutcome::Continue
         }
 
         Command::RecordFinish { file } => {
-            // JS targeted one specific recorder by file path.
             if let Some(idx) = subs.recorders.iter().position(|r| r.file() == file) {
                 let mut rec = subs.recorders.remove(idx);
                 let file_str = rec.file().to_string_lossy().into_owned();
@@ -317,14 +453,14 @@ async fn handle_command(
                     file: Some(file_str),
                 });
             }
-            None
+            LocalOutcome::Continue
         }
 
         Command::RecordSetPaused { file, paused } => {
             if let Some(rec) = subs.recorders.iter_mut().find(|r| r.file() == file) {
                 if paused { rec.pause(); } else { rec.resume(); }
             }
-            None
+            LocalOutcome::Continue
         }
 
         Command::PlayRecord { cfg, ack } => {
@@ -335,9 +471,6 @@ async fn handle_command(
             subs.player = Some(Player::new(cfg.player));
             events.post(Event::Play { state: PlayState::Start, reason: Some("new".into()) });
 
-            // Barge-in setup. `interrupt:true` + `bargeinpower` is the
-            // trigger — without both, we never interrupt the player from
-            // loud inbound audio (DTMF interrupt is separate).
             if cfg.interrupt {
                 if let Some(threshold) = cfg.bargein_power {
                     let mut ma = crate::firfilter::MaFilter::new();
@@ -377,120 +510,12 @@ async fn handle_command(
                 }
             }
             let _ = ack.send(());
-            None
+            LocalOutcome::Continue
         }
 
         Command::Dtmf { digits } => {
             subs.dtmf_send.enqueue(&digits);
-            None
-        }
-
-        Command::Mix { other_id: _, other_sender: _, ack } => {
-            // TODO: hand state off to MixGroup actor (Task #8).
-            let _ = ack.send(());
-            None
-        }
-
-        Command::Unmix => {
-            // Legacy path. Prefer Command::UnbindMixPeer via facade.unmix.
-            let was_bound = state.mix_peer_handle.is_some() || state.mix_peer_remote.is_some();
-            state.mix_peer_handle = None;
-            state.mix_peer_remote = None;
-            state.mix_peer_pt = 0;
-            state.mix_peer_rfc2833_pt = 101;
-            if was_bound {
-                events.post(Event::Mix { state: "finished".to_string() });
-            }
-            None
-        }
-
-        Command::BindMixPeer { peer_handle, peer_remote, peer_pt, peer_rfc2833_pt, peer_ilbc_pt } => {
-            let was_bound = state.mix_peer_handle.is_some();
-            state.mix_peer_handle = Some(peer_handle);
-            state.mix_peer_remote = peer_remote;
-            state.mix_peer_pt = peer_pt;
-            state.mix_peer_rfc2833_pt = peer_rfc2833_pt;
-            // Tell the transcoder which PT to treat as iLBC on the peer side,
-            // so when we encode outbound for them we pick the iLBC path even
-            // if they're using a dynamic PT != 97.
-            state.transcoder.set_peer_ilbc_pt(peer_ilbc_pt);
-            if !was_bound {
-                events.post(Event::Mix { state: "start".to_string() });
-            }
-            None
-        }
-
-        Command::UnbindMixPeer => {
-            let was_bound = state.mix_peer_handle.is_some();
-            // Push an unbind to the peer so both sides release together.
-            if let Some(peer) = state.mix_peer_handle.take() {
-                let _ = peer.try_send(super::commands::Command::UnbindMixPeer);
-            }
-            state.mix_peer_remote = None;
-            state.mix_peer_pt = 0;
-            state.mix_peer_rfc2833_pt = 101;
-            if was_bound {
-                events.post(Event::Mix { state: "finished".to_string() });
-            }
-            None
-        }
-
-        Command::SetPeerRemote { remote, pt, rfc2833_pt } => {
-            // Pure target refresh — no event. The bound state didn't change,
-            // only where we forward to.
-            state.mix_peer_remote = remote;
-            state.mix_peer_pt = pt;
-            state.mix_peer_rfc2833_pt = rfc2833_pt;
-            None
-        }
-
-        Command::BindMixGroup { group, own_idx, own_handle } => {
-            let was_bound = state.mix_peer_handle.is_some() || state.mix_group.is_some();
-            // Drop any 2-chan fast-path state — promotion to N-way takes over.
-            state.mix_peer_handle = None;
-            state.mix_peer_remote = None;
-            state.mix_peer_pt = 0;
-            state.mix_peer_rfc2833_pt = 101;
-
-            // Fresh-start semantics: on (re-)bind, adopt the group's current
-            // total-other-deposits as our last-emit mark. That way a remix
-            // after an unmix doesn't fire a burst of "catch-up" packets for
-            // history that isn't relevant any more.
-            let baseline = {
-                let mut g = group.lock();
-                if let Some(m) = g.members.get_mut(own_idx) {
-                    m.channel_handle = Some(own_handle);
-                }
-                g.total_other_deposits(own_idx)
-            };
-            state.mix_group = Some(group);
-            state.mix_group_idx = own_idx;
-            state.mix_last_emit = baseline;
-            if !was_bound {
-                events.post(Event::Mix { state: "start".to_string() });
-            }
-            None
-        }
-
-        Command::MixRelayDtmf { digits } => {
-            // Another member forwarded a DTMF burst — enqueue it so our
-            // next tick emits the full RFC 2833 sequence to our remote.
-            subs.dtmf_relay.enqueue(&digits);
-            None
-        }
-
-        Command::UnbindMixGroup => {
-            let was_bound = state.mix_group.is_some();
-            if let Some(group) = state.mix_group.take() {
-                let idx = state.mix_group_idx;
-                group.lock().tombstone(idx);
-            }
-            state.mix_group_idx = 0;
-            state.mix_last_emit = 0;
-            if was_bound {
-                events.post(Event::Mix { state: "finished".to_string() });
-            }
-            None
+            LocalOutcome::Continue
         }
     }
 }
@@ -537,9 +562,6 @@ mod tests {
 
     #[tokio::test]
     async fn direction_command_mutates_state_via_tick_observable() {
-        // Echo command flips state.echo; we can't observe state directly from
-        // outside the actor (by design), but we can drive a tick and assert
-        // no panic plus expect no early close.
         let sink = Arc::new(CountingSink { count: Mutex::new(Vec::new()) });
         let handle = spawn(SpawnConfig {
             id: 1,
@@ -583,7 +605,6 @@ mod tests {
             interrupt: false,
         }).await.unwrap();
 
-        // Expect a play-start event.
         let mut saw_play = false;
         while let Ok(Some(ev)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
             if matches!(ev, Event::Play { state: PlayState::Start, .. }) {
