@@ -188,7 +188,19 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
         m.frame_present = false;
         m.inbound_this_tick = false;
 
-        let popped = m.state.jitter.lock().pop();
+        let mut popped = m.state.jitter.lock().pop();
+
+        // SRTP decrypt if active.
+        if let (Some(ref mut pk), Some(ref mut ctx)) = (&mut popped, &mut m.state.srtp_decrypt) {
+            match ctx.decrypt_rtp(pk.as_slice()) {
+                Ok(decrypted) => {
+                    let n = decrypted.len().min(pk.buf.len());
+                    pk.buf[..n].copy_from_slice(&decrypted[..n]);
+                    pk.len = n;
+                }
+                Err(_) => { popped = None; }
+            }
+        }
 
         // DTMF at pop time — recv_loop pushes all RTP/DTMF into jitter.
         if let Some(ref pk) = popped {
@@ -331,7 +343,15 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
                 pkt.set_payload(&payload);
                 m.state.out_sn = m.state.out_sn.wrapping_add(1);
                 m.state.out_ts = m.state.out_ts.wrapping_add(MIX_FRAME_SAMPLES as u32);
-                outgoing.push((dest_id, pkt.as_slice().to_vec(), dest_addr));
+                let wire_data: Vec<u8> = if let Some(ref mut ctx) = m.state.srtp_encrypt {
+                    match ctx.encrypt_rtp(pkt.as_slice()) {
+                        Ok(encrypted) => encrypted.to_vec(),
+                        Err(_) => continue,
+                    }
+                } else {
+                    pkt.as_slice().to_vec()
+                };
+                outgoing.push((dest_id, wire_data, dest_addr));
             }
         }
         // Send via destination member's socket.
@@ -459,6 +479,18 @@ async fn feed_recorders(
 }
 
 
+async fn send_rtp(state: &mut ChannelState, pkt: &RtpPacket, remote: SocketAddr) {
+    if let Some(ref mut ctx) = state.srtp_encrypt {
+        if let Ok(encrypted) = ctx.encrypt_rtp(pkt.as_slice()) {
+            if state.rtp_sock.send_to(&encrypted, remote).await.is_ok() {
+                state.out_count += 1;
+            }
+        }
+    } else if state.rtp_sock.send_to(pkt.as_slice(), remote).await.is_ok() {
+        state.out_count += 1;
+    }
+}
+
 async fn send_encoded(state: &mut ChannelState, remote: SocketAddr, payload: &[u8]) {
     let mut pkt = RtpPacket::new();
     pkt.init(state.ssrc);
@@ -468,9 +500,7 @@ async fn send_encoded(state: &mut ChannelState, remote: SocketAddr, payload: &[u
     pkt.set_payload(payload);
     state.out_sn = state.out_sn.wrapping_add(1);
     state.out_ts = state.out_ts.wrapping_add(MIX_FRAME_SAMPLES as u32);
-    if state.rtp_sock.send_to(pkt.as_slice(), remote).await.is_ok() {
-        state.out_count += 1;
-    }
+    send_rtp(state, &pkt, remote).await;
 }
 
 async fn send_dtmf_to_remote(
@@ -486,9 +516,7 @@ async fn send_dtmf_to_remote(
     pkt.set_timestamp(state.out_ts);
     pkt.set_payload(payload);
     state.out_sn = state.out_sn.wrapping_add(1);
-    if state.rtp_sock.send_to(pkt.as_slice(), remote).await.is_ok() {
-        state.out_count += 1;
-    }
+    send_rtp(state, &pkt, remote).await;
 }
 
 // ---- command forwarding ----

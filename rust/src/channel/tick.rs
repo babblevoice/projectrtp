@@ -28,7 +28,19 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     poll_dtls_handshake(state);
 
     // Pop from jitter (filled continuously by recv_loop).
-    let inbound_pkt = state.jitter.lock().pop();
+    let mut inbound_pkt = state.jitter.lock().pop();
+
+    // SRTP decrypt if active — strip auth tag and decrypt payload in-place.
+    if let (Some(ref mut pk), Some(ref mut ctx)) = (&mut inbound_pkt, &mut state.srtp_decrypt) {
+        match ctx.decrypt_rtp(pk.as_slice()) {
+            Ok(decrypted) => {
+                let n = decrypted.len().min(pk.buf.len());
+                pk.buf[..n].copy_from_slice(&decrypted[..n]);
+                pk.len = n;
+            }
+            Err(_) => { inbound_pkt = None; }
+        }
+    }
 
     // DTMF classification at pop time — recv_loop pushes all RTP/DTMF
     // into jitter; we check PT here since we need access to Subsystems.
@@ -200,6 +212,18 @@ fn poll_dtls_handshake(state: &mut ChannelState) {
     }
 }
 
+async fn send_rtp(state: &mut ChannelState, pkt: &RtpPacket, remote: SocketAddr) {
+    if let Some(ref mut ctx) = state.srtp_encrypt {
+        if let Ok(encrypted) = ctx.encrypt_rtp(pkt.as_slice()) {
+            if state.rtp_sock.send_to(&encrypted, remote).await.is_ok() {
+                state.out_count += 1;
+            }
+        }
+    } else if state.rtp_sock.send_to(pkt.as_slice(), remote).await.is_ok() {
+        state.out_count += 1;
+    }
+}
+
 async fn send_dtmf(state: &mut ChannelState, _event: u8, payload: &[u8; 4], remote: SocketAddr) {
     let mut out = RtpPacket::new();
     out.init(state.ssrc);
@@ -208,9 +232,7 @@ async fn send_dtmf(state: &mut ChannelState, _event: u8, payload: &[u8; 4], remo
     out.set_timestamp(state.out_ts);
     out.set_payload(payload);
     state.out_sn = state.out_sn.wrapping_add(1);
-    if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
-        state.out_count += 1;
-    }
+    send_rtp(state, &out, remote).await;
 }
 
 async fn send_player_frame(state: &mut ChannelState, samples: &[i16], remote: SocketAddr) {
@@ -223,9 +245,7 @@ async fn send_player_frame(state: &mut ChannelState, samples: &[i16], remote: So
     out.set_payload(&payload);
     state.out_sn = state.out_sn.wrapping_add(1);
     state.out_ts = state.out_ts.wrapping_add(samples.len() as u32);
-    if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
-        state.out_count += 1;
-    }
+    send_rtp(state, &out, remote).await;
 }
 
 async fn send_echo(state: &mut ChannelState, in_pk: &RtpPacket, remote: SocketAddr) {
@@ -236,9 +256,7 @@ async fn send_echo(state: &mut ChannelState, in_pk: &RtpPacket, remote: SocketAd
     out.set_timestamp(in_pk.timestamp());
     out.set_payload(in_pk.payload());
     state.out_sn = state.out_sn.wrapping_add(1);
-    if state.rtp_sock.send_to(out.as_slice(), remote).await.is_ok() {
-        state.out_count += 1;
-    }
+    send_rtp(state, &out, remote).await;
 }
 
 impl RtpPacket {
