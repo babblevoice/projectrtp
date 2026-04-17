@@ -523,6 +523,7 @@ async fn handle_command_local(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::commands::Direction;
     use std::sync::Mutex;
     use tokio::sync::mpsc as tmpsc;
 

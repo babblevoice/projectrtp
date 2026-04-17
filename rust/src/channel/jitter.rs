@@ -58,16 +58,27 @@ impl JitterBuffer {
 
         if !self.primed {
             // First insertion — pull out_sn `water_level` packets behind sn so
-            // we can build up ordering before any pop.
+            // we can build up ordering before any pop. Matches C++ line 124:
+            //   this->outsn = sn - (uint16_t) this->waterlevel;
             self.out_sn = sn.wrapping_sub(self.water_level as u16);
             self.primed = true;
         }
 
-        // Out-of-window: sn ahead of out_sn by more than buffer_count → dump.
+        // Out-of-window: sn ahead of out_sn by more than buffer_count.
+        // If the buffer is empty (all slots None), re-prime from this SN
+        // instead of dropping — handles the "drain then restart at a very
+        // different SN" pattern (e.g. call transfer, unmix-then-mix).
+        // Matches C++ line 120-128 where the first packet into an empty
+        // buffer re-initialises outsn.
         let ahead = sn.wrapping_sub(self.out_sn) as usize;
         if ahead > self.buffer_count {
-            self.dropped += 1;
-            return;
+            let empty = self.slots.iter().all(|s| s.is_none());
+            if empty {
+                self.out_sn = sn.wrapping_sub(self.water_level as u16);
+            } else {
+                self.dropped += 1;
+                return;
+            }
         }
 
         let idx = (sn as usize) & (self.buffer_count - 1);
@@ -149,8 +160,6 @@ mod tests {
         for sn in 1000..1010 {
             b.push(mkpk(sn));
         }
-        // out_sn primed to 1000 - 10 = 990. No pop yields until sn reaches 990+.
-        // Drain by advancing past the holes first.
         let mut seen = Vec::new();
         for _ in 0..40 {
             if let Some(p) = b.pop() {
@@ -193,7 +202,6 @@ mod tests {
         for _ in 0..10 {
             if let Some(p) = b.pop() { seen.push(p.sequence_number()); }
         }
-        // Holes are skipped — 102 never arrives but 103 still drains.
         assert!(seen.contains(&100));
         assert!(seen.contains(&101));
         assert!(seen.contains(&103));
@@ -212,5 +220,21 @@ mod tests {
             if let Some(p) = b.pop() { seen.push(p.sequence_number()); }
         }
         assert_eq!(seen, vec![u16::MAX - 1, u16::MAX, 0, 1]);
+    }
+
+    #[test]
+    fn restart_at_different_sn_after_drain() {
+        let mut b = JitterBuffer::new(32, 10);
+        // Push 15, drain all.
+        for sn in 256..271 { b.push(mkpk(sn)); }
+        let mut seen = Vec::new();
+        for _ in 0..30 { if let Some(p) = b.pop() { seen.push(p.sequence_number()); } }
+        assert_eq!(seen.len(), 15);
+
+        // Restart from a much higher SN — should re-prime, not drop.
+        for sn in 512..522 { b.push(mkpk(sn)); }
+        let mut seen2 = Vec::new();
+        for _ in 0..30 { if let Some(p) = b.pop() { seen2.push(p.sequence_number()); } }
+        assert_eq!(seen2, (512..522).collect::<Vec<_>>());
     }
 }
