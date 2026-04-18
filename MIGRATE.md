@@ -32,6 +32,11 @@ docker run --rm projectrtp-test \
 
 ```
 
+In babble-sip - how we build
+```bash
+docker compose -f compose.yaml -f compose.rust.yaml up --build
+```
+
 ## Migration strategy
 
 - **Behavior-preserving, not line-by-line.** The tests in `test/interface/`

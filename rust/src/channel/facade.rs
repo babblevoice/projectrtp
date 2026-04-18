@@ -363,8 +363,8 @@ fn bind_from_pool() -> Result<BindTuple> {
         let Some(port) = crate::portpool::acquire() else {
             return Err(Error::from_reason("no available rtp ports in pool"));
         };
-        let rtp_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
-        let rtcp_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port + 1);
+        let rtp_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
+        let rtcp_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port + 1);
         let rtp = match std::net::UdpSocket::bind(rtp_addr) {
             Ok(s) => s,
             Err(e) => { last_err = Some(e); crate::portpool::release(port); continue; }
@@ -385,7 +385,7 @@ fn bind_from_pool() -> Result<BindTuple> {
 fn bind_ephemeral() -> Result<BindTuple> {
     let mut last_err: Option<std::io::Error> = None;
     for _ in 0..64 {
-        let rtp = match std::net::UdpSocket::bind("127.0.0.1:0") {
+        let rtp = match std::net::UdpSocket::bind("0.0.0.0:0") {
             Ok(s) => s,
             Err(e) => { last_err = Some(e); continue; }
         };
@@ -418,18 +418,19 @@ fn parse_soundsoup(params: &Object) -> Option<super::player::SoundSoupSpec> {
         let Ok(wav): Result<String> = entry.get_named_property("wav") else { continue; };
         if wav.is_empty() { continue; }
         let path = std::path::PathBuf::from(wav);
-        if !path.is_file() { continue; }
         // Per-file loop: JS accepts `true` (infinite — encoded as Some(0)
         // in player.rs) or a positive integer.
         let max_loops = if entry.get_named_property::<bool>("loop").ok() == Some(true) {
             Some(0)
+        } else if let Ok(n) = entry.get_named_property::<u32>("loop") {
+            if n == 0 { None } else { Some(n) }
         } else {
-            entry.get_named_property::<u32>("loop").ok()
+            None
         };
         files.push(super::player::SoundSoupFileSpec {
             path,
-            start_ms: entry.get_named_property::<u32>("start").ok().map(|v| v as u64),
-            stop_ms: entry.get_named_property::<u32>("stop").ok().map(|v| v as u64),
+            start_ms: entry.get_named_property::<u32>("start").ok().filter(|&v| v > 0).map(|v| v as u64),
+            stop_ms: entry.get_named_property::<u32>("stop").ok().filter(|&v| v > 0).map(|v| v as u64),
             max_loops,
         });
     }
@@ -461,18 +462,19 @@ fn parse_recorder(params: &Object) -> Option<super::recorder::RecorderConfig> {
     let num_channels = params
         .get_named_property::<u32>("numchannels")
         .ok()
+        .filter(|&v| v > 0)
         .map(|v| v as u16)
         .unwrap_or(2);
     Some(super::recorder::RecorderConfig {
         file: std::path::PathBuf::from(file),
         num_channels,
         sample_rate: 8000,
-        max_duration_ms: params.get_named_property::<u32>("maxduration").ok().map(|v| v as u64),
-        start_above_power: params.get_named_property::<i32>("startabovepower").ok(),
-        finish_below_power: params.get_named_property::<i32>("finishbelowpower").ok(),
-        max_since_start_power: params.get_named_property::<i32>("maxsincestartpower").ok(),
-        min_duration_ms: params.get_named_property::<u32>("minduration").ok().map(|v| v as u64),
-        power_averaging_packets: params.get_named_property::<u32>("poweraveragepackets").ok(),
+        max_duration_ms: params.get_named_property::<u32>("maxduration").ok().filter(|&v| v > 0).map(|v| v as u64),
+        start_above_power: params.get_named_property::<i32>("startabovepower").ok().filter(|&v| v != 0),
+        finish_below_power: params.get_named_property::<i32>("finishbelowpower").ok().filter(|&v| v != 0),
+        max_since_start_power: params.get_named_property::<i32>("maxsincestartpower").ok().filter(|&v| v != 0),
+        min_duration_ms: params.get_named_property::<u32>("minduration").ok().filter(|&v| v > 0).map(|v| v as u64),
+        power_averaging_packets: params.get_named_property::<u32>("poweraveragepackets").ok().filter(|&v| v > 0),
     })
 }
 
