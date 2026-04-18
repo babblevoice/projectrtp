@@ -240,11 +240,11 @@ impl ChannelObject {
                 file: std::path::PathBuf::from(file),
             }).is_ok();
         }
-        if let Some(paused) = params.get_named_property::<bool>("pause").ok() {
+        if params.get_named_property::<bool>("pause").ok() == Some(true) {
             let Some(file) = file else { return false; };
             return self.handle.cmd.try_send(super::commands::Command::RecordSetPaused {
                 file: std::path::PathBuf::from(file),
-                paused,
+                paused: true,
             }).is_ok();
         }
         let Some(cfg) = parse_recorder(&params) else { return false; };
