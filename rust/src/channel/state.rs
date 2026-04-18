@@ -46,6 +46,7 @@ pub struct ChannelState {
     pub remote_pt: u8,
 
     pub tick_count: u64,
+    pub ticks_without_rtp: u64,
 
     pub in_count: Arc<AtomicU64>,
     pub in_dropped: u64,
@@ -97,6 +98,7 @@ impl ChannelState {
             transcoder: crate::codec::Transcoder::new(),
             remote_pt: 0,
             tick_count: 0,
+            ticks_without_rtp: 0,
             in_count: Arc::new(AtomicU64::new(0)),
             in_dropped: 0,
             in_skip: 0,

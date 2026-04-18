@@ -29,6 +29,11 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
 
     // Pop from jitter (filled continuously by recv_loop).
     let mut inbound_pkt = state.jitter.lock().pop();
+    if inbound_pkt.is_some() {
+        state.ticks_without_rtp = 0;
+    } else {
+        state.ticks_without_rtp += 1;
+    }
 
     // SRTP decrypt if active — strip auth tag and decrypt payload in-place.
     if let (Some(ref mut pk), Some(ref mut ctx)) = (&mut inbound_pkt, &mut state.srtp_decrypt) {
@@ -169,8 +174,9 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
         }
     }
 
-    // Idle timeout.
-    if state.tick_count >= IDLE_TICK_LIMIT && state.in_count.load(Ordering::Relaxed) == 0 {
+    // Idle timeout — matches C++ tickswithnortpcount: after 20s of no
+    // inbound RTP (with remote confirmed), close the channel.
+    if state.remote_confirmed && state.ticks_without_rtp >= IDLE_TICK_LIMIT {
         return TickOutcome::Stop;
     }
 
