@@ -180,6 +180,7 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
     // No socket drain — the recv_loop continuously reads and pushes
     // RTP/DTMF into jitter. DTMF is classified at pop time (Phase 2).
     let mut dtmf_broadcast: Vec<(ChannelId, char)> = Vec::new();
+    let mut idle_members: Vec<ChannelId> = Vec::new();
     for m in members.values_mut() {
         m.state.tick_count += 1;
     }
@@ -191,6 +192,11 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
         m.inbound_this_tick = false;
 
         let mut popped = m.state.jitter.lock().pop();
+        if popped.is_some() {
+            m.state.ticks_without_rtp = 0;
+        } else {
+            m.state.ticks_without_rtp += 1;
+        }
 
         // SRTP decrypt if active.
         if let (Some(ref mut pk), Some(ref mut ctx)) = (&mut popped, &mut m.state.srtp_decrypt) {
@@ -421,6 +427,38 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
     for m in members.values_mut() {
         for ev in m.state.pending_events.drain(..) {
             m.events.post(ev);
+        }
+    }
+
+    // ----- Phase 6: idle detection (matches C++ checkidlerecv per member). -----
+    use super::tick::{IDLE_TICK_LIMIT, HARD_TIMEOUT_NO_REMOTE, HARD_TIMEOUT_NO_RECV};
+    for (&id, m) in members.iter() {
+        let idle = if m.state.direction.recv {
+            if m.state.remote_confirmed {
+                m.state.ticks_without_rtp >= IDLE_TICK_LIMIT
+            } else {
+                m.state.tick_count >= HARD_TIMEOUT_NO_REMOTE
+            }
+        } else {
+            m.state.tick_count >= HARD_TIMEOUT_NO_RECV
+        };
+        if idle {
+            idle_members.push(id);
+        }
+    }
+
+    // Close idle members — emit close event and remove.
+    for id in idle_members {
+        if let Some(m) = members.remove(&id) {
+            m.events.post(Event::Close {
+                reason: "idle".into(),
+                stats: super::actor::ChannelStats {
+                    in_count: m.state.in_count.load(Ordering::Relaxed),
+                    in_dropped: m.state.in_dropped + m.state.jitter.lock().dropped,
+                    in_skip: m.state.in_skip,
+                    out_count: m.state.out_count,
+                },
+            });
         }
     }
 }

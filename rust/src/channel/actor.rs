@@ -412,6 +412,7 @@ async fn handle_command_local(
 
         Command::Remote { cfg, ack } => {
             state.set_remote_addr(cfg.addr);
+            state.ticks_without_rtp = 0;
             state.remote_pt = cfg.payload_type;
             if let Some(pt) = cfg.rfc2833_payload_type {
                 state.rfc2833_pt = pt;

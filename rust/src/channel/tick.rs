@@ -20,7 +20,9 @@ pub enum TickOutcome {
     Stop,
 }
 
-const IDLE_TICK_LIMIT: u64 = 50 * 20;
+pub const IDLE_TICK_LIMIT: u64 = 50 * 20;          // 20s — soft idle (no RTP with remote confirmed)
+pub const HARD_TIMEOUT_NO_REMOTE: u64 = 50 * 60 * 60;     // 1hr — remote() never called
+pub const HARD_TIMEOUT_NO_RECV: u64 = 50 * 60 * 60 * 2;   // 2hr — on hold (recv=false)
 
 pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome {
     state.tick_count += 1;
@@ -176,10 +178,24 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
         }
     }
 
-    // Idle timeout — matches C++ tickswithnortpcount: after 20s of no
-    // inbound RTP (with remote confirmed), close the channel.
-    if state.remote_confirmed && state.ticks_without_rtp >= IDLE_TICK_LIMIT {
-        return TickOutcome::Stop;
+    // Idle timeouts — matches C++ checkidlerecv() multi-tier logic.
+    if state.direction.recv {
+        if state.remote_confirmed {
+            // Soft idle: 20s of no inbound RTP after remote confirmed.
+            if state.ticks_without_rtp >= IDLE_TICK_LIMIT {
+                return TickOutcome::Stop;
+            }
+        } else {
+            // Hard timeout: 1hr without remote confirmed — zombie channel.
+            if state.tick_count >= HARD_TIMEOUT_NO_REMOTE {
+                return TickOutcome::Stop;
+            }
+        }
+    } else {
+        // On hold (recv=false): 2hr hard timeout.
+        if state.tick_count >= HARD_TIMEOUT_NO_RECV {
+            return TickOutcome::Stop;
+        }
     }
 
     TickOutcome::Continue
