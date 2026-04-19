@@ -135,26 +135,30 @@ impl Recorder {
     /// `codecx::inpkcount` which increments post-jitter). Returns true if
     /// samples were written.
     pub async fn write(&mut self, samples: &[i16]) -> std::io::Result<bool> {
+        self.write_with_count(samples, None).await
+    }
+
+    /// Feed a frame with an external packet count (channel-wide `in_count`).
+    /// The 100-packet warm-up uses this count when provided, matching the C++
+    /// `codecx::inpkcount` which is shared across the channel's lifetime
+    /// rather than per-recorder.
+    pub async fn write_with_count(&mut self, samples: &[i16], channel_in_count: Option<u64>) -> std::io::Result<bool> {
         if self.state == RecorderState::Finished { return Ok(false); }
         if self.state == RecorderState::Paused { return Ok(false); }
         self.packets_observed += 1;
 
-        // RMS power — `sqrt(mean(s^2))`. Returns 0 during the first 100
-        // packets so the MA doesn't latch onto initial RTP establishment
-        // noise. The C++ path also runs a DC blocker per sample; we tried
-        // it and it added transient energy at amplitude transitions,
-        // pushing the below-power finish out rather than in.
-        let pkt_power: i32 = if self.packets_observed < 100 || samples.is_empty() {
+        let warmup_count = channel_in_count.unwrap_or(self.packets_observed);
+
+        let pkt_power: i32 = if warmup_count < 100 || samples.is_empty() {
             0
         } else {
             let mut sum_sq: u64 = 0;
             for s in samples {
-                let v = *s as i64;
-                sum_sq += (v * v) as u64;
+                let filtered = self.dc_filter.execute(*s) as i64;
+                sum_sq += (filtered * filtered) as u64;
             }
             ((sum_sq / samples.len() as u64) as f64).sqrt() as i32
         };
-        let _ = &self.dc_filter; // reserved for potential future DC-blocker use
         let pkt_power16 = pkt_power.min(i16::MAX as i32) as i16;
         self.last_power_calc = self.power_ma.execute(pkt_power16) as i32;
 

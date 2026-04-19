@@ -112,6 +112,7 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
             }
         }
 
+        let chan_in_count = state.in_count.load(Ordering::Relaxed);
         let mut i = 0;
         while i < subs.recorders.len() {
             let rec = &mut subs.recorders[i];
@@ -124,7 +125,7 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
                 } else {
                     samples.clone()
                 };
-                let _ = rec.write(&frame).await;
+                let _ = rec.write_with_count(&frame, Some(chan_in_count)).await;
             }
             let new_state = rec.state();
             let file_str = rec.file().to_string_lossy().into_owned();

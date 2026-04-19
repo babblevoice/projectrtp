@@ -265,7 +265,8 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
 
         // Recorder: feed inbound samples (wire audio, not mix output).
         if let Some(samples) = inbound_samples.as_ref() {
-            feed_recorders(&mut m.subs.recorders, samples, &mut m.state.pending_events).await;
+            let ch_count = m.state.in_count.load(std::sync::atomic::Ordering::Relaxed);
+            feed_recorders(&mut m.subs.recorders, samples, ch_count, &mut m.state.pending_events).await;
         }
 
         // Barge-in on inbound power.
@@ -433,6 +434,7 @@ fn copy_into_frame(dst: &mut [i16], src: &[i16]) {
 async fn feed_recorders(
     recorders: &mut Vec<Recorder>,
     samples: &[i16],
+    channel_in_count: u64,
     pending_events: &mut Vec<Event>,
 ) {
     let mut i = 0;
@@ -446,7 +448,7 @@ async fn feed_recorders(
         } else {
             samples.to_vec()
         };
-        let _ = rec.write(&frame).await;
+        let _ = rec.write_with_count(&frame, Some(channel_in_count)).await;
         let new_state = rec.state();
         let file_str = rec.file().to_string_lossy().into_owned();
         if prev_state == RecorderState::Pending && new_state == RecorderState::Active {
