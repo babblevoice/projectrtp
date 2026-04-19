@@ -67,6 +67,7 @@ pub trait EventSink: Send + Sync + 'static {
 
 pub struct SpawnConfig {
     pub id: u64,
+    #[allow(dead_code)]
     pub bind_addr: SocketAddr,
     pub ssrc: u32,
     pub events: Arc<dyn EventSink>,
@@ -77,6 +78,7 @@ pub struct SpawnConfig {
     pub local_icepwd: String,
 }
 
+#[cfg(test)]
 pub async fn spawn(cfg: SpawnConfig) -> std::io::Result<Handle> {
     let rtp_sock = UdpSocket::bind(cfg.bind_addr).await?;
     let local_addr = rtp_sock.local_addr()?;
@@ -185,7 +187,7 @@ async fn run(
                         // Migrate into the mixer. Need to move out of `mode`
                         // which requires taking ownership — swap to a temp
                         // Local with a dummy then rebuild the real Mixed.
-                        let (mut state_out, mut subs_out) = take_local(&mut mode);
+                        let (state_out, subs_out) = take_local(&mut mode);
                         // Clear jitter so a remixed channel that restarts
                         // its SN counter doesn't get rejected as out-of-window.
                         state_out.jitter.lock().clear();

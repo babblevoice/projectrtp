@@ -51,6 +51,7 @@ pub struct Player {
 }
 
 /// One chunk of decoded audio (interleaved if multi-channel).
+#[allow(dead_code)]
 pub struct PlayFrame {
     pub samples: Vec<i16>,
     pub end_of_file: bool,

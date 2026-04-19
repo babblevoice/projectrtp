@@ -38,7 +38,7 @@ use super::actor::{Event, EventSink, PlayState, RecordState, Subsystems, TICK_MS
 use super::commands::{ChannelId, Command};
 use super::player::Player;
 use super::recorder::{FinishReason, Recorder, RecorderState};
-use super::rtp::{self, RtpPacket};
+use super::rtp::RtpPacket;
 use super::state::ChannelState;
 
 pub const MIX_FRAME_SAMPLES: usize = 160;
@@ -77,6 +77,7 @@ pub enum MixerCommand {
     Add { member: Box<Member>, ack: oneshot::Sender<()> },
     Remove { id: ChannelId, ack: oneshot::Sender<Option<Box<Member>>> },
     Forward { id: ChannelId, cmd: Command },
+    #[allow(dead_code)]
     Stop,
 }
 
@@ -105,6 +106,7 @@ impl MixHandle {
         let _ = self.cmd.send(MixerCommand::Forward { id, cmd }).await;
     }
 
+    #[allow(dead_code)]
     pub async fn stop(&self) {
         let _ = self.cmd.send(MixerCommand::Stop).await;
     }

@@ -67,15 +67,19 @@ pub fn linear_to_ulaw(linear: i32) -> u8 {
 // Used by tick.rs's mix-relay path to transcode between PCMA/PCMU when two
 // mixed channels speak different codecs.
 
+#[allow(dead_code)]
 pub fn encode_pcma_buf(samples: &[i16]) -> Vec<u8> {
     samples.iter().map(|&s| linear_to_alaw(s as i32)).collect()
 }
+#[allow(dead_code)]
 pub fn decode_pcma_buf(payload: &[u8]) -> Vec<i16> {
     payload.iter().map(|&b| alaw_to_linear(b)).collect()
 }
+#[allow(dead_code)]
 pub fn encode_pcmu_buf(samples: &[i16]) -> Vec<u8> {
     samples.iter().map(|&s| linear_to_ulaw(s as i32)).collect()
 }
+#[allow(dead_code)]
 pub fn decode_pcmu_buf(payload: &[u8]) -> Vec<i16> {
     payload.iter().map(|&b| ulaw_to_linear(b)).collect()
 }
@@ -166,6 +170,7 @@ impl Transcoder {
     }
 
     /// Transcode in one shot using the decode/encode pair above.
+    #[allow(dead_code)]
     pub fn transcode(&mut self, src_pt: u8, dst_pt: u8, payload: &[u8]) -> Option<Vec<u8>> {
         if src_pt == dst_pt { return Some(payload.to_vec()); }
         let pcm = self.decode(src_pt, payload)?;

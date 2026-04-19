@@ -15,6 +15,7 @@ use super::state::ChannelState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TickOutcome {
     Continue,
+    #[allow(dead_code)]
     Handshaking,
     Stop,
 }

@@ -1,7 +1,7 @@
 // ChannelState — the single owner of per-channel state.
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use parking_lot::Mutex as PLMutex;
@@ -18,6 +18,7 @@ use super::rtp::RtpPacket;
 /// Close bookkeeping. Set once, observed on task exit.
 #[derive(Debug, Clone, Default)]
 pub struct CloseInfo {
+    #[allow(dead_code)]
     pub reason: String,
 }
 
@@ -29,10 +30,11 @@ pub struct ChannelState {
     pub direction: Direction,
 
     pub rtp_sock: Arc<UdpSocket>,
-    pub rtcp_sock: UdpSocket,
+    pub _rtcp_sock: UdpSocket,
 
     pub jitter: Arc<PLMutex<JitterBuffer>>,
 
+    #[allow(dead_code)]
     pub out_pool: Vec<RtpPacket>,
 
     pub out_sn: u16,
@@ -87,7 +89,7 @@ impl ChannelState {
             remote: None,
             direction: Direction::default(),
             rtp_sock: Arc::new(rtp_sock),
-            rtcp_sock,
+            _rtcp_sock: rtcp_sock,
             jitter: Arc::new(PLMutex::new(JitterBuffer::new(32, 10))),
             out_pool: Vec::new(),
             out_sn: 0,

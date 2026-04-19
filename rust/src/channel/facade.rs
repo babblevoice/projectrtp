@@ -92,6 +92,7 @@ impl EventSink for NullSink {
 }
 
 #[napi(object)]
+#[allow(dead_code)]
 pub struct ChannelDtls {
     pub fingerprint: String,
     pub enabled: bool,
@@ -99,6 +100,7 @@ pub struct ChannelDtls {
 }
 
 #[napi(object)]
+#[allow(dead_code)]
 pub struct ChannelLocal {
     pub port: u32,
     pub ssrc: u32,
@@ -114,15 +116,19 @@ pub struct ChannelObject {
     channel_icepwd: String,
     /// Snapshot of the remote address supplied at openchannel — used to
     /// program the mix-peer relay when JS calls `chan.mix(other)`.
+    #[allow(dead_code)]
     remote_addr: Option<SocketAddr>,
     /// Snapshot of the remote payload type from params.remote.codec.
     /// For iLBC with dynamic-PT negotiation this is the ilbcpt value,
     /// not the static 97 — i.e. the actual wire PT.
+    #[allow(dead_code)]
     remote_pt: u8,
     /// Snapshot of the remote rfc2833 PT (defaults to 101).
+    #[allow(dead_code)]
     rfc2833_pt: u8,
     /// Snapshot of the iLBC wire PT (defaults to 97). Used when BindMixPeer
     /// tells the peer how to recognise this side's iLBC packets.
+    #[allow(dead_code)]
     ilbc_pt: u8,
     /// Mix-group handle — `Some` when this channel is currently part of a
     /// mix (state has migrated into the mixer actor). Facade-side only;

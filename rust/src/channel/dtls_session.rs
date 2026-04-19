@@ -24,6 +24,7 @@ use webrtc_srtp::protection_profile::ProtectionProfile;
 use crate::channel::commands::DtlsSetup;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PeerFingerprint {
     pub algorithm: String,
     pub hex_colon: String,

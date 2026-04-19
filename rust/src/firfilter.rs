@@ -29,6 +29,7 @@ impl Default for Lowpass3_4k16k {
 impl Lowpass3_4k16k {
     pub fn new() -> Self { Self { history: [0.0; LOWPASS_LEN], round: 0 } }
 
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.history = [0.0; LOWPASS_LEN];
         self.round = 0;
@@ -89,7 +90,9 @@ impl MaFilter {
         (self.rtotal / self.l as i32) as i16
     }
 
+    #[allow(dead_code)]
     pub fn get(&self) -> i32 { self.rtotal / self.l as i32 }
+    #[allow(dead_code)]
     pub fn length(&self) -> usize { self.l }
 }
 
@@ -102,6 +105,7 @@ impl Default for DcFilter {
 
 impl DcFilter {
     pub fn new() -> Self { Self { xm: 0, ym: 0 } }
+    #[allow(dead_code)]
     pub fn reset(&mut self) { self.xm = 0; self.ym = 0; }
 
     #[inline]

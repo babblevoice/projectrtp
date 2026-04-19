@@ -24,9 +24,13 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
 pub const WAV_HEADER_LEN: usize = 44;
 pub const WAVE_FORMAT_PCM: u16 = 0x0001;
+#[allow(dead_code)]
 pub const WAVE_FORMAT_ALAW: u16 = 0x0006;
+#[allow(dead_code)]
 pub const WAVE_FORMAT_MULAW: u16 = 0x0007;
+#[allow(dead_code)]
 pub const WAVE_FORMAT_POLYCOM_G722: u16 = 0xA112;
+#[allow(dead_code)]
 pub const WAVE_FORMAT_GLOBAL_IP_ILBC: u16 = 0xA116;
 
 // ---- WAV header parse / build ----
@@ -147,6 +151,7 @@ pub struct WavReader {
     header: WavHeader,
     data_start: u64,
     data_end: u64,
+    #[allow(dead_code)]
     url: PathBuf,
 }
 
@@ -173,6 +178,7 @@ impl WavReader {
     }
 
     pub fn header(&self) -> &WavHeader { &self.header }
+    #[allow(dead_code)]
     pub fn url(&self) -> &Path { &self.url }
 
     /// Read up to `samples` int16 samples starting from the current position.
@@ -204,6 +210,7 @@ impl WavReader {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn position_ms(&mut self) -> Result<u64> {
         let pos = self.file.stream_position().await.map_err(io_err)?;
         let data_pos = pos.saturating_sub(self.data_start);
@@ -212,12 +219,14 @@ impl WavReader {
         Ok(data_pos / bytes_per_ms)
     }
 
+    #[allow(dead_code)]
     pub fn duration_ms(&self) -> u64 {
         let bytes_per_ms = (self.header.byte_rate as u64) / 1000;
         if bytes_per_ms == 0 { return 0; }
         (self.header.subchunksize as u64) / bytes_per_ms
     }
 
+    #[allow(dead_code)]
     pub async fn complete(&mut self) -> Result<bool> {
         let pos = self.file.stream_position().await.map_err(io_err)?;
         Ok(pos >= self.data_end)
@@ -235,6 +244,7 @@ pub struct WavWriter {
     file: Option<std::fs::File>,
     header: WavHeader,
     bytes_written: u64,
+    #[allow(dead_code)]
     url: PathBuf,
     closed: bool,
 }
@@ -269,15 +279,18 @@ impl WavWriter {
         })
     }
 
+    #[allow(dead_code)]
     pub fn header(&self) -> &WavHeader { &self.header }
+    #[allow(dead_code)]
     pub fn url(&self) -> &Path { &self.url }
+    #[allow(dead_code)]
     pub fn bytes_written(&self) -> u64 { self.bytes_written }
 
     pub async fn write_samples(&mut self, samples: &[i16]) -> Result<()> {
         if self.closed { return Err(Error::from_reason("writer closed")); }
         let mut buf = Vec::with_capacity(samples.len() * 2);
         for s in samples { buf.extend_from_slice(&s.to_le_bytes()); }
-        let file = self.file.as_mut().ok_or_else(|| Error::from_reason("no file"))?;
+        let _file = self.file.as_mut().ok_or_else(|| Error::from_reason("no file"))?;
         // std::fs::File writes are synchronous — do them via spawn_blocking so
         // we don't stall the tokio worker during long writes on slow disks.
         let to_write = buf;
@@ -298,6 +311,7 @@ impl WavWriter {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn write_samples_sync(&mut self, samples: &[i16]) -> Result<()> {
         if self.closed { return Err(Error::from_reason("writer closed")); }
         use std::io::Write;

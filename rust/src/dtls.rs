@@ -15,7 +15,6 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use base64::Engine;
-use napi_derive::napi;
 use sha2::{Digest, Sha256};
 
 fn cert_path() -> PathBuf {

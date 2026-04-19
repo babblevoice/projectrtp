@@ -8,7 +8,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
 use crate::channel::jitter::{JitterBuffer, DEFAULT_BUFFER_PACKET_COUNT, DEFAULT_BUFFER_WATER_LEVEL};
-use crate::channel::rtp::{self, RtpPacket};
+use crate::channel::rtp::RtpPacket;
 
 #[napi(object)]
 pub struct BufferOptions {

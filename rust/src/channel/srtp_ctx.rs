@@ -11,6 +11,7 @@
 
 use crate::channel::dtls_session::SrtpKeyingMaterial;
 
+#[allow(dead_code)]
 pub struct SrtpContext {
     _km: SrtpKeyingMaterial,
     // Real webrtc_srtp::Context instances are created here once tick.rs wires
@@ -19,6 +20,7 @@ pub struct SrtpContext {
     // running.
 }
 
+#[allow(dead_code)]
 impl SrtpContext {
     pub fn new(km: SrtpKeyingMaterial) -> Self {
         Self { _km: km }
@@ -36,6 +38,7 @@ impl SrtpContext {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum SrtpError {
     NotYetImplemented,
     Crypto(String),

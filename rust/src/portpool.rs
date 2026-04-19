@@ -16,6 +16,7 @@ use std::sync::Mutex;
 
 struct PortPool {
     available: VecDeque<u16>,
+    #[allow(dead_code)]
     total: u32,
 }
 
@@ -56,6 +57,7 @@ pub fn available_count() -> u32 {
     POOL.lock().unwrap().as_ref().map(|p| p.available.len() as u32).unwrap_or(0)
 }
 
+#[allow(dead_code)]
 pub fn total_count() -> u32 {
     POOL.lock().unwrap().as_ref().map(|p| p.total).unwrap_or(0)
 }
@@ -69,6 +71,7 @@ pub struct PortReservation {
 
 impl PortReservation {
     pub fn new(port: u16) -> Self { Self { port } }
+    #[allow(dead_code)]
     pub fn port(&self) -> u16 { self.port }
 }
 

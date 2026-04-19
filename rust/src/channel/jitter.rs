@@ -50,6 +50,7 @@ impl JitterBuffer {
     }
 
     pub fn size(&self) -> usize { self.buffer_count }
+    #[allow(dead_code)]
     pub fn out_sn(&self) -> u16 { self.out_sn }
 
     /// Insert a packet. Caller has populated sequence_number etc.

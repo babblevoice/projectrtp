@@ -25,11 +25,13 @@ pub struct RemoteConfig {
 
 #[derive(Debug, Clone)]
 pub struct RemoteDtls {
+    #[allow(dead_code)]
     pub fingerprint: String,
     pub setup: DtlsSetup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum DtlsSetup { Active, Passive }
 
 /// The play config carried on `Command::Play`. Alias for the parsed spec in
@@ -100,6 +102,7 @@ pub struct Handle {
     pub(crate) cmd: tokio::sync::mpsc::Sender<Command>,
 }
 
+#[allow(dead_code)]
 impl Handle {
     pub async fn close(&self, reason: impl Into<String>) {
         let _ = self.cmd.send(Command::Close { reason: reason.into() }).await;

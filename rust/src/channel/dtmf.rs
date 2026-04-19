@@ -65,6 +65,7 @@ pub fn encode_event(event: u8, end: bool, volume: u8, duration_ticks: u16) -> [u
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct DecodedEvent {
     pub event: u8,
     pub end: bool,
@@ -118,6 +119,7 @@ impl DtmfSender {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_idle(&self) -> bool {
         self.current_event.is_none() && self.queue.is_empty()
     }

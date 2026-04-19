@@ -23,6 +23,7 @@ pub struct RecorderConfig {
     /// Power thresholds — all optional, all in the same units as MaFilter.get().
     pub start_above_power: Option<i32>,
     pub finish_below_power: Option<i32>,
+    #[allow(dead_code)]
     pub max_since_start_power: Option<i32>,
     pub min_duration_ms: Option<u64>,
     pub power_averaging_packets: Option<u32>,
@@ -39,6 +40,7 @@ pub enum RecorderState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FinishReason {
+    #[allow(dead_code)]
     Completed,
     MaxDurationReached,
     BelowPowerThreshold,
@@ -134,6 +136,7 @@ impl Recorder {
     /// The 100-packet warm-up counts from recorder open (same as C++
     /// `codecx::inpkcount` which increments post-jitter). Returns true if
     /// samples were written.
+    #[allow(dead_code)]
     pub async fn write(&mut self, samples: &[i16]) -> std::io::Result<bool> {
         self.write_with_count(samples, None).await
     }
