@@ -154,8 +154,9 @@ impl ChannelObject {
     pub fn dtlsfingerprint(&self) -> String { crate::dtls::fingerprint().to_string() }
 
     #[napi]
-    pub async fn close(&self, reason: Option<String>) {
-        self.handle.close(reason.unwrap_or_else(|| "requested".into())).await;
+    pub fn close(&self, reason: Option<String>) -> bool {
+        let r = reason.unwrap_or_else(|| "requested".into());
+        self.handle.cmd.try_send(super::commands::Command::Close { reason: r }).is_ok()
     }
 
     #[napi]
