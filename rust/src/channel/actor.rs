@@ -199,16 +199,23 @@ async fn run(
                         // Migrate into the mixer. Need to move out of `mode`
                         // which requires taking ownership — swap to a temp
                         // Local with a dummy then rebuild the real Mixed.
-                        let (state_out, subs_out) = take_local(&mut mode);
+                        let (state_out, mut subs_out) = take_local(&mut mode);
                         // Clear jitter so a remixed channel that restarts
                         // its SN counter doesn't get rejected as out-of-window.
                         state_out.jitter.lock().clear();
-                        // If a player is active, keep it — the summed-minus
-                        // emit path (non-relay) will carry its audio to the
-                        // peer. C++ mix2 killed the player, but the old Rust
-                        // BindMixGroup path didn't; keeping it matches the
-                        // existing test suite (xfer transcode test relies on
-                        // player audio reaching the peer through the mix).
+                        // Stop any active player — matches C++ mix2 behavior.
+                        // Without this, a ringing player on an existing channel
+                        // leaks into the mix output (e.g. blind transfer: b
+                        // hears ringing while c rings, then c answers and the
+                        // mix is established — the ringing must stop).
+                        if subs_out.player.is_some() {
+                            subs_out.player = None;
+                            subs_out.bargein = None;
+                            events.post(Event::Play {
+                                state: PlayState::End,
+                                reason: Some("mix".into()),
+                            });
+                        }
                         match mix.add(Box::new(Member::new(state_out, subs_out, events.clone()))).await {
                             Ok(()) => {
                                 events.post(Event::Mix { state: "start".to_string() });
@@ -319,6 +326,7 @@ async fn run(
     };
     state.close_info = Some(CloseInfo { reason: reason.clone() });
     events.post(Event::Close { reason, stats });
+    super::facade::unregister_channel(id);
     drop(self_cmd);
 }
 

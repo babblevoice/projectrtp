@@ -22,6 +22,7 @@ const DEFAULT_PORT_END:   u16 = 20_000;
 
 #[napi]
 pub fn run(params: Option<Object>) -> napi::Result<()> {
+    eprintln!("projectrtp {} (rust)", env!("CARGO_PKG_VERSION"));
     let (start, end) = params
         .as_ref()
         .and_then(|p| p.get_named_property::<Object>("ports").ok())
@@ -36,7 +37,21 @@ pub fn run(params: Option<Object>) -> napi::Result<()> {
 }
 
 #[napi]
-pub fn shutdown() -> napi::Result<()> {
+pub async fn shutdown() -> napi::Result<()> {
+    channel::facade::shutdown_all_channels();
+
+    // Wait for all channel actors to finish (registry drains as actors exit).
+    // Timeout after 5 seconds to avoid hanging forever.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if channel::facade::active_channel_count() == 0 { break; }
+        if std::time::Instant::now() >= deadline {
+            eprintln!("projectrtp shutdown: {} channels still active after timeout",
+                      channel::facade::active_channel_count());
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     Ok(())
 }
 

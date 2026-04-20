@@ -20,6 +20,30 @@ use super::commands::{Direction, Handle};
 
 static NEXT_CHANNEL_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Global registry of active channel handles so `shutdown()` can close them all.
+static CHANNEL_REGISTRY: parking_lot::Mutex<Vec<Handle>> = parking_lot::Mutex::new(Vec::new());
+
+pub fn shutdown_all_channels() {
+    let handles: Vec<Handle> = CHANNEL_REGISTRY.lock().drain(..).collect();
+    for h in &handles {
+        let _ = h.cmd.try_send(super::commands::Command::Close {
+            reason: "shutdown".into(),
+        });
+    }
+}
+
+pub fn register_channel(handle: &Handle) {
+    CHANNEL_REGISTRY.lock().push(handle.clone());
+}
+
+pub fn unregister_channel(id: u64) {
+    CHANNEL_REGISTRY.lock().retain(|h| h.id != id);
+}
+
+pub fn active_channel_count() -> usize {
+    CHANNEL_REGISTRY.lock().len()
+}
+
 #[derive(Debug)]
 struct EventPayload {
     action: &'static str,
@@ -562,7 +586,7 @@ fn extract_remote_icepwd(params: &Object) -> Option<String> {
 }
 
 #[napi(js_name = "openchannel")]
-pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObject> {
+pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<ChannelObject> {
     let remote_addr = extract_remote_addr(&params);
     let remote_pt = extract_remote_pt(&params);
     let rfc2833_pt = extract_rfc2833_pt(&params);
@@ -570,7 +594,7 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
     let override_local_icepwd = extract_local_icepwd(&params);
     let initial_remote_icepwd = extract_remote_icepwd(&params);
     let initial_direction = extract_direction(&params);
-    let tsfn: ThreadsafeFunction<EventPayload, ErrorStrategy::Fatal> = callback
+    let mut tsfn: ThreadsafeFunction<EventPayload, ErrorStrategy::Fatal> = callback
         .create_threadsafe_function(0, |ctx: napi::threadsafe_function::ThreadSafeCallContext<EventPayload>| {
             let ev = ctx.value;
             let env = ctx.env;
@@ -623,6 +647,10 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
             }
             Ok(vec![obj])
         })?;
+    // Unref the TSFN so it doesn't keep the Node.js event loop alive.
+    // Without this, the process hangs on shutdown because each channel's
+    // TSFN holds a libuv handle that prevents the event loop from draining.
+    tsfn.unref(&env)?;
     let sink: Arc<dyn EventSink> = Arc::new(JsEventSink { tsfn });
     let _ = NullSink; // keep type live for future use
     let id = NEXT_CHANNEL_ID.fetch_add(1, Ordering::Relaxed);
@@ -695,6 +723,8 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
             let _ = cmd_tx.send(Command::Remote { cfg, ack }).await;
         });
     }
+
+    register_channel(&handle);
 
     Ok(ChannelObject {
         handle,
