@@ -27,7 +27,7 @@ use super::commands::{Command, Handle};
 use super::dtmf::{DtmfReceiver, DtmfSender};
 use super::mixer::{Member, MixHandle};
 use super::player::Player;
-use super::recorder::{FinishReason, Recorder};
+use super::recorder::{FinishReason, Recorder, RecorderState};
 use super::state::{ChannelState, CloseInfo};
 use super::tick::{self, TickOutcome};
 
@@ -48,7 +48,7 @@ pub struct ChannelStats {
 pub enum Event {
     Close { reason: String, stats: ChannelStats },
     Play { state: PlayState, reason: Option<String> },
-    Record { state: RecordState, reason: Option<String>, file: Option<String> },
+    Record { state: RecordState, reason: Option<String>, file: Option<String>, filesize: Option<u64> },
     TelephoneEvent { digit: char },
     Mix { state: String },
 }
@@ -286,11 +286,13 @@ async fn run(
     }
     for mut rec in subs.recorders.drain(..) {
         let file_str = rec.file().to_string_lossy().into_owned();
+        let size = rec.file_size();
         rec.close(FinishReason::ChannelClosed);
         events.post(Event::Record {
             state: RecordState::Finished,
             reason: Some("channelclosed".into()),
             file: Some(file_str),
+            filesize: Some(size),
         });
     }
     // Cancel the recv_loop before collecting stats.
@@ -460,15 +462,29 @@ async fn handle_command_local(
         Command::Record { cfg, ack } => {
             let file_str = cfg.file.to_string_lossy().into_owned();
             let is_gated = cfg.start_above_power.is_some();
+            // If an existing recorder at the same path is paused, resume it
+            // instead of replacing it — preserves the WAV so both segments
+            // end up in one file.
+            if let Some(rec) = subs.recorders.iter_mut().find(|r| r.file() == cfg.file && r.state() == RecorderState::Paused) {
+                rec.resume();
+                events.post(Event::Record {
+                    state: RecordState::Recording,
+                    reason: None,
+                    file: Some(file_str),
+                    filesize: None,
+                });
+            } else {
             match Recorder::open(cfg.clone()).await {
                 Ok(rec) => {
                     if let Some(idx) = subs.recorders.iter().position(|r| r.file() == rec.file()) {
                         let mut old = subs.recorders.remove(idx);
+                        let size = old.file_size();
                         old.close(FinishReason::ChannelClosed);
                         events.post(Event::Record {
                             state: RecordState::Finished,
                             reason: Some("channelclosed".into()),
                             file: Some(file_str.clone()),
+                            filesize: Some(size),
                         });
                     }
                     subs.recorders.push(rec);
@@ -477,6 +493,7 @@ async fn handle_command_local(
                             state: RecordState::Recording,
                             reason: None,
                             file: Some(file_str),
+                            filesize: None,
                         });
                     }
                 }
@@ -485,8 +502,10 @@ async fn handle_command_local(
                         state: RecordState::Finished,
                         reason: Some(format!("open-failed: {e}")),
                         file: Some(file_str),
+                        filesize: None,
                     });
                 }
+            }
             }
             let _ = ack.send(());
             LocalOutcome::Continue
@@ -496,11 +515,13 @@ async fn handle_command_local(
             if let Some(idx) = subs.recorders.iter().position(|r| r.file() == file) {
                 let mut rec = subs.recorders.remove(idx);
                 let file_str = rec.file().to_string_lossy().into_owned();
+                let size = rec.file_size();
                 rec.close(FinishReason::Requested);
                 events.post(Event::Record {
                     state: RecordState::Finished,
                     reason: Some("requested".into()),
                     file: Some(file_str),
+                    filesize: Some(size),
                 });
             }
             LocalOutcome::Continue
@@ -548,6 +569,7 @@ async fn handle_command_local(
                             state: RecordState::Recording,
                             reason: None,
                             file: Some(file_str),
+                            filesize: None,
                         });
                     }
                 }
@@ -556,6 +578,7 @@ async fn handle_command_local(
                         state: RecordState::Finished,
                         reason: Some(format!("open-failed: {e}")),
                         file: Some(file_str),
+                        filesize: None,
                     });
                 }
             }

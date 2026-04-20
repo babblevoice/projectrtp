@@ -30,22 +30,24 @@ struct EventPayload {
     /// File path for record events — the JS tests assert
     /// `{ action: "record", file: "...", event: "..." }`.
     file: Option<String>,
+    /// File size in bytes for record-finished events.
+    filesize: Option<u64>,
 }
 
 fn event_to_payload(ev: Event) -> EventPayload {
     match ev {
         Event::Close { reason, stats } => EventPayload {
             action: "close", reason: Some(reason), event: None, state: None,
-            stats: Some(stats), file: None,
+            stats: Some(stats), file: None, filesize: None,
         },
         Event::Play { state, reason } => EventPayload {
             action: "play", reason,
             event: Some(match state { PlayState::Start => "start", PlayState::End => "end" }.into()),
             state: None,
             stats: None,
-            file: None,
+            file: None, filesize: None,
         },
-        Event::Record { state, reason, file } => {
+        Event::Record { state, reason, file, filesize } => {
             // C++ surfaces both recording and finish transitions with a
             // compound event name — `recording.abovepower` when a
             // power-gated recorder starts writing, `finished.belowpower` /
@@ -61,17 +63,17 @@ fn event_to_payload(ev: Event) -> EventPayload {
             };
             EventPayload {
                 action: "record", reason, event: Some(event), state: None,
-                stats: None, file,
+                stats: None, file, filesize,
             }
         }
         Event::TelephoneEvent { digit } => EventPayload {
             action: "telephone-event", reason: None, event: Some(digit.to_string()), state: None,
-            stats: None, file: None,
+            stats: None, file: None, filesize: None,
         },
         Event::Mix { state } => EventPayload {
             // Tests read `d.event` for "start" / "finished", not `d.state`.
             action: "mix", reason: None, event: Some(state), state: None,
-            stats: None, file: None,
+            stats: None, file: None, filesize: None,
         },
     }
 }
@@ -590,6 +592,9 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
             if let Some(f) = ev.file {
                 let v: napi::JsString = env.create_string(&f)?;
                 obj.set_named_property("file", v)?;
+            }
+            if let Some(fs) = ev.filesize {
+                obj.set_named_property("filesize", env.create_int64(fs as i64)?)?;
             }
             if let Some(stats) = ev.stats {
                 let mut s = env.create_object()?;

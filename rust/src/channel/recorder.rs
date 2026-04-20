@@ -112,6 +112,8 @@ impl Recorder {
     pub fn finish_reason(&self) -> Option<&FinishReason> { self.finish_reason.as_ref() }
     pub fn file(&self) -> &std::path::Path { &self.cfg.file }
     pub fn num_channels(&self) -> u16 { self.cfg.num_channels }
+    /// Total file size in bytes (header + PCM data written so far).
+    pub fn file_size(&self) -> u64 { self.writer.bytes_written() + crate::soundfile::WAV_HEADER_LEN as u64 }
 
     pub fn pause(&mut self) {
         if matches!(self.state, RecorderState::Active | RecorderState::Pending) {

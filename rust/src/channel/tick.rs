@@ -139,6 +139,7 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
                     state: super::actor::RecordState::Recording,
                     reason: Some("abovepower".into()),
                     file: Some(file_str.clone()),
+                    filesize: None,
                 });
             }
             if rec.is_finished() {
@@ -151,10 +152,12 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
                     Some(super::recorder::FinishReason::Requested) => "requested",
                     None => "completed",
                 };
+                let size = rec.file_size();
                 state.pending_events.push(Event::Record {
                     state: super::actor::RecordState::Finished,
                     reason: Some(reason_str.into()),
                     file: Some(file_str),
+                    filesize: Some(size),
                 });
                 subs.recorders.remove(i);
                 continue;

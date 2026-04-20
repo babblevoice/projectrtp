@@ -496,6 +496,7 @@ async fn feed_recorders(
                 state: RecordState::Recording,
                 reason: Some("abovepower".into()),
                 file: Some(file_str.clone()),
+                filesize: None,
             });
         }
         if rec.is_finished() {
@@ -508,10 +509,12 @@ async fn feed_recorders(
                 Some(FinishReason::Requested) => "requested",
                 None => "completed",
             };
+            let size = rec.file_size();
             pending_events.push(Event::Record {
                 state: RecordState::Finished,
                 reason: Some(reason_str.into()),
                 file: Some(file_str),
+                filesize: Some(size),
             });
             recorders.remove(i);
             continue;
@@ -602,15 +605,29 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
         Command::Record { cfg, ack } => {
             let file_str = cfg.file.to_string_lossy().into_owned();
             let is_gated = cfg.start_above_power.is_some();
+            // If an existing recorder at the same path is paused, resume it
+            // instead of replacing it. This preserves the recording file so
+            // both segments end up in one WAV.
+            if let Some(rec) = m.subs.recorders.iter_mut().find(|r| r.file() == cfg.file && r.state() == RecorderState::Paused) {
+                rec.resume();
+                m.events.post(Event::Record {
+                    state: RecordState::Recording,
+                    reason: None,
+                    file: Some(file_str),
+                    filesize: None,
+                });
+            } else {
             match Recorder::open(cfg.clone()).await {
                 Ok(rec) => {
                     if let Some(idx) = m.subs.recorders.iter().position(|r| r.file() == rec.file()) {
                         let mut old = m.subs.recorders.remove(idx);
+                        let size = old.file_size();
                         old.close(FinishReason::ChannelClosed);
                         m.events.post(Event::Record {
                             state: RecordState::Finished,
                             reason: Some("channelclosed".into()),
                             file: Some(file_str.clone()),
+                            filesize: Some(size),
                         });
                     }
                     m.subs.recorders.push(rec);
@@ -619,6 +636,7 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
                             state: RecordState::Recording,
                             reason: None,
                             file: Some(file_str),
+                            filesize: None,
                         });
                     }
                 }
@@ -627,8 +645,10 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
                         state: RecordState::Finished,
                         reason: Some(format!("open-failed: {e}")),
                         file: Some(file_str),
+                        filesize: None,
                     });
                 }
+            }
             }
             let _ = ack.send(());
         }
@@ -636,11 +656,13 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
             if let Some(idx) = m.subs.recorders.iter().position(|r| r.file() == file) {
                 let mut rec = m.subs.recorders.remove(idx);
                 let file_str = rec.file().to_string_lossy().into_owned();
+                let size = rec.file_size();
                 rec.close(FinishReason::Requested);
                 m.events.post(Event::Record {
                     state: RecordState::Finished,
                     reason: Some("requested".into()),
                     file: Some(file_str),
+                    filesize: Some(size),
                 });
             }
         }
@@ -688,6 +710,7 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
                             state: RecordState::Recording,
                             reason: None,
                             file: Some(file_str),
+                            filesize: None,
                         });
                     }
                 }
@@ -696,6 +719,7 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
                         state: RecordState::Finished,
                         reason: Some(format!("open-failed: {e}")),
                         file: Some(file_str),
+                        filesize: None,
                     });
                 }
             }
