@@ -44,6 +44,18 @@ pub struct ChannelStats {
     pub out_count: u64,
 }
 
+impl ChannelStats {
+    /// Compute MOS from packet loss, using the ITU-T G.107 inspired formula
+    /// from the C++ codebase (originally borrowed from FreeSWITCH).
+    /// Returns 0.0 when no packets were received.
+    pub fn mos(&self) -> f64 {
+        if self.in_count == 0 { return 0.0; }
+        let r = ((self.in_count - self.in_skip) as f64 / self.in_count as f64) * 100.0;
+        let r = r.clamp(0.0, 100.0);
+        1.0 + (0.035 * r) + (0.000007 * r * (r - 60.0) * (100.0 - r))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Event {
     Close { reason: String, stats: ChannelStats },

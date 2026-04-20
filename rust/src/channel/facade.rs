@@ -602,9 +602,7 @@ pub fn open_channel(params: Object, callback: JsFunction) -> Result<ChannelObjec
                 in_o.set_named_property("count",   env.create_int64(stats.in_count as i64)?)?;
                 in_o.set_named_property("dropped", env.create_int64(stats.in_dropped as i64)?)?;
                 in_o.set_named_property("skip",    env.create_int64(stats.in_skip as i64)?)?;
-                // MOS isn't computed yet — placeholder 4.5 matches the C++ default for
-                // a clean stream, which is what the echo test asserts.
-                in_o.set_named_property("mos", env.create_double(4.5)?)?;
+                in_o.set_named_property("mos", env.create_double(stats.mos())?)?;
                 let mut out_o = env.create_object()?;
                 out_o.set_named_property("count", env.create_int64(stats.out_count as i64)?)?;
                 // Matches the C++ close-stats shape used by lib/node.js + the
