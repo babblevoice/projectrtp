@@ -11,9 +11,10 @@
 // create SRTP encrypt/decrypt contexts (see srtp_ctx.rs).
 
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
+use parking_lot::Mutex as PLMutex;
 use tokio::sync::mpsc;
 use webrtc_dtls::config::Config as DtlsConfig;
 use webrtc_dtls::config::ExtendedMasterSecretType;
@@ -45,17 +46,23 @@ pub struct SrtpKeyingMaterial {
 /// and feeds DTLS packets via an mpsc. Outbound DTLS frames are sent
 /// directly on the socket. No tick latency — the recv_loop fires
 /// immediately on packet arrival.
+///
+/// `remote_addr` is **shared** with the channel's `state.remote_addr` (the
+/// same arc the recv_loop populates on every inbound packet). Without this
+/// sharing, the server role never learned the client's address and
+/// fell back to `local_addr` — so DTLS replies were sent to the server's
+/// own bind and Chromium saw no response to its ClientHello.
 pub struct DtlsTransport {
     inbound_rx: tokio::sync::Mutex<mpsc::Receiver<Vec<u8>>>,
     sock: Arc<tokio::net::UdpSocket>,
     local_addr: SocketAddr,
-    remote_addr: Mutex<Option<SocketAddr>>,
+    remote_addr: Arc<PLMutex<Option<SocketAddr>>>,
 }
 
 #[async_trait]
 impl webrtc_util::Conn for DtlsTransport {
     async fn connect(&self, addr: SocketAddr) -> webrtc_util::Result<()> {
-        *self.remote_addr.lock().unwrap() = Some(addr);
+        *self.remote_addr.lock() = Some(addr);
         Ok(())
     }
 
@@ -69,14 +76,19 @@ impl webrtc_util::Conn for DtlsTransport {
 
     async fn recv_from(&self, buf: &mut [u8]) -> webrtc_util::Result<(usize, SocketAddr)> {
         let n = self.recv(buf).await?;
-        let addr = self.remote_addr.lock().unwrap().unwrap_or(self.local_addr);
+        let addr = (*self.remote_addr.lock()).unwrap_or(self.local_addr);
+        eprintln!("[dtls] recv_from: {} bytes, from={}", n, addr);
         Ok((n, addr))
     }
 
     async fn send(&self, buf: &[u8]) -> webrtc_util::Result<usize> {
-        let remote = self.remote_addr.lock().unwrap().unwrap_or(self.local_addr);
-        self.sock.send_to(buf, remote).await
-            .map_err(|e| webrtc_util::Error::Other(e.to_string()))
+        let remote = (*self.remote_addr.lock()).unwrap_or(self.local_addr);
+        eprintln!("[dtls] send: {} bytes, to={} (first_byte=0x{:02x})",
+                  buf.len(), remote, buf.first().copied().unwrap_or(0));
+        let n = self.sock.send_to(buf, remote).await
+            .map_err(|e| webrtc_util::Error::Other(e.to_string()))?;
+        eprintln!("[dtls] send: sent {} bytes", n);
+        Ok(n)
     }
 
     async fn send_to(&self, buf: &[u8], target: SocketAddr) -> webrtc_util::Result<usize> {
@@ -89,7 +101,7 @@ impl webrtc_util::Conn for DtlsTransport {
     }
 
     fn remote_addr(&self) -> Option<SocketAddr> {
-        *self.remote_addr.lock().unwrap()
+        *self.remote_addr.lock()
     }
 
     async fn close(&self) -> webrtc_util::Result<()> {
@@ -121,6 +133,7 @@ pub fn spawn_handshake(
     sock: Arc<tokio::net::UdpSocket>,
     inbound_rx: mpsc::Receiver<Vec<u8>>,
     certificate: Certificate,
+    remote_addr: Arc<PLMutex<Option<SocketAddr>>>,
 ) -> tokio::sync::oneshot::Receiver<Option<HandshakeResult>> {
     let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
@@ -128,7 +141,7 @@ pub fn spawn_handshake(
         inbound_rx: tokio::sync::Mutex::new(inbound_rx),
         sock,
         local_addr,
-        remote_addr: Mutex::new(None),
+        remote_addr,
     });
 
     let is_client = setup == DtlsSetup::Active;
@@ -136,6 +149,7 @@ pub fn spawn_handshake(
         webrtc_dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
     ];
 
+    eprintln!("[dtls] spawn_handshake: is_client={}, local={}", is_client, local_addr);
     tokio::spawn(async move {
         let config = DtlsConfig {
             certificates: vec![certificate],
@@ -145,8 +159,10 @@ pub fn spawn_handshake(
             ..Default::default()
         };
 
+        eprintln!("[dtls] DTLSConn::new starting, is_client={}", is_client);
         match DTLSConn::new(transport, config, is_client, None).await {
             Ok(conn) => {
+                eprintln!("[dtls] handshake OK");
                 use webrtc_util::KeyingMaterialExporter;
                 let state = conn.connection_state().await;
                 let label = "EXTRACTOR-dtls_srtp";
@@ -160,12 +176,14 @@ pub fn spawn_handshake(
                             is_client,
                         }));
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        eprintln!("[dtls] export_keying_material failed: {:?}", e);
                         let _ = result_tx.send(None);
                     }
                 }
             }
-            Err(_) => {
+            Err(e) => {
+                eprintln!("[dtls] DTLSConn::new failed: {:?}", e);
                 let _ = result_tx.send(None);
             }
         }
@@ -243,11 +261,15 @@ mod tests {
             }
         });
 
+        let server_remote = Arc::new(PLMutex::new(Some(client_addr)));
+        let client_remote = Arc::new(PLMutex::new(Some(server_addr)));
         let server_result_rx = spawn_handshake(
             DtlsSetup::Passive, server_addr, server_sock, server_dtls_rx, server_cert,
+            server_remote,
         );
         let client_result_rx = spawn_handshake(
             DtlsSetup::Active, client_addr, client_sock, client_dtls_rx, client_cert,
+            client_remote,
         );
 
         let server_result = tokio::time::timeout(Duration::from_secs(5), server_result_rx)

@@ -228,6 +228,7 @@ impl ChannelObject {
         let port = params.get_named_property::<u32>("port").ok();
         let codec = params.get_named_property::<u32>("codec").ok().unwrap_or(0);
         let icepwd = params.get_named_property::<String>("icepwd").ok();
+        let dtls = parse_remote_dtls(&params);
         let Some(addr_s) = addr else { return false; };
         let Some(port_n) = port else { return false; };
         let Ok(ip) = addr_s.parse::<IpAddr>() else { return false; };
@@ -239,7 +240,7 @@ impl ChannelObject {
                 payload_type: codec as u8,
                 ilbc_payload_type: None,
                 rfc2833_payload_type: None,
-                dtls: None,
+                dtls,
                 icepwd,
             },
             ack,
@@ -585,6 +586,31 @@ fn extract_remote_icepwd(params: &Object) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Parse an optional `dtls` block from a remote config object. JS shape:
+/// `{ fingerprint: { hash: "sha-256 ..." }, mode: "active"|"passive" }`
+/// — matches `projectrtpdtls.js` test fixtures. Returns None when missing
+/// or malformed so plain (non-DTLS) RTP still works.
+fn parse_remote_dtls(params: &Object) -> Option<super::commands::RemoteDtls> {
+    let dtls_obj = params.get_named_property::<Object>("dtls").ok()?;
+    let mode: String = dtls_obj.get_named_property::<String>("mode").ok()?;
+    let setup = match mode.as_str() {
+        "active" => super::commands::DtlsSetup::Active,
+        "passive" => super::commands::DtlsSetup::Passive,
+        _ => return None,
+    };
+    let fingerprint = dtls_obj
+        .get_named_property::<Object>("fingerprint")
+        .ok()
+        .and_then(|fp| fp.get_named_property::<String>("hash").ok())
+        .unwrap_or_default();
+    Some(super::commands::RemoteDtls { fingerprint, setup })
+}
+
+fn extract_remote_dtls(params: &Object) -> Option<super::commands::RemoteDtls> {
+    let remote = params.get_named_property::<Object>("remote").ok()?;
+    parse_remote_dtls(&remote)
+}
+
 #[napi(js_name = "openchannel")]
 pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<ChannelObject> {
     let remote_addr = extract_remote_addr(&params);
@@ -593,6 +619,7 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
     let ilbc_pt = extract_ilbc_pt(&params).unwrap_or(97);
     let override_local_icepwd = extract_local_icepwd(&params);
     let initial_remote_icepwd = extract_remote_icepwd(&params);
+    let initial_remote_dtls = extract_remote_dtls(&params);
     let initial_direction = extract_direction(&params);
     let mut tsfn: ThreadsafeFunction<EventPayload, ErrorStrategy::Fatal> = callback
         .create_threadsafe_function(0, |ctx: napi::threadsafe_function::ThreadSafeCallContext<EventPayload>| {
@@ -709,6 +736,7 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
     if let Some(addr) = remote_addr {
         let cmd_tx = handle.cmd.clone();
         let icepwd = initial_remote_icepwd.clone();
+        let dtls = initial_remote_dtls.clone();
         tokio::spawn(async move {
             use super::commands::{Command, RemoteConfig};
             let (ack, _) = tokio::sync::oneshot::channel();
@@ -717,7 +745,7 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
                 payload_type: remote_pt,
                 ilbc_payload_type: Some(ilbc_pt),
                 rfc2833_payload_type: rfc2833_pt,
-                dtls: None,
+                dtls,
                 icepwd,
             };
             let _ = cmd_tx.send(Command::Remote { cfg, ack }).await;

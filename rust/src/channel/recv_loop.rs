@@ -75,8 +75,14 @@ async fn handle_packet(cfg: &RecvLoopConfig, pkt: &[u8], peer: SocketAddr) {
     // DTLS — feed to DTLSConn if active.
     if (20..=63).contains(&first) {
         let tx = cfg.dtls_tx.lock().clone();
-        if let Some(tx) = tx {
-            let _ = tx.try_send(pkt.to_vec());
+        match tx {
+            Some(tx) => {
+                match tx.try_send(pkt.to_vec()) {
+                    Ok(()) => eprintln!("[recv_loop] DTLS {} bytes from {} → forwarded to dtls_tx", pkt.len(), peer),
+                    Err(e) => eprintln!("[recv_loop] DTLS forward failed: {}", e),
+                }
+            }
+            None => eprintln!("[recv_loop] DTLS {} bytes from {} DROPPED (dtls_tx is None)", pkt.len(), peer),
         }
         return;
     }

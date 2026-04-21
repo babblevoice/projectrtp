@@ -550,18 +550,18 @@ async fn handle_command_local(
             }
 
             // DTLS: if the remote config includes DTLS setup, start the handshake.
+            // The cert is the process-lifetime one whose fingerprint is what
+            // the peer was promised via SDP — see `dtls::get_certificate`.
             if let Some(ref dtls) = cfg.dtls {
                 let (dtls_tx, dtls_rx) = mpsc::channel::<Vec<u8>>(64);
                 *state.dtls_inbound_tx.lock() = Some(dtls_tx);
-                let cert = webrtc_dtls::crypto::Certificate::generate_self_signed(
-                    vec!["projectrtp".into()],
-                ).expect("generate dtls cert");
                 state.dtls_result_rx = Some(super::dtls_session::spawn_handshake(
                     dtls.setup,
                     state.local_addr,
                     state.rtp_sock.clone(),
                     dtls_rx,
-                    cert,
+                    crate::dtls::get_certificate(),
+                    state.remote_addr.clone(),
                 ));
             }
 

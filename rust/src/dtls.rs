@@ -1,46 +1,21 @@
-// DTLS / SRTP — port of projectrtpsrtp.{cpp,h}.
+// DTLS / SRTP — pure-Rust cert + fingerprint.
 //
-// Scope for Task #6 (this commit):
-//   - Compute and expose the DTLS-SRTP local fingerprint (`dtls.fingerprint`)
-//     from the PEM cert at `~/.projectrtp/certs/dtls-srtp.pem`. Pure-Rust.
+// The DTLS-SRTP peer authentication contract is: the server advertises a
+// certificate fingerprint in its SDP, the peer computes the fingerprint of
+// the cert received in the DTLS handshake, and they must match.
 //
-// Deferred to Task #7 (lands with channel):
-//   - gnutls DTLS session with custom push/pull/timeout transport callbacks
-//     wired into the channel's UDP socket.
-//   - SRTP context setup from DTLS key material; protect() / unprotect() of
-//     RTP/RTCP packets via libsrtp2 (via the `srtp2-sys` crate — already a
-//     candidate dep, will land with the channel integration).
+// Previously the JS wrapper shelled out to `openssl genrsa` on first
+// startup, wrote a PEM to disk, and Rust re-parsed it. That had two
+// problems: (1) `webrtc-dtls` only accepts ECDSA P-256 or Ed25519 private
+// keys, so RSA broke the handshake; (2) the openssl binary was an extra
+// container dependency. Both go away by generating the cert in Rust once
+// per process and keeping it in memory — the container's filesystem is
+// ephemeral anyway.
 
-use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use base64::Engine;
 use sha2::{Digest, Sha256};
-
-fn cert_path() -> PathBuf {
-    let mut p = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-    p.push(".projectrtp/certs/dtls-srtp.pem");
-    p
-}
-
-fn extract_cert_der(pem: &str) -> Option<Vec<u8>> {
-    const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
-    const END: &str = "-----END CERTIFICATE-----";
-    let start = pem.find(BEGIN)? + BEGIN.len();
-    let rest = &pem[start..];
-    let end = rest.find(END)?;
-    let b64: String = rest[..end]
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
-    base64::engine::general_purpose::STANDARD.decode(b64.as_bytes()).ok()
-}
-
-fn compute_fingerprint_from_pem(pem: &str) -> Option<String> {
-    let der = extract_cert_der(pem)?;
-    let digest = Sha256::digest(&der);
-    Some(hex_colon(&digest))
-}
+use webrtc_dtls::crypto::Certificate;
 
 fn hex_colon(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 3);
@@ -51,67 +26,57 @@ fn hex_colon(bytes: &[u8]) -> String {
     s
 }
 
+static CERT: OnceLock<Certificate> = OnceLock::new();
 static FINGERPRINT: OnceLock<String> = OnceLock::new();
 
-fn load_fingerprint() -> String {
-    let path = cert_path();
-    let pem = match std::fs::read_to_string(&path) {
-        Ok(p) => p,
-        Err(_) => return String::new(),
-    };
-    compute_fingerprint_from_pem(&pem).unwrap_or_default()
+fn init_cert() -> Certificate {
+    Certificate::generate_self_signed(vec!["projectrtp".into()])
+        .expect("generate self-signed ECDSA P-256 cert")
 }
 
-/// Internal accessor for the fingerprint. Not exported via `#[napi]` —
-/// we publish it as a *string property* on the `dtls` namespace, not a
-/// function, because the JS tests assert `projectrtp.dtls.fingerprint`
-/// is `.to.be.a("string")`. The namespace is populated in `lib.rs`
-/// `init_module_exports` via a `#[napi::module_exports]` hook.
+fn compute_fingerprint(cert: &Certificate) -> String {
+    let der = cert.certificate.first()
+        .expect("cert has at least one DER entry")
+        .as_ref();
+    hex_colon(&Sha256::digest(der))
+}
+
+/// Process-lifetime certificate used for every DTLS handshake on this
+/// server. Generated on first access. See module docs for rationale.
+pub fn get_certificate() -> Certificate {
+    CERT.get_or_init(init_cert).clone()
+}
+
+/// SHA-256 fingerprint of the process-lifetime certificate, formatted as
+/// colon-separated uppercase hex (e.g. `A1:B2:…`). Exposed to JS as
+/// `projectrtp.dtls.fingerprint` — babble-sip embeds this in SDP.
 pub fn fingerprint() -> &'static str {
-    FINGERPRINT.get_or_init(load_fingerprint)
+    FINGERPRINT.get_or_init(|| compute_fingerprint(CERT.get_or_init(init_cert)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // A known self-signed cert (generated for this test) and the SHA-256 of
-    // its DER, verified with `openssl x509 -in cert.pem -fingerprint -sha256 -noout`.
-    const TEST_PEM: &str = "\
------BEGIN CERTIFICATE-----
-MIIBhTCCASugAwIBAgIUK+QOH2qy0x77QkyBAHNNqRTZAYUwCgYIKoZIzj0EAwIw
-FDESMBAGA1UEAwwJcHJvamVjdHJ0cDAeFw0yNTAxMDEwMDAwMDBaFw0zNTAxMDEw
-MDAwMDBaMBQxEjAQBgNVBAMMCXByb2plY3RydHAwWTATBgcqhkjOPQIBBggqhkjO
-PQMBBwNCAATbI0qBXnRTPUaqmBR7tMzC2pl3xXwLi5o2UYH6crdRKC79EEjpHl/D
-kkh4fAWkF4wuZ2dMgsnUJVwdvb6Fiep4o1MwUTAdBgNVHQ4EFgQU8eYvkWxdE4Co
-TjRwPMO9evlapOwwHwYDVR0jBBgwFoAU8eYvkWxdE4CoTjRwPMO9evlapOwwDwYD
-VR0TAQH/BAUwAwEB/zAKBggqhkjOPQQDAgNIADBFAiEAxQyjmjs0P4nzEtDsjVJI
-m97lJqRUrSPntVN6WJoFGncCIArj93ZNTXiA6SyJVb4mwR2uHvdP7gqC8GKmHIb6
-QtrM
------END CERTIFICATE-----
-";
-
     #[test]
-    fn extracts_der_from_pem() {
-        let der = extract_cert_der(TEST_PEM).expect("der");
-        // ASN.1 SEQUENCE tag + length prefix.
-        assert_eq!(der[0], 0x30);
-        assert!(der.len() > 100);
-    }
-
-    #[test]
-    fn fingerprint_is_sha256_colon_hex_of_der() {
-        let fp = compute_fingerprint_from_pem(TEST_PEM).expect("fp");
+    fn fingerprint_is_sha256_colon_hex_of_cert_der() {
+        let fp = fingerprint();
         // Format: 32 bytes * 2 hex + 31 colons = 95 chars.
         assert_eq!(fp.len(), 95);
         assert!(fp.chars().all(|c| c == ':' || c.is_ascii_hexdigit()));
-        // Determinism: same input → same output.
-        let fp2 = compute_fingerprint_from_pem(TEST_PEM).unwrap();
-        assert_eq!(fp, fp2);
     }
 
     #[test]
-    fn missing_pem_yields_empty_string() {
-        assert!(compute_fingerprint_from_pem("not a pem").is_none());
+    fn fingerprint_is_stable_within_process() {
+        let a = fingerprint().to_string();
+        let b = fingerprint().to_string();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn get_certificate_returns_clones_of_same_cert() {
+        let c1 = get_certificate();
+        let c2 = get_certificate();
+        assert_eq!(c1.certificate, c2.certificate);
     }
 }

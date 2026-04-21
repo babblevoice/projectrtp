@@ -6,7 +6,6 @@ const server = require( "./lib/server.js" )
 const node = require( "./lib/node.js" )
 
 const fs = require( "fs" )
-const { spawnSync } = require( "child_process" )
 
 let localaddress = "127.0.0.1"
 let privateaddress = "127.0.0.1"
@@ -17,42 +16,6 @@ if ( fs.existsSync( "./build/Debug/projectrtp.node" ) ) {
   bin = "./build/Debug/projectrtp"
 }
 
-
-/**
- * Generate a self signed if none present
- * @return { void }
- * @ignore
- */
-function gencerts() {
-
-  const keypath = require( "os" ).homedir() + "/.projectrtp/certs/"
-  if( !fs.existsSync( keypath + "dtls-srtp.pem" ) ) {
-
-    if ( !fs.existsSync( keypath ) ) fs.mkdirSync( keypath, { recursive: true } )
-    
-    const serverkey = keypath + "server-key.pem"
-    const servercsr = keypath + "server-csr.pem"
-    const servercert = keypath + "server-cert.pem"
-    const combined = keypath + "dtls-srtp.pem"
-
-    const openssl = spawnSync( "openssl", [ "genrsa", "-out", serverkey, "4096" ] )
-    if( 0 !== openssl.status ) throw new Error( "Failed to genrsa: " + openssl.status )
-
-    const request = spawnSync( "openssl", [ "req", "-new", "-key", serverkey , "-out", servercsr, "-subj", "/C=GB/CN=projectrtp" ] )
-    if( 0 !== request.status ) throw new Error( "Failed to generate csr: " + request.status )
-
-    const sign = spawnSync( "openssl", [ "x509", "-req", "-in", servercsr, "-signkey", serverkey, "-out", servercert ] )
-    if( 0 !== sign.status ) throw new Error( "Failed to sign key: " + sign.status )
-
-    const serverkeydata = fs.readFileSync( serverkey )
-    const servercertdata = fs.readFileSync( servercert )
-    fs.writeFileSync( combined, Buffer.concat( [ serverkeydata, servercertdata ] ) )
-    fs.unlinkSync( serverkey )
-    fs.unlinkSync( servercsr )
-    fs.unlinkSync( servercert )
-    /* we will be left with combined */
-  }
-}
 
 /**
  * Proxy for other RTP nodes - to be retired as it is ambiguous of direction (i.e. server/node). See node.interface and server.interface instead.
@@ -435,7 +398,6 @@ class projectrtp {
 
     if( actualprojectrtp ) return
 
-    gencerts()
     if ( !params ) params = {}
 
     actualprojectrtp = require( bin )
