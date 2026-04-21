@@ -93,6 +93,13 @@ pub fn decode_pcmu_buf(payload: &[u8]) -> Vec<i16> {
 pub struct Transcoder {
     g722_encoder: Option<crate::g722::Encoder>,
     g722_decoder: Option<crate::g722::Decoder>,
+    /// LP filter for 16 kHz → 8 kHz downsample after G.722 decode. Stateful
+    /// across packets — zeroing it per packet would cause edge artefacts.
+    g722_down_filter: crate::firfilter::Lowpass3_4k16k,
+    /// LP filter for 8 kHz → 16 kHz upsample before G.722 encode. Same
+    /// filter type, separate instance to keep the direction's history
+    /// independent.
+    g722_up_filter: crate::firfilter::Lowpass3_4k16k,
     ilbc_encoder: Option<crate::ilbc::Encoder>,
     ilbc_decoder: Option<crate::ilbc::Decoder>,
     /// Dynamic RTP PTs that should be treated as iLBC by decode/encode.
@@ -101,6 +108,13 @@ pub struct Transcoder {
     /// both ends of an asymmetric-dynamic pair). Static PT 97 is always
     /// accepted even when slots are set to something else.
     ilbc_pts: [u8; 2],
+    /// Persistent scratch buffers for the G.722 resampling stages.
+    /// `g722_wideband_buf` holds 16 kHz samples (upsampled encoder input
+    /// or raw decoder output); `decode_buf` holds the 8 kHz samples
+    /// produced after downsample. Reused every tick to avoid heap
+    /// allocation on the hot path.
+    g722_wideband_buf: Vec<i16>,
+    decode_buf: Vec<i16>,
 }
 
 impl Default for Transcoder {
@@ -109,12 +123,19 @@ impl Default for Transcoder {
 
 impl Transcoder {
     pub fn new() -> Self {
+        // 160 samples / bytes = one 20 ms packet @ 8 kHz; 320 for G.722
+        // wideband intermediates. Pre-sizing so the first tick doesn't
+        // trigger a realloc.
         Self {
             g722_encoder: None,
             g722_decoder: None,
+            g722_down_filter: crate::firfilter::Lowpass3_4k16k::new(),
+            g722_up_filter: crate::firfilter::Lowpass3_4k16k::new(),
             ilbc_encoder: None,
             ilbc_decoder: None,
             ilbc_pts: [97, 97],
+            g722_wideband_buf: Vec::with_capacity(320),
+            decode_buf: Vec::with_capacity(160),
         }
     }
 
@@ -125,19 +146,16 @@ impl Transcoder {
         pt == 97 || pt == self.ilbc_pts[0] || pt == self.ilbc_pts[1]
     }
 
-    fn g722_enc(&mut self) -> &mut crate::g722::Encoder {
-        self.g722_encoder.get_or_insert_with(|| {
-            crate::g722::Encoder::new().expect("g722 encoder init")
-        })
-    }
+    // Note: the `g722_enc` / `g722_dec` helpers are inlined into the
+    // encode/decode match arms now so that field-level borrow checking
+    // can see they don't overlap with `g722_wideband_buf` / filter fields.
 
-    fn g722_dec(&mut self) -> &mut crate::g722::Decoder {
-        self.g722_decoder.get_or_insert_with(|| {
-            crate::g722::Decoder::new().expect("g722 decoder init")
-        })
-    }
-
-    /// Decode `payload` from `pt` to linear16 @ 8 kHz.
+    /// Decode `payload` from `pt` to linear16 @ 8 kHz. G.722 is natively
+    /// 16 kHz — we decode to 320 samples then downsample to 160 via the
+    /// stateful `g722_down_filter` (matches C++ `l16widetonarrowband`
+    /// in projectrtpcodecx.cpp:463). The G.722 intermediate wideband
+    /// samples are written into a persistent `g722_wideband_buf` so the
+    /// hot path avoids allocating that scratch buffer every tick.
     pub fn decode(&mut self, pt: u8, payload: &[u8]) -> Option<Vec<i16>> {
         if self.is_ilbc_pt(pt) {
             let dec = self.ilbc_decoder.get_or_insert_with(|| {
@@ -148,12 +166,40 @@ impl Transcoder {
         match pt {
             0 => Some(payload.iter().map(|&b| ulaw_to_linear(b)).collect()),
             8 => Some(payload.iter().map(|&b| alaw_to_linear(b)).collect()),
-            9 => Some(self.g722_dec().decode(payload)),
+            9 => {
+                // Stage wideband samples via the G.722 decoder's persistent
+                // buffer, then downsample into a fresh Vec. Two scratch
+                // borrows are needed sequentially, not overlapping.
+                {
+                    let dec = self.g722_decoder.get_or_insert_with(|| {
+                        crate::g722::Decoder::new().expect("g722 decoder init")
+                    });
+                    let decoded = dec.decode(payload);
+                    self.g722_wideband_buf.clear();
+                    self.g722_wideband_buf.extend_from_slice(decoded);
+                }
+                self.decode_buf.clear();
+                g722_down_into(
+                    &self.g722_wideband_buf,
+                    &mut self.g722_down_filter,
+                    &mut self.decode_buf,
+                );
+                // Caller needs owned samples — existing sites build on
+                // `Option<Vec<i16>>`. One allocation per call, but the
+                // internal wideband scratch is reused.
+                Some(self.decode_buf.clone())
+            }
             _ => None,
         }
     }
 
-    /// Encode linear16 @ 8 kHz into `pt`.
+    /// Encode linear16 @ 8 kHz into `pt`. G.722 requires 16 kHz input —
+    /// we upsample the 160-sample frame to 320 via the stateful
+    /// `g722_up_filter` before encoding (matches C++ `l16lowtowideband`
+    /// in projectrtpcodecx.cpp:416). The upsampled samples go into the
+    /// persistent `g722_wideband_buf`; the G.722 encoder writes into
+    /// its own persistent `out_buf` which we copy once into an owned
+    /// Vec for the caller.
     pub fn encode(&mut self, pt: u8, samples: &[i16]) -> Option<Vec<u8>> {
         if self.is_ilbc_pt(pt) {
             let enc = self.ilbc_encoder.get_or_insert_with(|| {
@@ -164,7 +210,13 @@ impl Transcoder {
         match pt {
             0 => Some(samples.iter().map(|&s| linear_to_ulaw(s as i32)).collect()),
             8 => Some(samples.iter().map(|&s| linear_to_alaw(s as i32)).collect()),
-            9 => Some(self.g722_enc().encode(samples)),
+            9 => {
+                g722_up_into(samples, &mut self.g722_up_filter, &mut self.g722_wideband_buf);
+                let enc = self.g722_encoder.get_or_insert_with(|| {
+                    crate::g722::Encoder::new().expect("g722 encoder init")
+                });
+                Some(enc.encode(&self.g722_wideband_buf).to_vec())
+            }
             _ => None,
         }
     }
@@ -175,6 +227,43 @@ impl Transcoder {
         if src_pt == dst_pt { return Some(payload.to_vec()); }
         let pcm = self.decode(src_pt, payload)?;
         self.encode(dst_pt, &pcm)
+    }
+}
+
+/// 16 kHz → 8 kHz downsample: for each pair of input samples, run both
+/// through the shared LP filter (to update its state) and keep only the
+/// filtered second sample. Output goes into the caller-provided buffer
+/// (cleared first) so the hot path can reuse it across ticks. Matches
+/// C++ `l16widetonarrowband`.
+fn g722_down_into(
+    wideband: &[i16],
+    filter: &mut crate::firfilter::Lowpass3_4k16k,
+    out: &mut Vec<i16>,
+) {
+    out.clear();
+    out.reserve(wideband.len() / 2);
+    let mut i = 0;
+    while i + 1 < wideband.len() {
+        let _ = filter.execute(wideband[i]);
+        out.push(filter.execute(wideband[i + 1]));
+        i += 2;
+    }
+}
+
+/// 8 kHz → 16 kHz upsample: for each input sample, emit the filtered
+/// sample and then a filtered zero. Zero-interleaved upsampling: the LP
+/// filter smooths the resulting spectrum's replicas. Output is written
+/// into the caller-provided buffer. Matches C++ `l16lowtowideband`.
+fn g722_up_into(
+    narrowband: &[i16],
+    filter: &mut crate::firfilter::Lowpass3_4k16k,
+    out: &mut Vec<i16>,
+) {
+    out.clear();
+    out.reserve(narrowband.len() * 2);
+    for &s in narrowband {
+        out.push(filter.execute(s));
+        out.push(filter.execute(0));
     }
 }
 

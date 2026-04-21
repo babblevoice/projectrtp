@@ -369,7 +369,14 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
         // N=2: each member's output = peer's frame (= summed - own).
         // Send via the PEER's socket so the far end's autocorrect latches
         // onto the peer's port (matching C++ `dstchan->writepacket()`).
-        // Two passes: first encode, then send via peer socket.
+        //
+        // Two-pass because the RTP packet we send to the destination must
+        // use the DESTINATION's SRTP encrypt context, SSRC and outbound
+        // counters — those were negotiated on the destination's leg and
+        // are what the destination peer expects to decrypt/reassemble.
+        // Using the source's state produces audible noise or silence
+        // whenever at least one leg is SRTP (e.g. Chromium ↔ SIP), since
+        // the destination can't decrypt with the wrong key.
         let peer_info: Vec<(ChannelId, ChannelId, Option<SocketAddr>, u8)> = {
             let ids: Vec<ChannelId> = members.keys().copied().collect();
             ids.iter().map(|&id| {
@@ -379,53 +386,41 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
             }).collect()
         };
 
-        let mut outgoing: Vec<(ChannelId, Vec<u8>, SocketAddr)> = Vec::new();
+        // Pass 1: encode the source's frame into the destination's codec.
+        // `transcoder.encode` lives on the source's state; touch only that.
+        let mut encoded: Vec<(ChannelId, Vec<u8>, SocketAddr)> = Vec::new();
         for &(id, dest_id, peer_remote, peer_pt) in &peer_info {
             let m = members.get_mut(&id).unwrap();
             if !m.state.direction.send { continue; }
             if !m.frame_present { continue; }
             let Some(dest_addr) = peer_remote else { continue; };
-
             if let Some(payload) = m.state.transcoder.encode(peer_pt, &m.frame) {
-                let mut pkt = RtpPacket::new();
-                pkt.init(m.state.ssrc);
-                pkt.set_payload_type(peer_pt);
-                pkt.set_sequence_number(m.state.out_sn);
-                pkt.set_timestamp(m.state.out_ts);
-                pkt.set_payload(&payload);
-                m.state.out_sn = m.state.out_sn.wrapping_add(1);
-                m.state.out_ts = m.state.out_ts.wrapping_add(MIX_FRAME_SAMPLES as u32);
-                let wire_data: Vec<u8> = if let Some(ref mut ctx) = m.state.srtp_encrypt {
-                    match ctx.encrypt_rtp(pkt.as_slice()) {
-                        Ok(encrypted) => encrypted.to_vec(),
-                        Err(_) => continue,
-                    }
-                } else {
-                    pkt.as_slice().to_vec()
-                };
-                outgoing.push((dest_id, wire_data, dest_addr));
+                encoded.push((dest_id, payload, dest_addr));
             }
         }
-        // Send via destination member's socket.
-        for (dest_id, data, dest_addr) in &outgoing {
-            if let Some(dest) = members.get(dest_id) {
-                let _ = dest.state.rtp_sock.send_to(data, *dest_addr).await;
-            }
-        }
-        // Count on source members.
-        for &(id, _, _, _) in &peer_info {
-            if outgoing.iter().any(|(did, _, _)| members.get(did).map(|m| m.state.id) == Some(id).map(|_| members.get(&id).unwrap().state.id).and_then(|_| None).or(Some(0))) {
-                // simplified: just count based on outgoing
-            }
-        }
-        // Simpler count: each source that contributed gets +1
-        for (dest_id, _, _) in outgoing {
-            // Find the source (the other member)
-            let src_id = peer_info.iter().find(|(_, did, _, _)| *did == dest_id).map(|(sid, _, _, _)| *sid);
-            if let Some(sid) = src_id {
-                if let Some(src) = members.get_mut(&sid) {
-                    src.state.out_count += 1;
+
+        // Pass 2: build the packet with DEST's state (ssrc/out_sn/out_ts)
+        // and DEST's SRTP context, then send via DEST's socket.
+        for (dest_id, payload, dest_addr) in encoded {
+            let Some(dest) = members.get_mut(&dest_id) else { continue; };
+            let mut pkt = RtpPacket::new();
+            pkt.init(dest.state.ssrc);
+            pkt.set_payload_type(dest.state.remote_pt);
+            pkt.set_sequence_number(dest.state.out_sn);
+            pkt.set_timestamp(dest.state.out_ts);
+            pkt.set_payload(&payload);
+            dest.state.out_sn = dest.state.out_sn.wrapping_add(1);
+            dest.state.out_ts = dest.state.out_ts.wrapping_add(MIX_FRAME_SAMPLES as u32);
+            let wire_data: Vec<u8> = if let Some(ref mut ctx) = dest.state.srtp_encrypt {
+                match ctx.encrypt_rtp(pkt.as_slice()) {
+                    Ok(encrypted) => encrypted.to_vec(),
+                    Err(_) => continue,
                 }
+            } else {
+                pkt.as_slice().to_vec()
+            };
+            if dest.state.rtp_sock.send_to(&wire_data, dest_addr).await.is_ok() {
+                dest.state.out_count += 1;
             }
         }
     } else {

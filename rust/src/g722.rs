@@ -39,49 +39,70 @@ extern "C" {
 }
 
 // Option bits from spandsp/g722.h.
+#[allow(dead_code)]
 const G722_SAMPLE_RATE_8000: c_int = 0x0001;
 const G722_PACKED: c_int = 0x0002;
 const G722_RATE_64000: c_int = 64000;
 
+/// 20 ms at 16 kHz mono. G.722's native frame size.
+const G722_FRAME_SAMPLES: usize = 320;
+/// 64 kbit/s × 20 ms = 160 wire bytes per frame. Two 16 kHz samples pack
+/// into one byte.
+const G722_FRAME_BYTES: usize = 160;
+
 pub struct Encoder {
     state: *mut G722EncodeState,
+    /// Persistent output buffer, sized for a 20 ms frame. Reused across
+    /// calls to avoid per-tick allocation.
+    out_buf: Vec<u8>,
 }
 
 unsafe impl Send for Encoder {}
 
 impl Encoder {
     pub fn new() -> Option<Self> {
+        // True 16 kHz G.722 — matches C++ projectrtpcodecx.cpp:368 which
+        // uses `G722_PACKED` only. The `G722_SAMPLE_RATE_8000` flag is a
+        // test-vector mode that produces non-standard wire output.
         let state = unsafe {
             g722_encode_init(
                 std::ptr::null_mut(),
                 G722_RATE_64000,
-                G722_SAMPLE_RATE_8000 | G722_PACKED,
+                G722_PACKED,
             )
         };
         if state.is_null() {
             return None;
         }
-        Some(Self { state })
+        Some(Self { state, out_buf: vec![0u8; G722_FRAME_BYTES] })
     }
 
-    /// Encode 8 kHz linear PCM to G.722. For a 20 ms packet at 8 kHz we
-    /// pass 160 samples and get 160 bytes back (spandsp's 8000-mode
-    /// returns `len` bytes for `len` input samples at 64 kbit/s).
-    pub fn encode(&mut self, samples: &[i16]) -> Vec<u8> {
-        let mut out = vec![0u8; samples.len()];
+    /// Encode 16 kHz linear PCM to G.722. For a 20 ms packet pass 320
+    /// samples; the returned slice is 160 bytes (64 kbit/s G.722 packs
+    /// two 4-bit samples per byte).
+    ///
+    /// The returned slice borrows `self.out_buf` — valid until the next
+    /// encode call. Using spandsp's `G722_SAMPLE_RATE_8000` flag to
+    /// bypass the 16 kHz requirement is a test-vector mode that produces
+    /// non-standard wire bytes — real peers decode those as distorted
+    /// audio, so callers must upsample 8 kHz audio to 16 kHz first.
+    pub fn encode(&mut self, samples: &[i16]) -> &[u8] {
+        let needed = samples.len() / 2 + 1;
+        if self.out_buf.len() < needed {
+            self.out_buf.resize(needed, 0);
+        }
         let n = unsafe {
             g722_encode(
                 self.state,
-                out.as_mut_ptr(),
+                self.out_buf.as_mut_ptr(),
                 samples.as_ptr(),
                 samples.len() as c_int,
             )
         };
         if n <= 0 {
-            return Vec::new();
+            return &[];
         }
-        out.truncate(n as usize);
-        out
+        &self.out_buf[..n as usize]
     }
 }
 
@@ -96,41 +117,49 @@ impl Drop for Encoder {
 
 pub struct Decoder {
     state: *mut G722DecodeState,
+    /// Persistent output buffer. Reused across calls.
+    out_buf: Vec<i16>,
 }
 
 unsafe impl Send for Decoder {}
 
 impl Decoder {
     pub fn new() -> Option<Self> {
+        // True 16 kHz G.722 — see Encoder::new for rationale.
         let state = unsafe {
             g722_decode_init(
                 std::ptr::null_mut(),
                 G722_RATE_64000,
-                G722_SAMPLE_RATE_8000 | G722_PACKED,
+                G722_PACKED,
             )
         };
         if state.is_null() {
             return None;
         }
-        Some(Self { state })
+        Some(Self { state, out_buf: vec![0i16; G722_FRAME_SAMPLES] })
     }
 
-    /// Decode G.722 to 8 kHz linear PCM.
-    pub fn decode(&mut self, bits: &[u8]) -> Vec<i16> {
-        let mut out = vec![0i16; bits.len()];
+    /// Decode G.722 to 16 kHz linear PCM: 160 wire bytes → 320 samples.
+    /// The returned slice borrows `self.out_buf` — valid until the next
+    /// decode call. Callers mixing with 8 kHz audio must downsample (see
+    /// `Transcoder::decode`).
+    pub fn decode(&mut self, bits: &[u8]) -> &[i16] {
+        let needed = bits.len() * 2;
+        if self.out_buf.len() < needed {
+            self.out_buf.resize(needed, 0);
+        }
         let n = unsafe {
             g722_decode(
                 self.state,
-                out.as_mut_ptr(),
+                self.out_buf.as_mut_ptr(),
                 bits.as_ptr(),
                 bits.len() as c_int,
             )
         };
         if n <= 0 {
-            return Vec::new();
+            return &[];
         }
-        out.truncate(n as usize);
-        out
+        &self.out_buf[..n as usize]
     }
 }
 
@@ -151,13 +180,13 @@ mod tests {
     fn roundtrip_one_frame_recoverable() {
         let mut enc = Encoder::new().expect("encoder");
         let mut dec = Decoder::new().expect("decoder");
-        // 160 samples of a gentle sine so we can compare in/out shape.
-        let samples: Vec<i16> = (0..160)
-            .map(|i| ((i as f32 * 0.1).sin() * 2000.0) as i16)
+        // 320 samples @ 16 kHz for a 20 ms frame — G.722's native rate.
+        let samples: Vec<i16> = (0..320)
+            .map(|i| ((i as f32 * 0.05).sin() * 2000.0) as i16)
             .collect();
         let encoded = enc.encode(&samples);
-        assert_eq!(encoded.len(), 160);
+        assert_eq!(encoded.len(), 160, "64 kbit/s → 160 bytes per 20 ms");
         let decoded = dec.decode(&encoded);
-        assert_eq!(decoded.len(), 160);
+        assert_eq!(decoded.len(), 320, "decoder produces 16 kHz samples");
     }
 }
