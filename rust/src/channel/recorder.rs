@@ -223,6 +223,25 @@ impl Recorder {
         Ok(true)
     }
 
+    /// Write samples directly to the WAV file, bypassing state, power calc,
+    /// start-gate and finish-check logic. Used to flush the pre-buffer
+    /// collected during `playrecord`'s play phase — those samples are
+    /// "decided" audio (the caller's speech during/before the prompt) and
+    /// should not be subject to the recorder's start-above-power gate.
+    /// Matches C++ `writeraw`.
+    ///
+    /// Returns the number of samples written.
+    pub async fn write_raw(&mut self, samples: &[i16]) -> std::io::Result<usize> {
+        if self.state == RecorderState::Finished { return Ok(0); }
+        if samples.is_empty() { return Ok(0); }
+        self.writer
+            .write_samples(samples)
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        self.samples_written += samples.len() as u64;
+        Ok(samples.len())
+    }
+
     /// Explicitly close the underlying WAV file. Idempotent.
     pub fn close(&mut self, reason: FinishReason) {
         self.request_finish(reason);
@@ -285,6 +304,47 @@ mod tests {
         // Loud frames — should open the gate.
         for _ in 0..10 { rec.write(&vec![5000i16; 160]).await.unwrap(); }
         assert_eq!(rec.state(), RecorderState::Active);
+
+        rec.close(FinishReason::Completed);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn write_raw_bypasses_start_gate() {
+        // When start_above_power is set, normal write() should be gated —
+        // silent samples fed via write() never reach the file. But write_raw
+        // must bypass the gate and write regardless.
+        let mut c = cfg("recorder_write_raw.wav");
+        c.start_above_power = Some(50);
+        let path = c.file.clone();
+
+        let mut rec = Recorder::open(c).await.unwrap();
+        let written = rec.write_raw(&vec![0i16; 800]).await.unwrap();
+        assert_eq!(written, 800);
+        // State stays Pending — write_raw doesn't touch the gate.
+        assert_eq!(rec.state(), RecorderState::Pending);
+
+        rec.close(FinishReason::Completed);
+
+        let info = crate::soundfile::js_info(path.to_string_lossy().into_owned()).unwrap();
+        // 800 samples × 2 bytes/sample = 1600 PCM bytes.
+        assert_eq!(info.subchunksize, 1600);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn write_raw_noop_after_finish() {
+        let mut c = cfg("recorder_write_raw_finished.wav");
+        c.max_duration_ms = Some(10);
+        let path = c.file.clone();
+
+        let mut rec = Recorder::open(c).await.unwrap();
+        // Push enough frames to hit max_duration.
+        for _ in 0..5 { rec.write(&vec![100i16; 160]).await.unwrap(); }
+        assert!(rec.is_finished());
+
+        let written = rec.write_raw(&vec![0i16; 100]).await.unwrap();
+        assert_eq!(written, 0);
 
         rec.close(FinishReason::Completed);
         let _ = std::fs::remove_file(&path);

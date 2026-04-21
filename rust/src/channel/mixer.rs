@@ -34,7 +34,10 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{interval, MissedTickBehavior};
 
-use super::actor::{Event, EventSink, PlayState, RecordState, Subsystems, TICK_MS};
+use super::actor::{
+    activate_pending_recorder, Event, EventSink, PlayState, RecordState, Subsystems, TICK_MS,
+    PREBUFFER_CAPACITY_SAMPLES,
+};
 use super::commands::{ChannelId, Command};
 use super::player::Player;
 use super::recorder::{FinishReason, Recorder, RecorderState};
@@ -217,18 +220,27 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
                 let sn = pk.sequence_number();
                 let payload = &pk.as_slice()[super::rtp::RTP_FIXED_HEADER_LEN..pk.len()];
                 if let Some(digit) = m.subs.dtmf_recv.feed(sn, payload) {
+                    let mut activate_recorder = false;
                     if let Some(p) = m.subs.player.as_ref() {
                         if p.interrupts() {
                             m.subs.player = None;
+                            m.subs.bargein = None;
                             m.state.pending_events.push(Event::Play {
                                 state: PlayState::End,
                                 reason: Some("telephone-event".into()),
                             });
+                            activate_recorder = true;
                         }
                     }
                     m.state.pending_events.push(Event::TelephoneEvent { digit });
                     // Broadcast to other members.
                     dtmf_broadcast.push((m.state.id, digit));
+                    if activate_recorder {
+                        let _ = activate_pending_recorder(
+                            &mut m.subs,
+                            &mut m.state.pending_events,
+                        ).await;
+                    }
                 }
                 continue; // DTMF consumed — skip audio processing for this member.
             }
@@ -237,6 +249,7 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
         // Player: advance one frame. Player output becomes this member's
         // mix contribution (its "voice") when no inbound is present.
         let mut player_frame: Option<Vec<i16>> = None;
+        let mut player_just_ended = false;
         if let Some(player) = m.subs.player.as_mut() {
             let frame = player.read(160).await;
             if !frame.samples.is_empty() {
@@ -249,7 +262,11 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
                     state: PlayState::End,
                     reason: Some("completed".into()),
                 });
+                player_just_ended = true;
             }
+        }
+        if player_just_ended {
+            let _ = activate_pending_recorder(&mut m.subs, &mut m.state.pending_events).await;
         }
 
         // Decode inbound once — shared by recorder, barge-in, and frame.
@@ -271,13 +288,11 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
             }
         }
 
-        // Recorder: feed inbound samples (wire audio, not mix output).
-        if let Some(samples) = inbound_samples.as_ref() {
-            let ch_count = m.state.in_count.load(std::sync::atomic::Ordering::Relaxed);
-            feed_recorders(&mut m.subs.recorders, samples, ch_count, &mut m.state.pending_events).await;
-        }
-
-        // Barge-in on inbound power.
+        // Barge-in on inbound power — must run before the recorder feed so
+        // that when bargein fires we can activate the pending recorder and
+        // flush the pre-buffer *before* this tick's sample would otherwise be
+        // written into an empty recorder.
+        let mut bargein_fired = false;
         if let (Some(samples), Some(bi)) = (inbound_samples.as_ref(), m.subs.bargein.as_mut()) {
             if m.subs.player.is_some() && m.state.in_count.load(Ordering::Relaxed) >= 100 {
                 let mut sum_sq: u64 = 0;
@@ -295,8 +310,36 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
                         state: PlayState::End,
                         reason: Some("interrupted".into()),
                     });
+                    bargein_fired = true;
                 }
             }
+        }
+        if bargein_fired {
+            let _ = activate_pending_recorder(&mut m.subs, &mut m.state.pending_events).await;
+        }
+
+        // Pre-buffer accumulation while `playrecord` is in its play phase —
+        // mirrors local tick.rs. Samples are flushed to the recorder on
+        // activation; skipped once activated.
+        if m.subs.player.is_some() && m.subs.pending_recorder.is_some() {
+            if let Some(samples) = inbound_samples.as_ref() {
+                let overflow = m.subs.prebuffer.len() + samples.len()
+                    > PREBUFFER_CAPACITY_SAMPLES;
+                if overflow {
+                    let drop_n = m.subs.prebuffer.len() + samples.len()
+                        - PREBUFFER_CAPACITY_SAMPLES;
+                    for _ in 0..drop_n.min(m.subs.prebuffer.len()) {
+                        m.subs.prebuffer.pop_front();
+                    }
+                }
+                for s in samples { m.subs.prebuffer.push_back(*s); }
+            }
+        }
+
+        // Recorder: feed inbound samples (wire audio, not mix output).
+        if let Some(samples) = inbound_samples.as_ref() {
+            let ch_count = m.state.in_count.load(std::sync::atomic::Ordering::Relaxed);
+            feed_recorders(&mut m.subs.recorders, samples, ch_count, &mut m.state.pending_events).await;
         }
     }
 
@@ -590,11 +633,16 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
         Command::Play { cfg, ack } => {
             if m.subs.player.is_some() {
                 m.subs.player = None;
+                m.subs.bargein = None;
                 m.events.post(Event::Play {
                     state: PlayState::End,
                     reason: Some("new".into()),
                 });
             }
+            // Bare `play` supersedes any pending playrecord recorder. No
+            // Recording event was emitted yet, so no matching Finished is owed.
+            m.subs.pending_recorder = None;
+            m.subs.prebuffer.clear();
             m.subs.player = Some(Player::new(cfg));
             m.events.post(Event::Play {
                 state: PlayState::Start,
@@ -603,6 +651,8 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
             let _ = ack.send(());
         }
         Command::Record { cfg, ack } => {
+            m.subs.pending_recorder = None;
+            m.subs.prebuffer.clear();
             let file_str = cfg.file.to_string_lossy().into_owned();
             let is_gated = cfg.start_above_power.is_some();
             // If an existing recorder at the same path is paused, resume it
@@ -674,11 +724,18 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
         Command::PlayRecord { cfg, ack } => {
             if m.subs.player.is_some() {
                 m.subs.player = None;
+                m.subs.bargein = None;
                 m.events.post(Event::Play {
                     state: PlayState::End,
                     reason: Some("new".into()),
                 });
             }
+            // Supersede any previously-queued pending recorder — matches the
+            // local-mode handler. No Record event is owed since no file was
+            // ever opened.
+            m.subs.pending_recorder = None;
+            m.subs.prebuffer.clear();
+
             m.subs.player = Some(Player::new(cfg.player));
             m.events.post(Event::Play {
                 state: PlayState::Start,
@@ -696,33 +753,13 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
                     });
                 }
             }
+            // Queue the recorder — opened on play-end or barge-in via
+            // `activate_pending_recorder`. Parity with local-mode handler.
             let file_str = cfg.recorder.file.to_string_lossy().into_owned();
-            let is_gated = cfg.recorder.start_above_power.is_some();
-            match Recorder::open(cfg.recorder).await {
-                Ok(rec) => {
-                    if let Some(idx) = m.subs.recorders.iter().position(|r| r.file() == rec.file()) {
-                        let mut old = m.subs.recorders.remove(idx);
-                        old.close(FinishReason::ChannelClosed);
-                    }
-                    m.subs.recorders.push(rec);
-                    if !is_gated {
-                        m.events.post(Event::Record {
-                            state: RecordState::Recording,
-                            reason: None,
-                            file: Some(file_str),
-                            filesize: None,
-                        });
-                    }
-                }
-                Err(e) => {
-                    m.events.post(Event::Record {
-                        state: RecordState::Finished,
-                        reason: Some(format!("open-failed: {e}")),
-                        file: Some(file_str),
-                        filesize: None,
-                    });
-                }
-            }
+            m.subs.pending_recorder = Some(super::actor::PendingRecorder {
+                cfg: cfg.recorder,
+                file_str,
+            });
             let _ = ack.send(());
         }
         Command::EnterMix { .. } | Command::LeaveMix { .. } | Command::Close { .. } => {}

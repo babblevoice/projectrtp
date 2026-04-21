@@ -13,6 +13,7 @@
 // mixer owns the tick so all the cross-channel math (summed_minus, DTMF fan-
 // out) runs in lockstep, free of the old deposit/emit race.
 
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -27,7 +28,7 @@ use super::commands::{Command, Handle};
 use super::dtmf::{DtmfReceiver, DtmfSender};
 use super::mixer::{Member, MixHandle};
 use super::player::Player;
-use super::recorder::{FinishReason, Recorder, RecorderState};
+use super::recorder::{FinishReason, Recorder, RecorderConfig, RecorderState};
 use super::state::{ChannelState, CloseInfo};
 use super::tick::{self, TickOutcome};
 
@@ -133,6 +134,22 @@ pub fn spawn_with_sockets(
     Ok(Handle { id: cfg.id, cmd: tx })
 }
 
+/// Upper bound on the pre-buffer queue — cap is drop-oldest. Sized to hold
+/// 30 s at 16 kHz mono, which covers typical IVR prompt lengths (2–15 s) with
+/// headroom and bounds memory at ~1 MB per pending recorder. C++ uses an
+/// unbounded queue; a bound is deliberate here to protect a multi-channel
+/// server from a stuck/runaway prompt.
+pub const PREBUFFER_CAPACITY_SAMPLES: usize = 480_000;
+
+/// A recorder configured by `playrecord` but not yet opened. The file isn't
+/// created until activation (play-end or barge-in). Holds a cached
+/// `file_str` so the activation event has the path after `cfg` is moved
+/// into `Recorder::open`.
+pub struct PendingRecorder {
+    pub cfg: RecorderConfig,
+    pub file_str: String,
+}
+
 /// Per-channel subsystems the tick pipeline hands off to. Keeping them in a
 /// sibling struct (not in ChannelState) avoids mixing pipeline-owned and
 /// control-owned state — the mixer will move ChannelState but leaves these
@@ -150,6 +167,13 @@ pub struct Subsystems {
     /// a `play/end reason=interrupted` event fires. Cleared when the player
     /// ends (naturally or via interrupt).
     pub bargein: Option<BargeInState>,
+    /// Recorder queued by `playrecord` but not yet opened. Activated on
+    /// player-end or on barge-in interrupt (matches C++ `pendingrecorder`).
+    pub pending_recorder: Option<PendingRecorder>,
+    /// Inbound samples captured while `pending_recorder` is set — drained
+    /// into the recorder on activation via `Recorder::write_raw` so they are
+    /// written regardless of the recorder's start-above-power gate.
+    pub prebuffer: VecDeque<i16>,
     /// JS-initiated dtmf via `channel.dtmf(...)` — targets state.remote_addr.
     pub dtmf_send: DtmfSender,
     /// Mix-relay dtmf — when a digit is detected on a peer's inbound while
@@ -162,6 +186,68 @@ pub struct Subsystems {
 pub struct BargeInState {
     pub power_threshold: i32,
     pub power_ma: crate::firfilter::MaFilter,
+}
+
+/// Activate a `pending_recorder`: open the recorder, flush the pre-buffer
+/// via `write_raw` (bypassing the start-above-power gate so barge-in speech
+/// is captured), replace any existing recorder at the same path, and queue
+/// a `record event:recording` event when not gated.
+///
+/// Events are pushed into `pending_events` rather than posted directly so
+/// the tick-pipeline callers (which drain `state.pending_events` after each
+/// tick) can order them alongside the `play/end` that precedes activation.
+///
+/// No-op (returns false) if no `pending_recorder` is set. Matches C++
+/// `activateplayrecordrecorder` (projectrtpchannel.cpp:849-878).
+pub(super) async fn activate_pending_recorder(
+    subs: &mut Subsystems,
+    pending_events: &mut Vec<Event>,
+) -> bool {
+    let pending = match subs.pending_recorder.take() {
+        Some(p) => p,
+        None => return false,
+    };
+    let PendingRecorder { cfg, file_str } = pending;
+    let is_gated = cfg.start_above_power.is_some();
+    match Recorder::open(cfg).await {
+        Ok(mut rec) => {
+            let drained: Vec<i16> = subs.prebuffer.drain(..).collect();
+            if !drained.is_empty() {
+                let frame = if rec.num_channels() == 2 {
+                    let mut inter = Vec::with_capacity(drained.len() * 2);
+                    for s in &drained { inter.push(*s); inter.push(*s); }
+                    inter
+                } else {
+                    drained
+                };
+                let _ = rec.write_raw(&frame).await;
+            }
+            if let Some(idx) = subs.recorders.iter().position(|r| r.file() == rec.file()) {
+                let mut old = subs.recorders.remove(idx);
+                old.close(FinishReason::ChannelClosed);
+            }
+            subs.recorders.push(rec);
+            if !is_gated {
+                pending_events.push(Event::Record {
+                    state: RecordState::Recording,
+                    reason: None,
+                    file: Some(file_str),
+                    filesize: None,
+                });
+            }
+            true
+        }
+        Err(e) => {
+            subs.prebuffer.clear();
+            pending_events.push(Event::Record {
+                state: RecordState::Finished,
+                reason: Some(format!("open-failed: {e}")),
+                file: Some(file_str),
+                filesize: None,
+            });
+            false
+        }
+    }
 }
 
 /// Top-level actor ownership. `Local` runs the per-channel ticker; `Mixed`
@@ -216,6 +302,10 @@ async fn run(
                                 reason: Some("mix".into()),
                             });
                         }
+                        // Any pending playrecord recorder: no Recording was
+                        // emitted yet, so nothing to finish — just drop.
+                        subs_out.pending_recorder = None;
+                        subs_out.prebuffer.clear();
                         match mix.add(Box::new(Member::new(state_out, subs_out, events.clone()))).await {
                             Ok(()) => {
                                 events.post(Event::Mix { state: "start".to_string() });
@@ -314,6 +404,19 @@ async fn run(
             filesize: Some(size),
         });
     }
+    // A pending_recorder was accepted by `playrecord` but never activated —
+    // the file was never opened, so there are no bytes to report. Still emit
+    // a Finished event so every `record` start has a matching finish on the
+    // wire (babble-sip tolerates missing, but the protocol rule is paired).
+    if let Some(pending) = subs.pending_recorder.take() {
+        events.post(Event::Record {
+            state: RecordState::Finished,
+            reason: Some("channelclosed".into()),
+            file: Some(pending.file_str),
+            filesize: Some(0),
+        });
+    }
+    subs.prebuffer.clear();
     // Cancel the recv_loop before collecting stats.
     if let Some(cancel) = state.recv_cancel.take() {
         cancel.cancel();
@@ -471,8 +574,14 @@ async fn handle_command_local(
         Command::Play { cfg, ack } => {
             if subs.player.is_some() {
                 subs.player = None;
+                subs.bargein = None;
                 events.post(Event::Play { state: PlayState::End, reason: Some("new".into()) });
             }
+            // A bare `play` supersedes any `playrecord` pending recorder.
+            // No Recording event was emitted for it yet (activation hasn't
+            // fired), so no matching Finished is owed.
+            subs.pending_recorder = None;
+            subs.prebuffer.clear();
             subs.player = Some(Player::new(cfg));
             events.post(Event::Play { state: PlayState::Start, reason: Some("new".into()) });
             let _ = ack.send(());
@@ -480,6 +589,11 @@ async fn handle_command_local(
         }
 
         Command::Record { cfg, ack } => {
+            // A bare `record` at a different path leaves a pending recorder
+            // dangling — clear it so the play-end activation doesn't later
+            // open it alongside this fresh one.
+            subs.pending_recorder = None;
+            subs.prebuffer.clear();
             let file_str = cfg.file.to_string_lossy().into_owned();
             let is_gated = cfg.start_above_power.is_some();
             // If an existing recorder at the same path is paused, resume it
@@ -557,8 +671,16 @@ async fn handle_command_local(
         Command::PlayRecord { cfg, ack } => {
             if subs.player.is_some() {
                 subs.player = None;
+                subs.bargein = None;
                 events.post(Event::Play { state: PlayState::End, reason: Some("new".into()) });
             }
+            // Supersede any previously-queued pending recorder — its file was
+            // never opened, so no Record event is owed (matches C++: no file
+            // created, no emit). The pre-buffer is cleared so the new
+            // recording starts fresh when play ends.
+            subs.pending_recorder = None;
+            subs.prebuffer.clear();
+
             subs.player = Some(Player::new(cfg.player));
             events.post(Event::Play { state: PlayState::Start, reason: Some("new".into()) });
 
@@ -575,33 +697,16 @@ async fn handle_command_local(
                 }
             }
 
+            // Queue the recorder — actual `Recorder::open` is deferred until
+            // play-end (or barge-in). The pre-buffer accumulates inbound
+            // samples while the player runs; on activation it is flushed
+            // via `write_raw`. C++ `pendingrecorder` equivalent.
             let file_str = cfg.recorder.file.to_string_lossy().into_owned();
-            let is_gated = cfg.recorder.start_above_power.is_some();
-            match Recorder::open(cfg.recorder).await {
-                Ok(rec) => {
-                    if let Some(idx) = subs.recorders.iter().position(|r| r.file() == rec.file()) {
-                        let mut old = subs.recorders.remove(idx);
-                        old.close(FinishReason::ChannelClosed);
-                    }
-                    subs.recorders.push(rec);
-                    if !is_gated {
-                        events.post(Event::Record {
-                            state: RecordState::Recording,
-                            reason: None,
-                            file: Some(file_str),
-                            filesize: None,
-                        });
-                    }
-                }
-                Err(e) => {
-                    events.post(Event::Record {
-                        state: RecordState::Finished,
-                        reason: Some(format!("open-failed: {e}")),
-                        file: Some(file_str),
-                        filesize: None,
-                    });
-                }
-            }
+            subs.pending_recorder = Some(PendingRecorder {
+                cfg: cfg.recorder,
+                file_str,
+            });
+
             let _ = ack.send(());
             LocalOutcome::Continue
         }
@@ -709,5 +814,189 @@ mod tests {
         assert!(saw_play, "expected Play::Start event");
 
         handle.close("done").await;
+    }
+
+    fn test_recorder_cfg(name: &str) -> RecorderConfig {
+        let p = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_file(&p);
+        RecorderConfig {
+            file: p,
+            num_channels: 1,
+            sample_rate: 8000,
+            max_duration_ms: None,
+            start_above_power: None,
+            finish_below_power: None,
+            max_since_start_power: None,
+            min_duration_ms: None,
+            power_averaging_packets: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn activate_pending_recorder_noop_when_none() {
+        let mut events: Vec<Event> = Vec::new();
+        let mut subs = Subsystems::default();
+        let activated = activate_pending_recorder(&mut subs, &mut events).await;
+        assert!(!activated);
+        assert!(subs.recorders.is_empty());
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn activate_pending_recorder_flushes_prebuffer_and_emits_recording() {
+        let cfg = test_recorder_cfg("actor_activate_flush.wav");
+        let path = cfg.file.clone();
+        let file_str = path.to_string_lossy().into_owned();
+
+        let mut events: Vec<Event> = Vec::new();
+        let mut subs = Subsystems::default();
+        subs.pending_recorder = Some(PendingRecorder { cfg, file_str: file_str.clone() });
+        subs.prebuffer.extend(vec![500i16; 800]);
+
+        let activated = activate_pending_recorder(&mut subs, &mut events).await;
+        assert!(activated);
+        assert!(subs.pending_recorder.is_none());
+        assert!(subs.prebuffer.is_empty());
+        assert_eq!(subs.recorders.len(), 1);
+
+        // Recording event fires (recorder is not gated).
+        assert!(events.iter().any(|e| matches!(e,
+            Event::Record { state: RecordState::Recording, file: Some(f), .. } if f == &file_str
+        )), "expected Record::Recording event, got {:?}", events);
+
+        // Close and verify the file has the 800 pre-buffer samples.
+        let mut rec = subs.recorders.pop().unwrap();
+        rec.close(FinishReason::Completed);
+        let info = crate::soundfile::js_info(file_str.clone()).unwrap();
+        assert_eq!(info.subchunksize, 1600);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn activate_pending_recorder_stereo_interleaves_prebuffer() {
+        let mut cfg = test_recorder_cfg("actor_activate_stereo.wav");
+        cfg.num_channels = 2;
+        let path = cfg.file.clone();
+        let file_str = path.to_string_lossy().into_owned();
+
+        let mut events: Vec<Event> = Vec::new();
+        let mut subs = Subsystems::default();
+        subs.pending_recorder = Some(PendingRecorder { cfg, file_str: file_str.clone() });
+        subs.prebuffer.extend(vec![100i16; 400]);
+
+        assert!(activate_pending_recorder(&mut subs, &mut events).await);
+        let mut rec = subs.recorders.pop().unwrap();
+        rec.close(FinishReason::Completed);
+
+        let info = crate::soundfile::js_info(file_str).unwrap();
+        // 400 mono samples → 800 stereo samples × 2 bytes = 1600 bytes PCM.
+        assert_eq!(info.subchunksize, 1600);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn activate_pending_recorder_gated_suppresses_recording_event() {
+        let mut cfg = test_recorder_cfg("actor_activate_gated.wav");
+        cfg.start_above_power = Some(50);
+        let path = cfg.file.clone();
+        let file_str = path.to_string_lossy().into_owned();
+
+        let mut events: Vec<Event> = Vec::new();
+        let mut subs = Subsystems::default();
+        subs.pending_recorder = Some(PendingRecorder { cfg, file_str: file_str.clone() });
+
+        assert!(activate_pending_recorder(&mut subs, &mut events).await);
+        // Gated recorders don't emit Recording until the gate opens; the
+        // helper itself should not queue one at activation time.
+        assert!(!events.iter().any(|e| matches!(e,
+            Event::Record { state: RecordState::Recording, .. }
+        )));
+        let mut rec = subs.recorders.pop().unwrap();
+        rec.close(FinishReason::Completed);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Regression test for the "maxduration timeout during prompt" bug:
+    /// a `playrecord` must not open its recorder at command-accept time.
+    /// Previously `Recorder::open` ran inside the PlayRecord handler, so a
+    /// 10 s maxduration started counting immediately — while the prompt
+    /// was still playing — and fired `finished.timeout` before the caller
+    /// could speak. The fix defers `Recorder::open` to play-end via
+    /// `pending_recorder`.
+    ///
+    /// Here we issue a playrecord with an empty-soup player (so it finishes
+    /// on the first tick read) and a short maxduration. The expected event
+    /// order is: play/start → play/end → record/recording. No
+    /// record/finished.timeout should fire before activation.
+    #[tokio::test]
+    async fn playrecord_defers_recorder_open_until_play_end() {
+        let (tx, mut rx) = tmpsc::unbounded_channel();
+        let sink = Arc::new(TestSink { tx });
+
+        let handle = spawn(SpawnConfig {
+            id: 7,
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            ssrc: 1,
+            events: sink,
+            port_reservation: None,
+            local_icepwd: String::new(),
+        }).await.unwrap();
+
+        let rec_cfg = test_recorder_cfg("actor_playrecord_defer.wav");
+        let rec_path = rec_cfg.file.clone();
+        let rec_path_str = rec_path.to_string_lossy().into_owned();
+
+        let cfg = crate::channel::commands::PlayRecordConfig {
+            player: crate::channel::player::SoundSoupSpec {
+                files: vec![],
+                overall_loops: None,
+                interrupt: false,
+            },
+            recorder: RecorderConfig {
+                max_duration_ms: Some(100),
+                ..rec_cfg
+            },
+            interrupt: false,
+            bargein_power: None,
+            bargein_packets: None,
+        };
+        handle.play_record(cfg).await.unwrap();
+
+        // Collect events for ~250 ms — enough for at least one tick + the
+        // empty player to finish + activation to run.
+        let mut observed: Vec<Event> = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(250);
+        while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, rx.recv()).await {
+            observed.push(ev);
+        }
+
+        let play_start_idx = observed.iter().position(|e|
+            matches!(e, Event::Play { state: PlayState::Start, .. })
+        ).expect("expected Play::Start");
+        let play_end_idx = observed.iter().position(|e|
+            matches!(e, Event::Play { state: PlayState::End, .. })
+        ).expect("expected Play::End after empty soup");
+        let rec_rec_idx = observed.iter().position(|e|
+            matches!(e, Event::Record { state: RecordState::Recording, file: Some(f), .. }
+                      if f == &rec_path_str)
+        ).expect("expected Record::Recording after play ends");
+
+        assert!(play_start_idx < play_end_idx,
+            "Play::Start must precede Play::End: {:?}", observed);
+        assert!(play_end_idx < rec_rec_idx,
+            "Play::End must precede Record::Recording (activation order): {:?}", observed);
+
+        // Crucially: no timeout finish event should appear before the
+        // Recording event. (The regression was maxduration firing during
+        // the play phase, which would emit Record::Finished first.)
+        let early_finish = observed[..rec_rec_idx].iter().any(|e|
+            matches!(e, Event::Record { state: RecordState::Finished, .. })
+        );
+        assert!(!early_finish,
+            "no Record::Finished should fire before Record::Recording: {:?}",
+            observed);
+
+        handle.close("done").await;
+        let _ = std::fs::remove_file(&rec_path);
     }
 }

@@ -10,6 +10,9 @@
   },
   "scripts": {
     "test": "ASAN_OPTIONS=$(cat asan.options) LD_PRELOAD=/usr/lib64/libasan.so.8 ./node_modules/mocha/bin/_mocha test/interface/*.js test/unit/*.js --check-leaks",
+    "rust:check": "cd rust && cargo check --all-targets",                  
+    "rust:test": "cd rust && cargo test --lib",                             
+    "rust:test:release": "cd rust && cargo test --lib --release",
     "github:check": "node test/basictests.js; npm update; ./node_modules/mocha/bin/_mocha test/interface/*.js test/unit/*.js --check-leaks --exit",
     "check": "tsc --checkJs --noEmit --target es6 --module commonjs --skipLibCheck *.js test/**/*.js; ./node_modules/eslint/bin/eslint.js ./",
     "docs": "jsdoc -c jsdoc.conf.json ./README.md",

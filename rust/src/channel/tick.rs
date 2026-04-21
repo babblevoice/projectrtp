@@ -8,7 +8,7 @@
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 
-use super::actor::{Event, Subsystems};
+use super::actor::{activate_pending_recorder, Event, Subsystems, PREBUFFER_CAPACITY_SAMPLES};
 use super::rtp::{self, RtpPacket};
 use super::state::ChannelState;
 
@@ -58,16 +58,22 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
             let sn = pk.sequence_number();
             let payload = &pk.as_slice()[rtp::RTP_FIXED_HEADER_LEN..pk.len()];
             if let Some(digit) = subs.dtmf_recv.feed(sn, payload) {
+                let mut activate_recorder = false;
                 if let Some(p) = subs.player.as_ref() {
                     if p.interrupts() {
                         subs.player = None;
+                        subs.bargein = None;
                         state.pending_events.push(Event::Play {
                             state: super::actor::PlayState::End,
                             reason: Some("telephone-event".into()),
                         });
+                        activate_recorder = true;
                     }
                 }
                 state.pending_events.push(Event::TelephoneEvent { digit });
+                if activate_recorder {
+                    let _ = activate_pending_recorder(subs, &mut state.pending_events).await;
+                }
             }
             // DTMF consumed — don't process as audio.
             return TickOutcome::Continue;
@@ -76,6 +82,7 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
 
     // Player.
     let mut player_frame: Option<Vec<i16>> = None;
+    let mut player_just_ended = false;
     if let Some(player) = subs.player.as_mut() {
         let frame = player.read(160).await;
         if !frame.samples.is_empty() {
@@ -88,7 +95,13 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
                 state: super::actor::PlayState::End,
                 reason: Some("completed".into()),
             });
+            player_just_ended = true;
         }
+    }
+    if player_just_ended {
+        // Activate any recorder queued by `playrecord`. Ordered after the
+        // `play/end` event so downstream sees play-end then recording.
+        let _ = activate_pending_recorder(subs, &mut state.pending_events).await;
     }
 
     // Recorder + barge-in.
@@ -97,6 +110,7 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
         let payload = in_pk.payload();
         let decoded = state.transcoder.decode(in_pt, payload);
 
+        let mut bargein_fired = false;
         if let (Some(samples), Some(bi)) = (decoded.as_ref(), subs.bargein.as_mut()) {
             if subs.player.is_some() && state.in_count.load(Ordering::Relaxed) >= 100 {
                 let mut sum_sq: u64 = 0;
@@ -111,7 +125,30 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
                         state: super::actor::PlayState::End,
                         reason: Some("interrupted".into()),
                     });
+                    bargein_fired = true;
                 }
+            }
+        }
+        if bargein_fired {
+            let _ = activate_pending_recorder(subs, &mut state.pending_events).await;
+        }
+
+        // Pre-buffer accumulation while `playrecord` is in its play phase.
+        // Samples gathered here are flushed into the recorder on activation
+        // (matches C++ `prebuffer` queue). Skipped once activated — the
+        // recorder loop below handles subsequent samples directly.
+        if subs.player.is_some() && subs.pending_recorder.is_some() {
+            if let Some(samples) = &decoded {
+                let overflow = subs.prebuffer.len() + samples.len()
+                    > PREBUFFER_CAPACITY_SAMPLES;
+                if overflow {
+                    let drop_n = subs.prebuffer.len() + samples.len()
+                        - PREBUFFER_CAPACITY_SAMPLES;
+                    for _ in 0..drop_n.min(subs.prebuffer.len()) {
+                        subs.prebuffer.pop_front();
+                    }
+                }
+                for s in samples { subs.prebuffer.push_back(*s); }
             }
         }
 
