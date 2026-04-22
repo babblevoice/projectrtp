@@ -94,6 +94,20 @@ pub enum Command {
     /// `readable.destroy()` from JS. Removes the reader with the given
     /// id — dropping it closes the mpsc and ends the forwarder task.
     DestroyReadStream { id: u64 },
+    /// `channel.createWriteStream({...})` — register a writer. Id is
+    /// generated facade-side so JS can reference this specific writer
+    /// for later byte pushes / end / destroy. The Receiver is
+    /// created facade-side alongside the id; the matching Sender is
+    /// kept on the ChannelObject so JS's `_write` can push to it
+    /// without going through the actor channel per frame.
+    CreateWriteStream {
+        id: u64,
+        cfg: super::audio_writer::WriterConfig,
+        receiver: tokio::sync::mpsc::Receiver<Vec<u8>>,
+    },
+    /// `writable.destroy()` from JS. Removes the writer immediately
+    /// — any buffered samples are discarded.
+    DestroyWriteStream { id: u64 },
     Dtmf { digits: String },
     Echo { enabled: bool },
     Direction(Direction),

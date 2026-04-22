@@ -18,6 +18,7 @@
 
 pub mod actor;
 pub mod audio_reader;
+pub mod audio_writer;
 pub mod commands;
 pub mod dtls_session;
 pub mod dtmf;

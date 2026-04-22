@@ -63,13 +63,18 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     }
 
     let player_frame = tick_player(state, subs).await;
+    let writer_frame = tick_writer(state, subs);
+    // One slot, two possible sources — writer wins when both are set
+    // (the Create handler also nixes any active player so this is
+    // belt-and-braces).
+    let out_frame = writer_frame.as_deref().or(player_frame.as_deref());
 
     let decoded = decode_inbound(state, inbound_pkt.as_ref());
     run_bargein(state, subs, decoded.as_deref()).await;
     accumulate_prebuffer(subs, decoded.as_deref());
-    feed_recorders_and_readers(state, subs, decoded.as_deref(), player_frame.as_deref()).await;
+    feed_recorders_and_readers(state, subs, decoded.as_deref(), out_frame).await;
 
-    send_outbound(state, subs, player_frame.as_deref(), inbound_pkt.as_ref()).await;
+    send_outbound(state, subs, out_frame, inbound_pkt.as_ref()).await;
 
     check_idle_timeout(state)
 }
@@ -156,6 +161,29 @@ async fn tick_player(state: &mut ChannelState, subs: &mut Subsystems) -> Option<
         let _ = activate_pending_recorder(subs, &mut state.pending_events).await;
     }
     player_frame
+}
+
+/// Pull the next 20 ms frame from an active write stream. Sibling of
+/// `tick_player` — same role (outbound source) but fed from a JS
+/// `Writable` rather than a WAV file. Returns None on underrun (tick
+/// will emit silence) and tears the writer down when the JS side has
+/// ended AND we've drained the last partial frame.
+fn tick_writer(state: &mut ChannelState, subs: &mut Subsystems) -> Option<Vec<i16>> {
+    let frame = {
+        let w = subs.writer.as_mut()?;
+        w.next_frame_8k()
+    };
+    // Take-out check: if the writer reports drained+ended, retire it and
+    // emit a `play/end` so the JS event sink sees symmetry with `play`.
+    let drained = subs.writer.as_ref().is_some_and(|w| w.is_drained_and_ended());
+    if drained {
+        subs.writer = None;
+        state.pending_events.push(Event::Play {
+            state: super::actor::PlayState::End,
+            reason: Some("completed".into()),
+        });
+    }
+    frame
 }
 
 /// Feed the wire bytes into `codecx` and pull the narrowband 8 kHz linear

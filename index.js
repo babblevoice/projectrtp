@@ -1,7 +1,7 @@
 
 const { v4: uuidv4 } = require( "uuid" )
 const EventEmitter = require( "events" )
-const { Readable } = require( "stream" )
+const { Readable, Writable } = require( "stream" )
 
 const server = require( "./lib/server.js" )
 const node = require( "./lib/node.js" )
@@ -535,6 +535,64 @@ class projectrtp {
           }
           cb( err )
         }
+
+        return stream
+      }
+
+      /* Mirror of createReadStream on the write side: Node `Writable`
+         whose bytes flow through a bounded Rust-side mpsc and are
+         emitted onto the channel's outbound leg as 20 ms frames. v1
+         format is locked to linear PCM-16 LE at 8 kHz mono. */
+      const napiCreateWriteStream = chan.createWriteStream.bind( chan )
+      const napiPushWriterBytes = chan.pushWriterBytes.bind( chan )
+      const napiEndWriteStream = chan.endWriteStream.bind( chan )
+      const napiDestroyWriteStream = chan.destroyWriteStream.bind( chan )
+      chan.createWriteStream = function( opts = {} ) {
+        const resolved = {
+          format:      "l16",
+          samplerate:  8000,
+          numchannels: 1,
+        }
+
+        const id = napiCreateWriteStream( opts )
+        if( !id ) {
+          const s = new Writable( { write( _c, _e, cb ) { cb( new Error( "createWriteStream: channel not accepting" ) ) } } )
+          setImmediate( () => s.destroy( new Error( "createWriteStream: channel not accepting" ) ) )
+          return s
+        }
+
+        /* The Writable's internal highWaterMark gives us a natural
+           backpressure signal: if `_write`'s cb() is delayed, the
+           caller's next `.write()` returns false and they await 'drain'.
+           When the Rust-side 1 s queue is full we delay cb() with a
+           short setImmediate until the tick drains. This keeps cb()
+           non-blocking while still applying backpressure upstream. */
+        const stream = new Writable( {
+          highWaterMark: 16 * 1024, // 16 KB ≈ 500 ms of L16 @ 8 kHz
+          write( chunk, _enc, cb ) {
+            const push = () => {
+              if( napiPushWriterBytes( id, chunk ) ) return cb()
+              /* Rust buffer is full — retry after the Node event loop
+                 yields. The tick fires every 20 ms so one retry is
+                 usually enough. Scheduler-friendly backoff; no busy loop. */
+              setImmediate( push )
+            }
+            push()
+          },
+          final( cb ) {
+            napiEndWriteStream( id )
+            cb()
+          },
+          destroy( err, cb ) {
+            napiDestroyWriteStream( id )
+            cb( err )
+          }
+        } )
+
+        stream.format      = resolved.format
+        stream.samplerate  = resolved.samplerate
+        stream.numchannels = resolved.numchannels
+        stream.writerId    = id
 
         return stream
       }

@@ -757,3 +757,106 @@ describe( "createReadStream — live audio tap", function() {
   } )
 
 } )
+
+
+// ---- createWriteStream — live audio inject --------------------------------
+//
+// chanA has a Node `Writable` attached via createWriteStream. We generate
+// a 400 Hz sine in JS, `pipe` it into the writer, and verify the tone
+// lands at chanB by tapping its inbound with createReadStream and
+// running the same FFT the other tests use. This exercises the full
+// write path: JS → napi push_writer_bytes → Rust mpsc → tick
+// next_frame_8k → send_player_frame → SRTP-free PCMA on the wire →
+// chanB recv_loop → reader tap → FFT.
+
+describe( "createWriteStream — live audio inject", function() {
+
+  this.timeout( 8000 )
+  this.slow( 4500 )
+
+  it( "Node Writable → PCMA out → receiver tap: 400 Hz survives the inject path", async function() {
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const chanA = await projectrtp.openchannel( {}, ( d ) => {
+      if( "close" === d.action ) chanB.close()
+    } )
+    const chanB = await projectrtp.openchannel( {}, ( d ) => {
+      if( "close" === d.action ) done()
+    } )
+
+    expect( chanA.remote( {
+      address: "127.0.0.1", port: chanB.local.port, codec: 8,
+    } ) ).to.be.true
+    expect( chanB.remote( {
+      address: "127.0.0.1", port: chanA.local.port, codec: 8,
+    } ) ).to.be.true
+
+    // chanB taps its inbound so we can check what arrived from chanA.
+    const reader = chanB.createReadStream( { direction: "in", format: "l16", samplerate: 8000 } )
+    const frames = []
+    reader.on( "data", ( buf ) => frames.push( buf ) )
+
+    // Writer on chanA — linear PCM-16 @ 8 kHz mono.
+    const writer = chanA.createWriteStream()
+    expect( writer.format ).to.equal( "l16" )
+    expect( writer.samplerate ).to.equal( 8000 )
+    expect( writer.numchannels ).to.equal( 1 )
+    expect( writer.writerId ).to.be.a( "number" ).above( 0 )
+
+    // Generate ~1.5 s of 400 Hz sine as a Buffer and feed it into the
+    // Writable in small chunks so we exercise the framing/buffering code
+    // (chunks don't align to 20 ms boundaries).
+    const samplesPerChunk = 37 // intentionally odd — prove chunk sizes don't matter
+    const totalSamples = 8000 * 2 // 2 seconds; we'll only consume ~1.5 s
+    const peak = Math.round( 32767 * 0.5 )
+    const w = 2 * Math.PI * 400 / 8000
+
+    for( let i = 0; i < totalSamples; i += samplesPerChunk ) {
+      const n = Math.min( samplesPerChunk, totalSamples - i )
+      const chunk = Buffer.alloc( n * 2 )
+      for( let j = 0; j < n; j++ ) {
+        chunk.writeInt16LE( Math.round( Math.sin( ( i + j ) * w ) * peak ), j * 2 )
+      }
+      // Backpressure honoured: await drain if write returns false.
+      const ok = writer.write( chunk )
+      if( !ok ) await new Promise( ( res ) => writer.once( "drain", res ) )
+    }
+
+    // ~1.5 s of airtime is plenty for the tick to consume and ship.
+    await new Promise( ( r ) => setTimeout( r, 1800 ) )
+
+    // Tear down cleanly. `reader.destroy` emits `end`; closing chanA
+    // cascades to chanB via the test's close-chain callbacks.
+    reader.destroy()
+    writer.end()
+    await new Promise( ( r ) => setTimeout( r, 50 ) )
+
+    chanA.close()
+    await finished
+
+    const totalBytes = frames.reduce( ( n, b ) => n + b.length, 0 )
+    expect( totalBytes, "reader collected no audio — writer path didn't emit" ).to.be.above( 8000 )
+
+    const all = Buffer.concat( frames )
+    const sampleCount = all.length / 2
+    const samples = new Int16Array( sampleCount )
+    for( let i = 0; i < sampleCount; i++ ) samples[ i ] = all.readInt16LE( i * 2 )
+
+    const trimFront = Math.min( samples.length, 2000 )
+    const analysed = samples.slice( trimFront )
+    const amps = ampfft( analysed )
+    const e400 = energyat( amps, 400, 8000, 4 )
+    const etotal = amps.reduce( ( a, b ) => a + b, 0 )
+    const ratio = e400 / etotal
+
+    // eslint-disable-next-line no-console
+    console.log( `    WRITE: samples=${analysed.length}  E@400Hz=${e400.toFixed(0)}  ` +
+                 `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
+
+    expect( e400 ).to.be.above( 0 )
+    expect( ratio, "400 Hz not dominant — writer pipeline broke the audio" ).to.be.above( 0.15 )
+  } )
+
+} )

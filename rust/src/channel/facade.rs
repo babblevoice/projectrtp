@@ -162,6 +162,14 @@ pub struct ChannelObject {
     /// by a std Mutex so the sync `mix()` / `unmix()` methods can update
     /// it from JS without await.
     mix_slot: std::sync::Mutex<Option<super::mixer::MixHandle>>,
+    /// Per-channel registry of active write-stream senders. Each open
+    /// `createWriteStream` entry holds the `mpsc::Sender<Vec<u8>>` half
+    /// of the pair whose `Receiver` lives on the actor-side
+    /// `AudioWriter`. Indexed by writer id so `push_writer_bytes` /
+    /// `end_write_stream` can route to the right one. Guarded by a
+    /// `parking_lot::Mutex` so `push` is lock-cheap on the hot path —
+    /// we don't want a contended std mutex between every 20 ms frame.
+    write_senders: parking_lot::Mutex<std::collections::HashMap<u64, tokio::sync::mpsc::Sender<Vec<u8>>>>,
 }
 
 #[napi]
@@ -345,6 +353,62 @@ impl ChannelObject {
     #[napi]
     pub fn destroy_read_stream(&self, id: u32) -> bool {
         self.handle.cmd.try_send(super::commands::Command::DestroyReadStream {
+            id: id as u64,
+        }).is_ok()
+    }
+
+    /// Register a live audio writer. JS wraps the returned id in a Node
+    /// `Writable` whose `_write` pipes bytes through `push_writer_bytes`
+    /// and whose `_final`/`_destroy` route through `end_write_stream`
+    /// and `destroy_write_stream`. Returns 0 on failure (channel closed).
+    ///
+    /// v1 accepts linear PCM-16 LE at 8 kHz mono only — the params
+    /// object is reserved for the format matrix we'll open up later.
+    #[napi]
+    pub fn create_write_stream(&self, params: Object) -> u32 {
+        let cfg = parse_writer_config(&params);
+        let (sender, receiver) = super::audio_writer::make_channel();
+        let id = super::audio_writer::next_writer_id();
+        if self.handle.cmd.try_send(super::commands::Command::CreateWriteStream {
+            id, cfg, receiver,
+        }).is_err() {
+            return 0;
+        }
+        self.write_senders.lock().insert(id, sender);
+        id as u32
+    }
+
+    /// Push one chunk of audio bytes onto a registered writer. Returns
+    /// `false` when the writer's 1 s bounded queue is full (the JS
+    /// wrapper retries with a short delay — the 20 ms tick drains it
+    /// steadily) or when the id is unknown. The hot path: no actor
+    /// round-trip, just a direct `try_send` onto the writer's mpsc.
+    #[napi]
+    pub fn push_writer_bytes(&self, id: u32, buf: Buffer) -> bool {
+        let sender = {
+            let map = self.write_senders.lock();
+            map.get(&(id as u64)).cloned()
+        };
+        let Some(sender) = sender else { return false; };
+        sender.try_send(buf.to_vec()).is_ok()
+    }
+
+    /// `writable.end()` from JS — drop the sender so the `AudioWriter`
+    /// sees `Disconnected` on its next drain, flushes the final partial
+    /// frame, and emits `play/end reason=completed`.
+    #[napi]
+    pub fn end_write_stream(&self, id: u32) -> bool {
+        self.write_senders.lock().remove(&(id as u64)).is_some()
+    }
+
+    /// Immediate teardown (analogue of `reader.destroy()`): drops the
+    /// sender AND tells the actor to remove the writer from Subsystems.
+    /// Any buffered samples are discarded — use `end_write_stream` if
+    /// you want graceful drain instead.
+    #[napi]
+    pub fn destroy_write_stream(&self, id: u32) -> bool {
+        let _ = self.write_senders.lock().remove(&(id as u64));
+        self.handle.cmd.try_send(super::commands::Command::DestroyWriteStream {
             id: id as u64,
         }).is_ok()
     }
@@ -546,6 +610,20 @@ fn parse_soundsoup(params: &Object) -> Option<super::player::SoundSoupSpec> {
     // Typo is intentional — C++ API uses "interupt".
     let interrupt = params.get_named_property::<bool>("interupt").ok().unwrap_or(false);
     Some(super::player::SoundSoupSpec { files, overall_loops, interrupt })
+}
+
+/// Parse a JS `createWriteStream` params object into a `WriterConfig`.
+/// v1 locks the matrix at L16 / 8000 / mono — we validate the fields
+/// but ignore out-of-range values (matches the reader's behaviour of
+/// silently clamping to the supported set).
+fn parse_writer_config(params: &Object) -> super::audio_writer::WriterConfig {
+    use super::audio_writer::{WriterConfig, WriterFormat};
+    let _ = params; // format/samplerate/numchannels reserved for future use
+    WriterConfig {
+        format: WriterFormat::L16,
+        samplerate: 8000,
+        num_channels: 1,
+    }
 }
 
 /// Parse a JS `createReadStream` params object into a `ReaderConfig`.
@@ -861,6 +939,7 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
         rfc2833_pt: rfc2833_pt.unwrap_or(101),
         ilbc_pt,
         mix_slot: std::sync::Mutex::new(None),
+        write_senders: parking_lot::Mutex::new(std::collections::HashMap::new()),
     })
 }
 

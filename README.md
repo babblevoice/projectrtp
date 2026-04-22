@@ -406,6 +406,59 @@ caller.pipe( fs.createWriteStream( "/tmp/caller.pcm" ) )
 agent.pipe(  fs.createWriteStream( "/tmp/agent.pcm" ) )
 ```
 
+### Live audio — `channel.createWriteStream`
+
+The symmetric counterpart to `createReadStream`. Returns a Node `Writable` that injects live audio into the channel's outbound leg — pipe in a TTS stream, a live translation feed, a bot's synthesised voice, anything that produces PCM.
+
+```js
+const writer = channel.createWriteStream( {
+  format:      "l16",   // v1: l16 only
+  samplerate:  8000,    // v1: 8000 only
+  numchannels: 1        // v1: mono only
+} )
+
+writer.format        // "l16"
+writer.samplerate    // 8000
+writer.numchannels   // 1
+writer.writerId      // monotonic id
+
+writer.write( pcmBuffer )   // accepts any chunk size — framed internally
+writer.end()                 // flushes the tail then reverts to silence
+writer.destroy()             // immediate teardown, discards buffered samples
+
+ttsStream.pipe( writer )     // standard Node stream composition
+```
+
+**Relationship to `play`**
+
+A writer and `channel.play` share the single outbound-source slot on a channel. Starting a writer supersedes any active player (emits `play/end reason=new`); likewise `channel.play` supersedes an active writer. There is always at most one outbound source; when neither is present the channel sends silence.
+
+**Framing**
+
+You can `.write` any chunk size — the Rust side buffers bytes and frames them into 20 ms slots for the tick. An 8 kHz L16 stream needs ~16 000 bytes/sec (320 bytes per 20 ms frame), so a typical `.pipe` from a WebSocket or HTTP body keeps up comfortably.
+
+**Backpressure**
+
+The Rust-side buffer is bounded at 1 s (50 × 20 ms). If the consumer writes faster than the tick drains, `_write` delays its callback until space frees up — standard Node `Writable` backpressure kicks in and `.write` returns `false`. On underrun (nothing written for a tick) the channel sends silence for that slot.
+
+**End-of-stream**
+
+`writer.end()` drops the JS-side sender. The Rust `AudioWriter` sees the close, flushes any partial frame padded with silence, then retires itself from the channel. A `play/end reason=completed` event fires — symmetric with how a file-based `play` naturally ends.
+
+**Example — pipe a TTS response into a live call:**
+
+```js
+const writer = channel.createWriteStream()
+
+const res = await fetch( "https://tts.example.com/say", {
+  method: "POST",
+  body:   JSON.stringify( { text: "Your call is important to us." } ),
+} )
+// res.body is a Readable web stream of raw PCM-16 @ 8 kHz mono.
+// Pipe straight through; backpressure is preserved end-to-end.
+res.body.pipe( writer )
+```
+
 ## Utils
 
 ### Tone generation

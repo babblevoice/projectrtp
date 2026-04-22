@@ -474,6 +474,8 @@ impl Member {
         }
 
         let player_frame = self.tick_player().await;
+        let writer_frame = self.tick_writer();
+        let out_frame = writer_frame.as_deref().or(player_frame.as_deref());
 
         // Feed the wire bytes into the codec bundle. Decoding is lazy —
         // the first consumer (mix encode_from, write_recordings) that
@@ -488,11 +490,31 @@ impl Member {
             None
         };
 
-        self.populate_mix_frame(inbound.as_deref(), player_frame.as_deref());
+        self.populate_mix_frame(inbound.as_deref(), out_frame);
         self.run_bargein(inbound.as_deref()).await;
         self.accumulate_playrecord_prebuffer(inbound.as_deref());
 
         None
+    }
+
+    /// Sibling of `tick_player` on the mixer side — same role (outbound
+    /// source) but fed from a JS `Writable` rather than a WAV file.
+    /// Tears the writer down and emits `play/end` once the JS side has
+    /// ended and we've drained the last partial frame.
+    fn tick_writer(&mut self) -> Option<Vec<i16>> {
+        let frame = {
+            let w = self.subs.writer.as_mut()?;
+            w.next_frame_8k()
+        };
+        let drained = self.subs.writer.as_ref().is_some_and(|w| w.is_drained_and_ended());
+        if drained {
+            self.subs.writer = None;
+            self.state.pending_events.push(Event::Play {
+                state: PlayState::End,
+                reason: Some("completed".into()),
+            });
+        }
+        frame
     }
 
     /// `peer_samples` (when `Some`) is the mix peer's inbound 8 kHz
@@ -957,6 +979,26 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
         }
         Command::DestroyReadStream { id } => {
             m.subs.readers.retain(|r| r.id() != id);
+        }
+        Command::CreateWriteStream { id, cfg, receiver } => {
+            // Same supersession semantics as `Command::Play` in mix mode
+            // — active player yields to the writer.
+            if m.subs.player.is_some() {
+                m.subs.player = None;
+                m.subs.bargein = None;
+                m.events.post(Event::Play {
+                    state: PlayState::End,
+                    reason: Some("new".into()),
+                });
+            }
+            m.subs.pending_recorder = None;
+            m.subs.prebuffer.clear();
+            m.subs.writer = Some(super::audio_writer::AudioWriter::new(id, cfg, receiver));
+        }
+        Command::DestroyWriteStream { id } => {
+            if let Some(w) = m.subs.writer.as_ref() {
+                if w.id() == id { m.subs.writer = None; }
+            }
         }
         Command::RecordFinish { file } => {
             if let Some(idx) = m.subs.recorders.iter().position(|r| r.file() == file) {

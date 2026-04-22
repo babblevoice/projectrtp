@@ -185,6 +185,10 @@ pub struct Subsystems {
     /// Fed post-decode at the same point as recorders; see audio_reader.rs
     /// for the drop policy.
     pub readers: Vec<super::audio_reader::AudioReader>,
+    /// Active writer, if any. Only one outbound source at a time —
+    /// `createWriteStream` supersedes any running `play`, and vice
+    /// versa. See audio_writer.rs for the drain / end semantics.
+    pub writer: Option<super::audio_writer::AudioWriter>,
 }
 
 pub struct BargeInState {
@@ -412,6 +416,10 @@ async fn run(
     // `Readable.push(null)` fires `end`. No event emitted here: the
     // JS-side Readable already signals `end`/`close` to userland.
     subs.readers.clear();
+    // Writer: same pattern, opposite direction. Dropping it closes the
+    // Receiver; the JS side's next `push_writer_bytes` will see the
+    // channel is gone and surface an error on the Writable.
+    subs.writer = None;
     // A pending_recorder was accepted by `playrecord` but never activated —
     // the file was never opened, so there are no bytes to report. Still emit
     // a Finished event so every `record` start has a matching finish on the
@@ -660,6 +668,28 @@ async fn handle_command_local(
 
         Command::DestroyReadStream { id } => {
             subs.readers.retain(|r| r.id() != id);
+            LocalOutcome::Continue
+        }
+
+        Command::CreateWriteStream { id, cfg, receiver } => {
+            // A writer supersedes any active player — they share the
+            // outbound-source slot. Emit `play/end reason=new` to match
+            // what `Command::Play` does when it replaces another player.
+            if subs.player.is_some() {
+                subs.player = None;
+                subs.bargein = None;
+                events.post(Event::Play { state: PlayState::End, reason: Some("new".into()) });
+            }
+            subs.pending_recorder = None;
+            subs.prebuffer.clear();
+            subs.writer = Some(super::audio_writer::AudioWriter::new(id, cfg, receiver));
+            LocalOutcome::Continue
+        }
+
+        Command::DestroyWriteStream { id } => {
+            if let Some(w) = subs.writer.as_ref() {
+                if w.id() == id { subs.writer = None; }
+            }
             LocalOutcome::Continue
         }
 
