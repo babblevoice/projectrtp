@@ -23,6 +23,15 @@ static NEXT_CHANNEL_ID: AtomicU64 = AtomicU64::new(1);
 /// Global registry of active channel handles so `shutdown()` can close them all.
 static CHANNEL_REGISTRY: parking_lot::Mutex<Vec<Handle>> = parking_lot::Mutex::new(Vec::new());
 
+/// Lifetime counters for the `stats()` napi export. Parallels the C++
+/// addon's `channelscreated` atomic but tracks created / closed
+/// independently so the JS side can read both. `current` is derived from
+/// the registry length and reads live — decrementing must happen BEFORE
+/// the Close event fires, otherwise the JS `afterEach` that asserts
+/// `current === 0` races the TSFN queue.
+static CHANNELS_CREATED: AtomicU64 = AtomicU64::new(0);
+static CHANNELS_CLOSED: AtomicU64 = AtomicU64::new(0);
+
 pub fn shutdown_all_channels() {
     let handles: Vec<Handle> = CHANNEL_REGISTRY.lock().drain(..).collect();
     for h in &handles {
@@ -34,14 +43,34 @@ pub fn shutdown_all_channels() {
 
 pub fn register_channel(handle: &Handle) {
     CHANNEL_REGISTRY.lock().push(handle.clone());
+    CHANNELS_CREATED.fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn unregister_channel(id: u64) {
-    CHANNEL_REGISTRY.lock().retain(|h| h.id != id);
+    let removed = {
+        let mut reg = CHANNEL_REGISTRY.lock();
+        let before = reg.len();
+        reg.retain(|h| h.id != id);
+        before != reg.len()
+    };
+    // Only bump the closed counter if this id was actually in the
+    // registry — re-calling unregister (e.g. during a mix teardown that
+    // races with the actor's own close path) must be idempotent.
+    if removed {
+        CHANNELS_CLOSED.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 pub fn active_channel_count() -> usize {
     CHANNEL_REGISTRY.lock().len()
+}
+
+pub fn total_channels_created() -> u64 {
+    CHANNELS_CREATED.load(Ordering::Relaxed)
+}
+
+pub fn total_channels_closed() -> u64 {
+    CHANNELS_CLOSED.load(Ordering::Relaxed)
 }
 
 #[derive(Debug)]

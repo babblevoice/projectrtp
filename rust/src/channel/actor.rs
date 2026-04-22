@@ -444,8 +444,12 @@ async fn run(
         out_count: state.out_count,
     };
     state.close_info = Some(CloseInfo { reason: reason.clone() });
-    events.post(Event::Close { reason, stats });
+    // Order matters: `unregister_channel` decrements the registry BEFORE
+    // the Close event is posted. Otherwise a JS `afterEach` that asserts
+    // `stats.channel.current === 0` races the TSFN queue — the callback
+    // can fire while the registry still holds this channel.
     super::facade::unregister_channel(id);
+    events.post(Event::Close { reason, stats });
     drop(self_cmd);
 }
 

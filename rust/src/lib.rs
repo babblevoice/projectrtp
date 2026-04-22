@@ -92,21 +92,20 @@ fn init_module_exports(mut exports: napi::JsObject, env: napi::Env) -> napi::Res
 
 #[cfg_attr(not(test), napi)]
 pub fn stats() -> napi::Result<Stats> {
-    // `current` / `totalcreated` / `totalclosed` still need a process-wide
-    // channel registry. `available` now reflects the real pool size so
-    // long-running processes can observe pressure. The `afterEach` in
-    // test/interface/projectrtpserver.js asserts current==0, and because
-    // actor teardown is async (Close event fires slightly before the state
-    // actually drops), computing current from the pool would race — leave
-    // it at 0 until a pre-Close-decrement counter lands.
+    // `current` reads from the channel registry; `unregister_channel`
+    // now runs before the Close event posts, so JS `afterEach` handlers
+    // see a consistent count.
+    // `totalcreated` / `totalclosed` are monotonic atomics — parity with
+    // the C++ `channelscreated` counter but split so dashboards can
+    // chart open-rate vs close-rate independently.
     let available = portpool::available_count();
     let available = if portpool::is_initialized() { available } else { 10_000 };
     Ok(Stats {
         channel: ChannelCounts {
-            current: 0,
+            current: channel::facade::active_channel_count() as u32,
             available,
-            totalcreated: 0,
-            totalclosed: 0,
+            totalcreated: channel::facade::total_channels_created() as u32,
+            totalclosed: channel::facade::total_channels_closed() as u32,
         },
         workercount: std::thread::available_parallelism()
             .map(|n| n.get() as u32)
