@@ -340,6 +340,72 @@ channel.record( {
 } )
 ```
 
+### Live audio — `channel.createReadStream`
+
+Returns a standard Node `Readable` that emits decoded audio buffers as the channel receives / sends them. Use this to feed the audio into anything that takes a stream — STT, translation, captioning, WebSocket forwarders, on-disk capture — without going through the recorder / file path.
+
+The byte shape of every emitted chunk is fixed for the lifetime of the reader and exposed as properties on the Readable:
+
+```js
+const reader = channel.createReadStream( {
+  direction:   "in",    // "in" (default) | "out" | "both"
+  format:      "l16",   // "l16" (default) | "pcma" | "pcmu" | "g722" | "ilbc"
+  samplerate:  8000,    // 8000 (default) | 16000  — only meaningful for l16
+  numchannels: 1        // 1 (default) | 2  — stereo interleaves L=in R=out
+} )
+
+reader.format        // "l16"
+reader.samplerate    // 8000
+reader.numchannels   // 1
+reader.direction     // "in"
+reader.readerId      // monotonic id (handy for log correlation)
+
+reader.on( "data", ( buf ) => { /* Buffer, one 20 ms frame */ } )
+reader.on( "end",  () => {} )   // fires on channel close or reader.destroy()
+
+reader.pipe( wsStream )         // standard Node stream composition
+reader.destroy()                // explicit teardown
+```
+
+**Direction**
+
+- `"in"` — audio the peer sent us, post-decode. What you want for STT / voice biometrics on the caller.
+- `"out"` — audio this channel is sending (player, echo, or the mix output). What the peer hears.
+- `"both"` — stereo, interleaved, L = in, R = out. Requires `numchannels: 2`.
+
+For independent per-speaker streams (e.g. diarised captions), create **two readers on the same channel** — one `direction: "in"`, one `direction: "out"`. Two mono streams, two independent STT pipelines, no coupling between them.
+
+**Format**
+
+`"l16"` gives linear PCM-16 LE at the chosen sample rate — the universal format that every STT / translation API accepts. The wire formats (`"pcma"`, `"pcmu"`, `"g722"`, `"ilbc"`) deliver raw codec bytes, useful when you want to forward a leg elsewhere without re-encoding.
+
+**Backpressure and drops**
+
+The pipeline never blocks the 20 ms RTP tick. If the consumer (or the Node event loop, or the napi queue) falls behind, frames are dropped. In practice this only bites if the consumer is genuinely stuck — typical STT / WebSocket consumers keep up with 20 ms frames comfortably.
+
+**Example — pipe a leg into a WebSocket STT service:**
+
+```js
+const reader = channel.createReadStream( { direction: "in", format: "l16", samplerate: 16000 } )
+const ws = new WebSocket( "wss://stt.example.com/stream?rate=16000&format=l16" )
+
+reader.on( "data", ( buf ) => ws.send( buf ) )
+ws.on( "message", ( transcript ) => console.log( "→", transcript.toString() ) )
+
+/* When the call ends the reader emits `end` and the ws.send loop quiets. */
+reader.on( "end", () => ws.close() )
+```
+
+**Example — dual-speaker call recording split per channel:**
+
+```js
+const caller = channel.createReadStream( { direction: "in" } )
+const agent  = channel.createReadStream( { direction: "out" } )
+
+caller.pipe( fs.createWriteStream( "/tmp/caller.pcm" ) )
+agent.pipe(  fs.createWriteStream( "/tmp/agent.pcm" ) )
+```
+
 ## Utils
 
 ### Tone generation

@@ -451,6 +451,13 @@ impl Member {
             &mut self.subs.recorders, &samples, peer_samples, ch_count,
             &mut self.state.pending_events,
         ).await;
+        // AudioReaders share the recorder's L/R convention: L=self inbound,
+        // R=peer inbound (in mix mode that's the "outbound" side — what
+        // we'd send out). Same cache, same timing as the recorder.
+        for reader in self.subs.readers.iter_mut() {
+            reader.feed(&mut self.state.codecx, Some(&samples), peer_samples);
+        }
+        self.subs.readers.retain(|r| !r.is_closed());
     }
 
     /// Emit any queued RFC-2833 DTMF (own + relayed-from-peer) to this
@@ -907,6 +914,12 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
             }
             }
             let _ = ack.send(());
+        }
+        Command::CreateReadStream { id, cfg, sender } => {
+            m.subs.readers.push(super::audio_reader::AudioReader::new(id, cfg, sender));
+        }
+        Command::DestroyReadStream { id } => {
+            m.subs.readers.retain(|r| r.id() != id);
         }
         Command::RecordFinish { file } => {
             if let Some(idx) = m.subs.recorders.iter().position(|r| r.file() == file) {

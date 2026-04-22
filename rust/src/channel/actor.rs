@@ -181,6 +181,10 @@ pub struct Subsystems {
     /// local remote on the next tick. Matches the C++ mux DTMF behaviour.
     pub dtmf_relay: DtmfSender,
     pub dtmf_recv: DtmfReceiver,
+    /// Live readers — each maps to one JS `createReadStream` consumer.
+    /// Fed post-decode at the same point as recorders; see audio_reader.rs
+    /// for the drop policy.
+    pub readers: Vec<super::audio_reader::AudioReader>,
 }
 
 pub struct BargeInState {
@@ -404,6 +408,10 @@ async fn run(
             filesize: Some(size),
         });
     }
+    // Drop readers — their mpsc senders close, forwarder tasks exit, JS
+    // `Readable.push(null)` fires `end`. No event emitted here: the
+    // JS-side Readable already signals `end`/`close` to userland.
+    subs.readers.clear();
     // A pending_recorder was accepted by `playrecord` but never activated —
     // the file was never opened, so there are no bytes to report. Still emit
     // a Finished event so every `record` start has a matching finish on the
@@ -642,6 +650,16 @@ async fn handle_command_local(
             }
             }
             let _ = ack.send(());
+            LocalOutcome::Continue
+        }
+
+        Command::CreateReadStream { id, cfg, sender } => {
+            subs.readers.push(super::audio_reader::AudioReader::new(id, cfg, sender));
+            LocalOutcome::Continue
+        }
+
+        Command::DestroyReadStream { id } => {
+            subs.readers.retain(|r| r.id() != id);
             LocalOutcome::Continue
         }
 

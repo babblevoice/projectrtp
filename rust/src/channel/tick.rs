@@ -225,6 +225,14 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
             }
             i += 1;
         }
+
+        // AudioReader feed — same codec cache state and L/R convention as
+        // the recorder above. A reader whose consumer has disappeared
+        // (mpsc receiver dropped) is garbage-collected the next tick.
+        for reader in subs.readers.iter_mut() {
+            reader.feed(&mut state.codecx, Some(in_s), Some(out_s));
+        }
+        subs.readers.retain(|r| !r.is_closed());
     }
 
     // Outbound.

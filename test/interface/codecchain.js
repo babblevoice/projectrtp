@@ -658,3 +658,102 @@ describe( "dtls-srtp back-to-back (2 channels: A plays → SRTP → B records)",
   // traffic covers the mix+DTLS interaction.
 
 } )
+
+
+// ---- createReadStream — live audio tap ------------------------------------
+//
+// chanA plays a 400 Hz tone and sends it as PCMA to chanB. On chanB we
+// attach `createReadStream({ direction: "in" })` and collect frames as a
+// Node Readable. If FFT of the collected samples is peaked at 400 Hz, the
+// whole chain works: tick feed point → bounded mpsc → forwarder task →
+// ThreadsafeFunction → Readable → consumer.
+
+describe( "createReadStream — live audio tap", function() {
+
+  this.timeout( 8000 )
+  this.slow( 4500 )
+
+  this.beforeAll( function() {
+    gensinewav( "/tmp/tone400_tap.wav", 400, 2.0, 8000, 0.5 )
+  } )
+
+  this.afterAll( function() {
+    try { fs.unlinkSync( "/tmp/tone400_tap.wav" ) } catch ( _ ) { /* ignore */ }
+  } )
+
+  it( "PCMA tone → inbound tap: 400 Hz survives the full reader pipeline", async function() {
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const chanA = await projectrtp.openchannel( {}, ( d ) => {
+      if( "close" === d.action ) chanB.close()
+    } )
+    const chanB = await projectrtp.openchannel( {}, ( d ) => {
+      if( "close" === d.action ) done()
+    } )
+
+    expect( chanA.remote( {
+      address: "127.0.0.1", port: chanB.local.port, codec: 8,
+    } ) ).to.be.true
+    expect( chanB.remote( {
+      address: "127.0.0.1", port: chanA.local.port, codec: 8,
+    } ) ).to.be.true
+
+    // Collect frames via the reader. `direction: "in"` = what chanB is
+    // receiving from chanA = the tone decoded from PCMA.
+    const reader = chanB.createReadStream( { direction: "in", format: "l16", samplerate: 8000 } )
+
+    // Resolved config must be visible on the Readable — consumers need to
+    // know the byte shape without peeking at opts they didn't pass.
+    expect( reader.format ).to.equal( "l16" )
+    expect( reader.samplerate ).to.equal( 8000 )
+    expect( reader.numchannels ).to.equal( 1 )
+    expect( reader.direction ).to.equal( "in" )
+    expect( reader.readerId ).to.be.a( "number" ).above( 0 )
+
+    const frames = []
+    reader.on( "data", ( buf ) => frames.push( buf ) )
+    let ended = false
+    reader.on( "end", () => { ended = true } )
+
+    expect( chanA.play( { loop: true, files: [ { wav: "/tmp/tone400_tap.wav" } ] } ) ).to.be.true
+
+    await new Promise( ( r ) => setTimeout( r, 1800 ) )
+
+    // Explicitly destroy BEFORE closing chanA so we cover the JS-initiated
+    // tear-down path (_destroy → DestroyReadStream → forwarder sees mpsc
+    // drop → end-of-stream sentinel → JS `end`).
+    reader.destroy()
+    await new Promise( ( r ) => setTimeout( r, 50 ) )
+    expect( ended, "reader.destroy() should end the stream" ).to.be.true
+
+    chanA.close()
+    await finished
+
+    const totalBytes = frames.reduce( ( n, b ) => n + b.length, 0 )
+    expect( totalBytes, "reader collected no audio" ).to.be.above( 8000 )
+
+    // Reassemble as Int16 LE samples and run the same FFT the other tests
+    // use. Drop the first 250 ms so the tone is in steady state.
+    const all = Buffer.concat( frames )
+    const sampleCount = all.length / 2
+    const samples = new Int16Array( sampleCount )
+    for( let i = 0; i < sampleCount; i++ ) samples[ i ] = all.readInt16LE( i * 2 )
+
+    const trimFront = Math.min( samples.length, 2000 )
+    const analysed = samples.slice( trimFront )
+    const amps = ampfft( analysed )
+    const e400 = energyat( amps, 400, 8000, 4 )
+    const etotal = amps.reduce( ( a, b ) => a + b, 0 )
+    const ratio = e400 / etotal
+
+    // eslint-disable-next-line no-console
+    console.log( `    TAP: samples=${analysed.length}  E@400Hz=${e400.toFixed(0)}  ` +
+                 `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
+
+    expect( e400 ).to.be.above( 0 )
+    expect( ratio, "400 Hz not dominant — tap pipeline broke the audio" ).to.be.above( 0.15 )
+  } )
+
+} )

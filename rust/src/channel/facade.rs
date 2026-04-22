@@ -286,6 +286,69 @@ impl ChannelObject {
         self.handle.cmd.try_send(super::commands::Command::Record { cfg, ack }).is_ok()
     }
 
+    /// Register a live audio reader. `callback` is invoked from a dedicated
+    /// forwarder task with one `Buffer` argument per 20 ms frame; the JS
+    /// wrapper in index.js builds a `Readable` around that callback. Returns
+    /// a non-zero reader id so JS can later destroy this reader via
+    /// `destroy_read_stream`. Returns 0 on failure (channel already closed).
+    #[napi]
+    pub fn create_read_stream(
+        &self,
+        env: Env,
+        params: Object,
+        callback: JsFunction,
+    ) -> Result<u32> {
+        let cfg = parse_reader_config(&params);
+
+        // Build the TSFN that turns each Vec<u8> into a Node Buffer and
+        // invokes the JS callback. NonBlocking call mode ensures napi drops
+        // if its own queue is full — the forwarder task must never stall
+        // the 20 ms tick pipeline upstream.
+        let mut tsfn: ThreadsafeFunction<Vec<u8>, ErrorStrategy::Fatal> = callback
+            .create_threadsafe_function(0, |ctx: napi::threadsafe_function::ThreadSafeCallContext<Vec<u8>>| {
+                let buf = ctx.env.create_buffer_with_data(ctx.value)?;
+                Ok(vec![buf.into_raw()])
+            })?;
+        tsfn.unref(&env)?;
+
+        let (sender, mut receiver) = super::audio_reader::make_channel();
+        let id = super::audio_reader::next_reader_id();
+
+        // Forwarder task: drains the Rust-side mpsc into the TSFN. Exits
+        // automatically when all senders are dropped (channel close, or
+        // destroy_read_stream removes the reader from subs.readers). On
+        // exit we call the TSFN once more with a zero-length buffer — the
+        // JS wrapper treats that as end-of-stream and pushes `null` to the
+        // Readable so consumers see a clean `end` event.
+        tokio::spawn(async move {
+            while let Some(bytes) = receiver.recv().await {
+                tsfn.call(bytes, ThreadsafeFunctionCallMode::NonBlocking);
+            }
+            tsfn.call(Vec::new(), ThreadsafeFunctionCallMode::NonBlocking);
+        });
+
+        if self.handle.cmd.try_send(super::commands::Command::CreateReadStream {
+            id,
+            cfg,
+            sender,
+        }).is_err() {
+            return Ok(0);
+        }
+        // u32 is plenty — id is monotonic and channels are short-lived. Cast
+        // is safe for the lifetime of any realistic process.
+        Ok(id as u32)
+    }
+
+    /// Tear down a specific reader by id (as returned from
+    /// `create_read_stream`). Safe to call for an already-destroyed id —
+    /// the handler is a no-op if the id isn't found.
+    #[napi]
+    pub fn destroy_read_stream(&self, id: u32) -> bool {
+        self.handle.cmd.try_send(super::commands::Command::DestroyReadStream {
+            id: id as u64,
+        }).is_ok()
+    }
+
     /// Play a prompt then record; optionally barge-in on loud inbound audio.
     /// JS shape: `{ soup: <soundsoup>, record: <record params>, interrupt,
     /// bargeinpower, bargeinpoweraveragepackets }`.
@@ -483,6 +546,37 @@ fn parse_soundsoup(params: &Object) -> Option<super::player::SoundSoupSpec> {
     // Typo is intentional — C++ API uses "interupt".
     let interrupt = params.get_named_property::<bool>("interupt").ok().unwrap_or(false);
     Some(super::player::SoundSoupSpec { files, overall_loops, interrupt })
+}
+
+/// Parse a JS `createReadStream` params object into a `ReaderConfig`.
+/// All fields optional; defaults match the common "mono inbound linear
+/// PCM at the channel's narrowband rate" case.
+fn parse_reader_config(params: &Object) -> super::audio_reader::ReaderConfig {
+    use super::audio_reader::{ReaderConfig, ReaderDirection, ReaderFormat};
+    let direction = match params.get_named_property::<String>("direction").ok().as_deref() {
+        Some("out") => ReaderDirection::Out,
+        Some("both") => ReaderDirection::Both,
+        _ => ReaderDirection::In,
+    };
+    let format = match params.get_named_property::<String>("format").ok().as_deref() {
+        Some("pcma") => ReaderFormat::Pcma,
+        Some("pcmu") => ReaderFormat::Pcmu,
+        Some("g722") => ReaderFormat::G722,
+        Some("ilbc") => ReaderFormat::Ilbc,
+        _ => ReaderFormat::L16,
+    };
+    let samplerate = params
+        .get_named_property::<u32>("samplerate")
+        .ok()
+        .filter(|&v| v == 8000 || v == 16000)
+        .unwrap_or(8000);
+    let num_channels = params
+        .get_named_property::<u32>("numchannels")
+        .ok()
+        .filter(|&v| v == 1 || v == 2)
+        .map(|v| v as u16)
+        .unwrap_or(1);
+    ReaderConfig { direction, format, samplerate, num_channels }
 }
 
 /// Parse a JS `record` / `playrecord.record` params object into a

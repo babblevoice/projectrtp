@@ -1,6 +1,7 @@
 
 const { v4: uuidv4 } = require( "uuid" )
 const EventEmitter = require( "events" )
+const { Readable } = require( "stream" )
 
 const server = require( "./lib/server.js" )
 const node = require( "./lib/node.js" )
@@ -469,6 +470,74 @@ class projectrtp {
 
       /* ensure we are identicle to the node version of this object */
       chan.openchannel = this.openchannel.bind( this )
+
+      /* Wrap the Rust `createReadStream(opts, cb)` napi method so JS gets a
+         standard Node `Readable` — pipeable into fs.createWriteStream,
+         WebSocket, fetch bodies, any transform stream, etc.
+
+         The underlying napi method fires its callback once per 20 ms frame
+         with a Buffer; a zero-length Buffer is the end-of-stream sentinel
+         (fired by the Rust forwarder task when the channel closes or the
+         reader is explicitly destroyed). */
+      const napiCreateReadStream = chan.createReadStream.bind( chan )
+      const napiDestroyReadStream = chan.destroyReadStream.bind( chan )
+      chan.createReadStream = function( opts = {} ) {
+        /* Resolve defaults here so the Readable can publish what it is —
+           sample rate and format don't change for the life of the reader,
+           so the consumer reads these properties once at setup rather
+           than pulling metadata off every frame (which would break `pipe`). */
+        const resolved = {
+          direction:   opts.direction   || "in",
+          format:      opts.format      || "l16",
+          samplerate:  ( opts.samplerate === 16000 ) ? 16000 : 8000,
+          numchannels: ( 2 === opts.numchannels ) ? 2 : 1,
+        }
+
+        const stream = new Readable( { read() { /* push-driven */ } } )
+        let destroyed = false
+
+        const id = napiCreateReadStream( opts, ( buf ) => {
+          if( destroyed ) return
+          if( 0 === buf.length ) {
+            /* end-of-stream sentinel from the Rust forwarder */
+            destroyed = true
+            stream.push( null )
+            return
+          }
+          /* Backpressure: if the Readable's internal buffer is full
+             (consumer slow), `push` returns false — drop the frame to
+             keep memory bounded. Mirrors the Rust-side mpsc drop policy. */
+          stream.push( buf )
+        } )
+
+        if( !id ) {
+          /* Channel wasn't accepting commands — defer-destroy the stream
+             with an error so pipe consumers unwind cleanly. */
+          setImmediate( () => stream.destroy( new Error( "createReadStream: channel not accepting" ) ) )
+          return stream
+        }
+
+        /* Publish the resolved config so consumers (STT client, WAV
+           encoder, websocket sender, etc.) know the byte shape they're
+           seeing without needing per-frame metadata. Frozen to
+           discourage consumers mutating and expecting any effect. */
+        stream.format      = resolved.format
+        stream.samplerate  = resolved.samplerate
+        stream.numchannels = resolved.numchannels
+        stream.direction   = resolved.direction
+        stream.readerId    = id
+
+        stream._destroy = function( err, cb ) {
+          if( !destroyed ) {
+            destroyed = true
+            napiDestroyReadStream( id )
+            stream.push( null )
+          }
+          cb( err )
+        }
+
+        return stream
+      }
 
       return chan
     }

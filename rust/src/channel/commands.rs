@@ -81,6 +81,19 @@ pub enum Command {
     /// `resume=true` flips from Paused to Active; `resume=false` pauses.
     RecordSetPaused { file: std::path::PathBuf, paused: bool },
     PlayRecord { cfg: PlayRecordConfig, ack: Ack },
+    /// `channel.createReadStream({...})` — register a new audio reader.
+    /// The id is generated facade-side (via `audio_reader::next_reader_id`)
+    /// and passed in so JS can refer to this reader when it needs to
+    /// destroy it. The mpsc sender is also facade-side; the forwarder task
+    /// holding the matching receiver runs alongside.
+    CreateReadStream {
+        id: u64,
+        cfg: super::audio_reader::ReaderConfig,
+        sender: tokio::sync::mpsc::Sender<Vec<u8>>,
+    },
+    /// `readable.destroy()` from JS. Removes the reader with the given
+    /// id — dropping it closes the mpsc and ends the forwarder task.
+    DestroyReadStream { id: u64 },
     Dtmf { digits: String },
     Echo { enabled: bool },
     Direction(Direction),
