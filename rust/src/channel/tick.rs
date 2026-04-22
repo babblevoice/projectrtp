@@ -265,7 +265,12 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     TickOutcome::Continue
 }
 
-fn poll_dtls_handshake(state: &mut ChannelState) {
+/// Pick up the DTLS handshake result (if it's arrived) and build the
+/// inbound / outbound SRTP contexts. Non-blocking `try_recv` — cheap to
+/// call every tick. Must be called from whichever tick loop owns the
+/// channel (Local `tick::run`, Mixer `mix_tick`) or the SRTP contexts
+/// never get built and audio is silent after handshake.
+pub(crate) fn poll_dtls_handshake(state: &mut ChannelState) {
     if let Some(rx) = state.dtls_result_rx.as_mut() {
         match rx.try_recv() {
             Ok(Some(result)) => {

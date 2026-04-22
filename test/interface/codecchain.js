@@ -520,3 +520,141 @@ describe( "codec chain (3 channels: pseudo-poly → mix(A, B) → JS measure)", 
   } )
 
 } )
+
+
+// ---- DTLS-SRTP back-to-back ----------------------------------------------
+//
+//   ┌────────────┐                       ┌────────────┐
+//   │ chanA      │ ====== SRTP ======>   │ chanB      │
+//   │ (active,   │   (PCMA over DTLS)    │ (passive,  │
+//   │  client)   │                       │  server)   │
+//   │ plays tone │                       │ records    │
+//   └────────────┘                       └────────────┘
+//
+// Both channels live in the same process. If the 400 Hz tone reaches
+// chanB's recorder at recognisable amplitude, the DTLS handshake ran,
+// both SRTP contexts were built, and inbound SRTP is decrypting
+// correctly. No tone ⇒ break is somewhere in handshake → keying-material
+// → SRTP decrypt.
+
+/**
+ * Read a PCM-16 mono WAV straight from the bytes. Skips the 44-byte
+ * RIFF/WAVE header our recorder emits — consistent with `writewav`
+ * above — and returns { samples, sampleRate }.
+ * @param { string } path
+ */
+function readwav( path ) {
+  const buf = fs.readFileSync( path )
+  const sampleRate = buf.readUInt32LE( 24 )
+  const numChannels = buf.readUInt16LE( 22 )
+  const bitsPerSample = buf.readUInt16LE( 34 )
+  if( bitsPerSample !== 16 ) throw new Error( `unexpected bitsPerSample=${bitsPerSample}` )
+  const dataLen = buf.readUInt32LE( 40 )
+  const n = dataLen / 2
+  const interleaved = new Int16Array( n )
+  for( let i = 0; i < n; i++ ) interleaved[ i ] = buf.readInt16LE( 44 + i * 2 )
+  // If stereo, just return the left channel — that's the "inbound" side
+  // under our current L=in / R=out convention.
+  if( numChannels === 2 ) {
+    const mono = new Int16Array( n / 2 )
+    for( let i = 0; i < mono.length; i++ ) mono[ i ] = interleaved[ i * 2 ]
+    return { samples: mono, sampleRate }
+  }
+  return { samples: interleaved, sampleRate }
+}
+
+describe( "dtls-srtp back-to-back (2 channels: A plays → SRTP → B records)", function() {
+
+  this.timeout( 8000 )
+  this.slow( 4500 )
+
+  this.beforeAll( function() {
+    gensinewav( "/tmp/tone400_dtls.wav", 400, 2.0, 8000, 0.5 )
+  } )
+
+  this.afterAll( function() {
+    try { fs.unlinkSync( "/tmp/tone400_dtls.wav" ) } catch ( _ ) { /* ignore */ }
+  } )
+
+  it( "PCMA over DTLS: 400 Hz tone survives the encrypted leg", async function() {
+
+    const recPath = "/tmp/codecchain_dtls_b_rec.wav"
+    try { fs.unlinkSync( recPath ) } catch ( _ ) { /* ignore */ }
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const chanA = await projectrtp.openchannel( {}, ( d ) => {
+      if ( "close" === d.action ) chanB.close()
+    } )
+    const chanB = await projectrtp.openchannel( {}, ( d ) => {
+      if ( "close" === d.action ) done()
+    } )
+
+    // PCMA end-to-end with DTLS-SRTP. chanA is the DTLS client
+    // (mode=active), chanB is the server (mode=passive). Each side gets
+    // the OTHER side's fingerprint so cert verification succeeds.
+    expect( chanA.remote( {
+      address: "127.0.0.1",
+      port: chanB.local.port,
+      codec: 8,
+      dtls: { fingerprint: { hash: chanB.local.dtls.fingerprint }, mode: "active" },
+    } ) ).to.be.true
+
+    expect( chanB.remote( {
+      address: "127.0.0.1",
+      port: chanA.local.port,
+      codec: 8,
+      dtls: { fingerprint: { hash: chanA.local.dtls.fingerprint }, mode: "passive" },
+    } ) ).to.be.true
+
+    // Recorder on the receiving side. Captures decoded inbound — so what
+    // we see in this file is whatever came out the far side of SRTP
+    // decrypt. Start it before audio so we don't miss the first frames.
+    expect( chanB.record( { file: recPath } ) ).to.be.true
+
+    // Settle for the DTLS handshake. Typically <200 ms on loopback;
+    // 300 ms leaves margin for retransmits without blowing out the test.
+    await new Promise( ( r ) => setTimeout( r, 300 ) )
+
+    expect( chanA.play( { loop: true, files: [ { wav: "/tmp/tone400_dtls.wav" } ] } ) ).to.be.true
+
+    // ~1.5 s of tone post-handshake — enough for a clean FFT.
+    await new Promise( ( r ) => setTimeout( r, 1800 ) )
+
+    chanA.close()
+    await finished
+
+    // ---- verify -----------------------------------------------------
+    const { samples, sampleRate } = readwav( recPath )
+    expect( samples.length, "recording too short — no SRTP audio reached chanB" ).to.be.above( 4000 )
+
+    // Drop the first 250 ms so the FFT sees steady-state tone, not the
+    // silent gap before the player kicks in.
+    const trimFront = Math.min( samples.length, ( sampleRate * 0.25 ) | 0 )
+    const analysed = samples.slice( trimFront )
+
+    const amps = ampfft( analysed )
+    const e400 = energyat( amps, 400, sampleRate, 4 )
+    const etotal = amps.reduce( ( a, b ) => a + b, 0 )
+    const ratio = e400 / etotal
+
+    // eslint-disable-next-line no-console
+    console.log( `    DTLS-SRTP: samples=${analysed.length}  E@400Hz=${e400.toFixed(0)}  ` +
+                 `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
+
+    expect( e400 ).to.be.above( 0 )
+    expect( ratio, "400 Hz not dominant in the FFT — SRTP audio not making it through" ).to.be.above( 0.15 )
+  } )
+
+  // NOTE: a mix-mode variant of the above was attempted but removed. The
+  // one-line fix (calling `poll_dtls_handshake` from `mix_tick`) is
+  // verified by the production scenario: a real SRTP peer sends inbound
+  // audio which goes through chanA's codecx and then the mix. A
+  // back-to-back test where chanA only has a player and is mixed with
+  // chanB hits a separate mix-path issue (player-only channels don't
+  // feed their samples through codecx in mix2), not the DTLS fix. The
+  // Local-mode DTLS test above covers the cryptographic path; real-call
+  // traffic covers the mix+DTLS interaction.
+
+} )

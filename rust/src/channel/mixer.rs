@@ -534,6 +534,13 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
         m.state.tick_count += 1;
         m.reset_for_tick();
 
+        // Build SRTP contexts as soon as the DTLS handshake completes. In
+        // Local mode this runs via `tick::run`; in the mixer the Local
+        // tick stops firing once the channel joins the mix, so without
+        // this call the keying-material oneshot sits unread forever and
+        // SRTP packets can't be decrypted (audio silent after handshake).
+        super::tick::poll_dtls_handshake(&mut m.state);
+
         let popped = m.pop_inbound();
         if popped.is_some() {
             m.state.ticks_without_rtp = 0;

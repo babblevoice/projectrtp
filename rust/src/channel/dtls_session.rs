@@ -77,18 +77,13 @@ impl webrtc_util::Conn for DtlsTransport {
     async fn recv_from(&self, buf: &mut [u8]) -> webrtc_util::Result<(usize, SocketAddr)> {
         let n = self.recv(buf).await?;
         let addr = (*self.remote_addr.lock()).unwrap_or(self.local_addr);
-        eprintln!("[dtls] recv_from: {} bytes, from={}", n, addr);
         Ok((n, addr))
     }
 
     async fn send(&self, buf: &[u8]) -> webrtc_util::Result<usize> {
         let remote = (*self.remote_addr.lock()).unwrap_or(self.local_addr);
-        eprintln!("[dtls] send: {} bytes, to={} (first_byte=0x{:02x})",
-                  buf.len(), remote, buf.first().copied().unwrap_or(0));
-        let n = self.sock.send_to(buf, remote).await
-            .map_err(|e| webrtc_util::Error::Other(e.to_string()))?;
-        eprintln!("[dtls] send: sent {} bytes", n);
-        Ok(n)
+        self.sock.send_to(buf, remote).await
+            .map_err(|e| webrtc_util::Error::Other(e.to_string()))
     }
 
     async fn send_to(&self, buf: &[u8], target: SocketAddr) -> webrtc_util::Result<usize> {
@@ -149,7 +144,6 @@ pub fn spawn_handshake(
         webrtc_dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
     ];
 
-    eprintln!("[dtls] spawn_handshake: is_client={}, local={}", is_client, local_addr);
     tokio::spawn(async move {
         let config = DtlsConfig {
             certificates: vec![certificate],
@@ -159,10 +153,8 @@ pub fn spawn_handshake(
             ..Default::default()
         };
 
-        eprintln!("[dtls] DTLSConn::new starting, is_client={}", is_client);
         match DTLSConn::new(transport, config, is_client, None).await {
             Ok(conn) => {
-                eprintln!("[dtls] handshake OK");
                 use webrtc_util::KeyingMaterialExporter;
                 let state = conn.connection_state().await;
                 let label = "EXTRACTOR-dtls_srtp";
@@ -176,16 +168,10 @@ pub fn spawn_handshake(
                             is_client,
                         }));
                     }
-                    Err(e) => {
-                        eprintln!("[dtls] export_keying_material failed: {:?}", e);
-                        let _ = result_tx.send(None);
-                    }
+                    Err(_) => { let _ = result_tx.send(None); }
                 }
             }
-            Err(e) => {
-                eprintln!("[dtls] DTLSConn::new failed: {:?}", e);
-                let _ = result_tx.send(None);
-            }
+            Err(_) => { let _ = result_tx.send(None); }
         }
     });
 
