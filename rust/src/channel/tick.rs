@@ -108,7 +108,12 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     if let Some(in_pk) = inbound_pkt.as_ref() {
         let in_pt = in_pk.payload_type();
         let payload = in_pk.payload();
-        let decoded = state.transcoder.decode(in_pt, payload);
+        // Feed wire bytes into the codec bundle; decode is deferred until
+        // a consumer (bargein / recorder / prebuffer / echo) actually
+        // asks for `narrowband_8k`. Multiple consumers in the same tick
+        // share a single decode via the bundle's cache.
+        state.codecx.feed_wire(in_pt, payload);
+        let decoded: Option<Vec<i16>> = state.codecx.require_narrowband_8k().map(|s| s.to_vec());
 
         let mut bargein_fired = false;
         if let (Some(samples), Some(bi)) = (decoded.as_ref(), subs.bargein.as_mut()) {
@@ -300,7 +305,13 @@ async fn send_dtmf(state: &mut ChannelState, _event: u8, payload: &[u8; 4], remo
 }
 
 async fn send_player_frame(state: &mut ChannelState, samples: &[i16], remote: SocketAddr) {
-    let Some(payload) = state.transcoder.encode(state.remote_pt, samples) else { return; };
+    // Feed linear samples into the codec bundle, lazily produce the
+    // wire encoding for this channel's remote PT. The encoder state
+    // (G.722 predictor, iLBC LP, etc.) lives on the bundle and
+    // persists across ticks for a coherent outbound stream.
+    state.codecx.feed_linear_8k(samples);
+    let pt = state.remote_pt;
+    let Some(payload) = state.codecx.require_wire_as(pt).map(|b| b.to_vec()) else { return; };
     let mut out = RtpPacket::new();
     out.init(state.ssrc);
     out.set_payload_type(state.remote_pt);

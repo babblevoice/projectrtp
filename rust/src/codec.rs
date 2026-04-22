@@ -10,15 +10,25 @@
 //
 // G.722 / iLBC live elsewhere — they stay FFI'd (out of scope for this module).
 
+use std::sync::LazyLock;
+
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
-#[inline]
-fn top_bit(x: u32) -> i32 {
-    if x == 0 { -1 } else { 31 - x.leading_zeros() as i32 }
-}
+// ---- Pre-computed G.711 tables ----
+//
+// Both directions have tiny codomains so full tables are cheap and the
+// hot path (per-sample encode/decode) reduces to a single load. The C++
+// side does the same — generating these at startup via spandsp. At
+// 1000 channels × 50 ticks/s × 160 samples/tick = 8M lookups/s, every
+// saved instruction matters.
+//
+// Table sizes:
+//   linear → alaw / ulaw : 65536 entries indexed by `(sample + 32768) as
+//                          usize` (unsigned view of i16)
+//   alaw   / ulaw → linear: 256 entries indexed by the compressed byte
 
-pub fn linear_to_alaw(linear: i32) -> u8 {
+const fn compute_linear_to_alaw(linear: i32) -> u8 {
     let (mut linear, mask) = if linear >= 0 {
         (linear, 0xD5i32)
     } else {
@@ -28,7 +38,9 @@ pub fn linear_to_alaw(linear: i32) -> u8 {
         linear = 0x7F7B;
     }
     let out = if linear >= 0x100 {
-        let seg = top_bit((linear | 0xFF) as u32) - 7;
+        // top_bit inlined as a const fn equivalent.
+        let v = (linear | 0xFF) as u32;
+        let seg = (31 - v.leading_zeros() as i32) - 7;
         ((seg << 4) | ((linear >> (seg + 3)) & 0xF)) ^ mask
     } else {
         ((linear >> 4) & 0xFF) ^ mask
@@ -36,7 +48,7 @@ pub fn linear_to_alaw(linear: i32) -> u8 {
     out as u8
 }
 
-pub fn alaw_to_linear(alaw: u8) -> i16 {
+const fn compute_alaw_to_linear(alaw: u8) -> i16 {
     let a = alaw ^ 0x55;
     let mut i = ((a as i32 & 0x0F) << 4) as i32;
     let seg = (a as i32 & 0x70) >> 4;
@@ -48,7 +60,7 @@ pub fn alaw_to_linear(alaw: u8) -> i16 {
     if a & 0x80 != 0 { i as i16 } else { -(i as i16) }
 }
 
-pub fn linear_to_ulaw(linear: i32) -> u8 {
+const fn compute_linear_to_ulaw(linear: i32) -> u8 {
     let (mut linear, mask) = if linear < 0 {
         (0x84 - linear, 0x7Fi32)
     } else {
@@ -57,9 +69,80 @@ pub fn linear_to_ulaw(linear: i32) -> u8 {
     if linear > 0x7FFF {
         linear = 0x7FFF;
     }
-    let seg = top_bit((linear | 0xFF) as u32) - 7;
+    let v = (linear | 0xFF) as u32;
+    let seg = (31 - v.leading_zeros() as i32) - 7;
     let u_val = (seg << 4) | ((linear >> (seg + 3)) & 0xF);
     (u_val ^ mask) as u8
+}
+
+const fn compute_ulaw_to_linear(ulaw: u8) -> i16 {
+    let u = !ulaw;
+    let t = (((u as i32 & 0x0F) << 3) + 0x84) << ((u as i32 & 0x70) >> 4);
+    if u & 0x80 != 0 { (0x84 - t) as i16 } else { (t - 0x84) as i16 }
+}
+
+// `table[i]` stores the compressed byte for `i as i16` (i.e. the sample
+// obtained by reinterpreting the 16-bit index as signed). Accessors use
+// `(sample as u16) as usize` as the index: sample 0 → 0, sample -1 →
+// 0xFFFF, sample -32768 → 0x8000, etc.
+static LINEAR_TO_ALAW: LazyLock<Box<[u8; 65536]>> = LazyLock::new(|| {
+    let mut table = Box::new([0u8; 65536]);
+    let mut i = 0usize;
+    while i < 65536 {
+        let sample = i as i16 as i32;
+        table[i] = compute_linear_to_alaw(sample);
+        i += 1;
+    }
+    table
+});
+
+static LINEAR_TO_ULAW: LazyLock<Box<[u8; 65536]>> = LazyLock::new(|| {
+    let mut table = Box::new([0u8; 65536]);
+    let mut i = 0usize;
+    while i < 65536 {
+        let sample = i as i16 as i32;
+        table[i] = compute_linear_to_ulaw(sample);
+        i += 1;
+    }
+    table
+});
+
+static ALAW_TO_LINEAR: LazyLock<[i16; 256]> = LazyLock::new(|| {
+    let mut table = [0i16; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        table[i] = compute_alaw_to_linear(i as u8);
+        i += 1;
+    }
+    table
+});
+
+static ULAW_TO_LINEAR: LazyLock<[i16; 256]> = LazyLock::new(|| {
+    let mut table = [0i16; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        table[i] = compute_ulaw_to_linear(i as u8);
+        i += 1;
+    }
+    table
+});
+
+#[inline]
+pub fn linear_to_alaw(linear: i32) -> u8 {
+    // Clamp to i16 range and fold the sign into an unsigned 16-bit index.
+    let s = linear.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+    LINEAR_TO_ALAW[(s as u16) as usize]
+}
+
+#[inline]
+pub fn alaw_to_linear(alaw: u8) -> i16 {
+    ALAW_TO_LINEAR[alaw as usize]
+}
+
+#[inline]
+pub fn linear_to_ulaw(linear: i32) -> u8 {
+    let s = linear.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+    LINEAR_TO_ULAW[(s as u16) as usize]
 }
 
 // ---- Buffer-level transcode helpers ----
@@ -84,48 +167,69 @@ pub fn decode_pcmu_buf(payload: &[u8]) -> Vec<i16> {
     payload.iter().map(|&b| ulaw_to_linear(b)).collect()
 }
 
-/// Transcoder owning the per-direction codec state needed for G.722 (filter
-/// history) and iLBC (linear-predictor state). One per channel, used by
-/// tick.rs's mix-relay path when peers speak different codecs. Both G.722
-/// and iLBC are thin FFI wrappers over the same C libraries the C++ addon
-/// uses (spandsp and libilbc respectively), so encoder output is bit-for-
-/// bit identical to the reference implementation.
-pub struct Transcoder {
+/// Per-channel codec state + cached representations, à la C++ `codecx`.
+///
+/// The bundle holds:
+/// - Stateful codec objects (G.722 enc/dec, iLBC enc/dec, LP filters) that
+///   persist across ticks. Never cleared.
+/// - Cached representations of the audio currently being processed: wire
+///   bytes keyed by PT, linear samples at 8 kHz and 16 kHz. These are
+///   invalidated on every `feed_*` call.
+///
+/// Consumers call `require_*` accessors to pull whichever representation
+/// they need; the bundle computes it via the shortest conversion chain
+/// from whatever input was fed, and caches the result so a second
+/// consumer in the same tick doesn't re-compute.
+///
+/// Design points vs the old one-shot `decode`/`encode` API:
+/// - **Lazy.** If no consumer needs the linear audio this tick
+///   (same-codec pass-through with no recorder/bargein), the decode
+///   stage is simply never run.
+/// - **Cached.** Multiple consumers (mix frame, recorder, bargein
+///   power, prebuffer) share one decode.
+/// - **Dst-owned encode.** The encoder lives on the bundle of the
+///   channel *sending* that codec (matches C++ `dstchan->outcodec`).
+///   Callers funnel linear samples into the destination's bundle via
+///   `feed_linear_8k` / `feed_linear_16k` and then `require_wire_as`.
+pub struct CodecBundle {
+    // ---- Stateful codec objects (persist across ticks) ----
     g722_encoder: Option<crate::g722::Encoder>,
     g722_decoder: Option<crate::g722::Decoder>,
-    /// LP filter for 16 kHz → 8 kHz downsample after G.722 decode. Stateful
-    /// across packets — zeroing it per packet would cause edge artefacts.
+    /// LP filter for 16 kHz → 8 kHz downsample after G.722 decode.
+    /// Filter history is stateful — carrying it across packets avoids
+    /// edge artefacts.
     g722_down_filter: crate::firfilter::Lowpass3_4k16k,
-    /// LP filter for 8 kHz → 16 kHz upsample before G.722 encode. Same
-    /// filter type, separate instance to keep the direction's history
-    /// independent.
+    /// LP filter for 8 kHz → 16 kHz upsample before G.722 encode.
     g722_up_filter: crate::firfilter::Lowpass3_4k16k,
     ilbc_encoder: Option<crate::ilbc::Encoder>,
     ilbc_decoder: Option<crate::ilbc::Decoder>,
     /// Dynamic RTP PTs that should be treated as iLBC by decode/encode.
     /// Slot 0 is the local side's configured iLBC wire PT; slot 1 is the
-    /// mix peer's (so the bridge can re-encode iLBC at the right PT on
-    /// both ends of an asymmetric-dynamic pair). Static PT 97 is always
-    /// accepted even when slots are set to something else.
+    /// mix peer's. Static PT 97 is always accepted.
     ilbc_pts: [u8; 2],
-    /// Persistent scratch buffers for the G.722 resampling stages.
-    /// `g722_wideband_buf` holds 16 kHz samples (upsampled encoder input
-    /// or raw decoder output); `decode_buf` holds the 8 kHz samples
-    /// produced after downsample. Reused every tick to avoid heap
-    /// allocation on the hot path.
-    g722_wideband_buf: Vec<i16>,
-    decode_buf: Vec<i16>,
+
+    // ---- Input (one of these is set by a `feed_*` call) ----
+    /// PT of the wire bytes currently held, or 255 if no wire input.
+    wire_pt: u8,
+    /// Raw wire bytes as received. Persistent allocation, cleared and
+    /// refilled per `feed_wire`.
+    wire_bytes: Vec<u8>,
+
+    // ---- Cached representations (invalidated on every feed_*) ----
+    narrowband_8k: Option<Vec<i16>>,
+    wideband_16k: Option<Vec<i16>>,
+    pcma_out: Option<Vec<u8>>,
+    pcmu_out: Option<Vec<u8>>,
+    g722_out: Option<Vec<u8>>,
+    ilbc_out: Option<Vec<u8>>,
 }
 
-impl Default for Transcoder {
+impl Default for CodecBundle {
     fn default() -> Self { Self::new() }
 }
 
-impl Transcoder {
+impl CodecBundle {
     pub fn new() -> Self {
-        // 160 samples / bytes = one 20 ms packet @ 8 kHz; 320 for G.722
-        // wideband intermediates. Pre-sizing so the first tick doesn't
-        // trigger a realloc.
         Self {
             g722_encoder: None,
             g722_decoder: None,
@@ -134,8 +238,14 @@ impl Transcoder {
             ilbc_encoder: None,
             ilbc_decoder: None,
             ilbc_pts: [97, 97],
-            g722_wideband_buf: Vec::with_capacity(320),
-            decode_buf: Vec::with_capacity(160),
+            wire_pt: 255,
+            wire_bytes: Vec::with_capacity(320),
+            narrowband_8k: None,
+            wideband_16k: None,
+            pcma_out: None,
+            pcmu_out: None,
+            g722_out: None,
+            ilbc_out: None,
         }
     }
 
@@ -146,89 +256,298 @@ impl Transcoder {
         pt == 97 || pt == self.ilbc_pts[0] || pt == self.ilbc_pts[1]
     }
 
-    // Note: the `g722_enc` / `g722_dec` helpers are inlined into the
-    // encode/decode match arms now so that field-level borrow checking
-    // can see they don't overlap with `g722_wideband_buf` / filter fields.
+    // ---- Cache invalidation -------------------------------------------------
 
-    /// Decode `payload` from `pt` to linear16 @ 8 kHz. G.722 is natively
-    /// 16 kHz — we decode to 320 samples then downsample to 160 via the
-    /// stateful `g722_down_filter` (matches C++ `l16widetonarrowband`
-    /// in projectrtpcodecx.cpp:463). The G.722 intermediate wideband
-    /// samples are written into a persistent `g722_wideband_buf` so the
-    /// hot path avoids allocating that scratch buffer every tick.
-    pub fn decode(&mut self, pt: u8, payload: &[u8]) -> Option<Vec<i16>> {
-        if self.is_ilbc_pt(pt) {
-            let dec = self.ilbc_decoder.get_or_insert_with(|| {
-                crate::ilbc::Decoder::new().expect("ilbc decoder create")
-            });
-            return dec.decode(payload);
-        }
-        match pt {
-            0 => Some(payload.iter().map(|&b| ulaw_to_linear(b)).collect()),
-            8 => Some(payload.iter().map(|&b| alaw_to_linear(b)).collect()),
-            9 => {
-                // Stage wideband samples via the G.722 decoder's persistent
-                // buffer, then downsample into a fresh Vec. Two scratch
-                // borrows are needed sequentially, not overlapping.
-                {
-                    let dec = self.g722_decoder.get_or_insert_with(|| {
-                        crate::g722::Decoder::new().expect("g722 decoder init")
-                    });
-                    let decoded = dec.decode(payload);
-                    self.g722_wideband_buf.clear();
-                    self.g722_wideband_buf.extend_from_slice(decoded);
-                }
-                self.decode_buf.clear();
-                g722_down_into(
-                    &self.g722_wideband_buf,
-                    &mut self.g722_down_filter,
-                    &mut self.decode_buf,
-                );
-                // Caller needs owned samples — existing sites build on
-                // `Option<Vec<i16>>`. One allocation per call, but the
-                // internal wideband scratch is reused.
-                Some(self.decode_buf.clone())
-            }
-            _ => None,
-        }
+    /// Clear every cached representation. Called at the start of every
+    /// `feed_*` so stale values from a previous tick can't be returned.
+    /// Stateful codec objects (encoders/decoders/filters) are NOT cleared.
+    fn invalidate_caches(&mut self) {
+        self.narrowband_8k = None;
+        self.wideband_16k = None;
+        self.pcma_out = None;
+        self.pcmu_out = None;
+        self.g722_out = None;
+        self.ilbc_out = None;
     }
 
-    /// Encode linear16 @ 8 kHz into `pt`. G.722 requires 16 kHz input —
-    /// we upsample the 160-sample frame to 320 via the stateful
-    /// `g722_up_filter` before encoding (matches C++ `l16lowtowideband`
-    /// in projectrtpcodecx.cpp:416). The upsampled samples go into the
-    /// persistent `g722_wideband_buf`; the G.722 encoder writes into
-    /// its own persistent `out_buf` which we copy once into an owned
-    /// Vec for the caller.
-    pub fn encode(&mut self, pt: u8, samples: &[i16]) -> Option<Vec<u8>> {
-        if self.is_ilbc_pt(pt) {
-            let enc = self.ilbc_encoder.get_or_insert_with(|| {
-                crate::ilbc::Encoder::new().expect("ilbc encoder create")
-            });
-            return enc.encode_20ms(samples);
+    // ---- Input (set one of these per tick) ---------------------------------
+
+    /// Feed raw RTP-payload bytes for the given PT. Invalidates all
+    /// cached representations. Subsequent `require_*` calls decode
+    /// lazily from this wire input.
+    pub fn feed_wire(&mut self, pt: u8, payload: &[u8]) {
+        self.wire_pt = pt;
+        self.wire_bytes.clear();
+        self.wire_bytes.extend_from_slice(payload);
+        self.invalidate_caches();
+    }
+
+    /// Feed 8 kHz linear samples. Used on the outbound path where the
+    /// destination bundle is handed a peer's decoded contribution. The
+    /// linear samples are stashed directly in the `narrowband_8k` cache
+    /// so subsequent `require_wire_as(pt)` calls skip the decode step.
+    pub fn feed_linear_8k(&mut self, samples: &[i16]) {
+        self.wire_pt = 255;
+        self.wire_bytes.clear();
+        self.invalidate_caches();
+        self.narrowband_8k = Some(samples.to_vec());
+    }
+
+    /// Feed 16 kHz linear samples. Rare — used when upstream code has
+    /// already produced wideband audio (e.g. a 16 kHz source feeding a
+    /// G.722 encoder without downsampling).
+    #[allow(dead_code)]
+    pub fn feed_linear_16k(&mut self, samples: &[i16]) {
+        self.wire_pt = 255;
+        self.wire_bytes.clear();
+        self.invalidate_caches();
+        self.wideband_16k = Some(samples.to_vec());
+    }
+
+    // ---- Fast path: raw wire bytes if the PT matches -----------------------
+
+    /// Return the wire bytes as-is iff `pt` matches the fed wire PT.
+    /// Zero codec work — the basis for the same-codec pass-through
+    /// optimisation in N=2 mix (when the destination wants exactly
+    /// what the source sent, we can forward without transcoding).
+    ///
+    /// Not yet used in the call path — kept available so the N=2
+    /// short-circuit can be wired up once the recorder-format check
+    /// is in place (a pass-through forwards raw bytes which bypass
+    /// the decoder; recorders expecting linear samples would get no
+    /// audio in that case).
+    #[allow(dead_code)]
+    pub fn raw_wire_if_pt(&self, pt: u8) -> Option<&[u8]> {
+        if self.wire_pt == 255 || self.wire_bytes.is_empty() { return None; }
+        let match_ok = match pt {
+            0 | 8 | 9 => pt == self.wire_pt,
+            _ if self.is_ilbc_pt(pt) => self.is_ilbc_pt(self.wire_pt),
+            _ => false,
+        };
+        if match_ok { Some(&self.wire_bytes) } else { None }
+    }
+
+    // ---- Lazy accessors ----------------------------------------------------
+
+    /// 8 kHz linear samples. Compute from whatever input form we have,
+    /// via the shortest chain. Cached on success.
+    pub fn require_narrowband_8k(&mut self) -> Option<&[i16]> {
+        if self.narrowband_8k.is_some() {
+            return self.narrowband_8k.as_deref();
         }
-        match pt {
-            0 => Some(samples.iter().map(|&s| linear_to_ulaw(s as i32)).collect()),
-            8 => Some(samples.iter().map(|&s| linear_to_alaw(s as i32)).collect()),
-            9 => {
-                g722_up_into(samples, &mut self.g722_up_filter, &mut self.g722_wideband_buf);
+
+        // Path 1: decode directly from wire PT.
+        if !self.wire_bytes.is_empty() {
+            if self.is_ilbc_pt(self.wire_pt) {
+                let dec = self.ilbc_decoder.get_or_insert_with(|| {
+                    crate::ilbc::Decoder::new().expect("ilbc decoder init")
+                });
+                if let Some(v) = dec.decode(&self.wire_bytes) {
+                    self.narrowband_8k = Some(v);
+                    return self.narrowband_8k.as_deref();
+                }
+                return None;
+            }
+            match self.wire_pt {
+                0 => {
+                    let v: Vec<i16> = self.wire_bytes.iter().map(|&b| ulaw_to_linear(b)).collect();
+                    self.narrowband_8k = Some(v);
+                    return self.narrowband_8k.as_deref();
+                }
+                8 => {
+                    let v: Vec<i16> = self.wire_bytes.iter().map(|&b| alaw_to_linear(b)).collect();
+                    self.narrowband_8k = Some(v);
+                    return self.narrowband_8k.as_deref();
+                }
+                9 => {
+                    // G.722: decode to wideband, then downsample. The
+                    // wideband representation is cached first so a
+                    // consumer wanting 16 kHz later doesn't re-decode.
+                    self.require_wideband_16k()?;
+                    let wb = self.wideband_16k.as_ref().unwrap();
+                    let mut nb = Vec::with_capacity(wb.len() / 2);
+                    g722_down_into(wb, &mut self.g722_down_filter, &mut nb);
+                    self.narrowband_8k = Some(nb);
+                    return self.narrowband_8k.as_deref();
+                }
+                _ => {}
+            }
+        }
+
+        // Path 2: downsample from cached wideband.
+        if self.wideband_16k.is_some() {
+            let wb = self.wideband_16k.as_ref().unwrap();
+            let mut nb = Vec::with_capacity(wb.len() / 2);
+            g722_down_into(wb, &mut self.g722_down_filter, &mut nb);
+            self.narrowband_8k = Some(nb);
+            return self.narrowband_8k.as_deref();
+        }
+
+        None
+    }
+
+    /// 16 kHz linear samples. Native for G.722; used for 16 kHz
+    /// recording. Computed by decoding G.722 wire OR upsampling from
+    /// cached narrowband.
+    pub fn require_wideband_16k(&mut self) -> Option<&[i16]> {
+        if self.wideband_16k.is_some() {
+            return self.wideband_16k.as_deref();
+        }
+
+        // Path 1: G.722 wire → wideband (decode only, no resample).
+        if self.wire_pt == 9 && !self.wire_bytes.is_empty() {
+            let dec = self.g722_decoder.get_or_insert_with(|| {
+                crate::g722::Decoder::new().expect("g722 decoder init")
+            });
+            let decoded = dec.decode(&self.wire_bytes);
+            if !decoded.is_empty() {
+                self.wideband_16k = Some(decoded.to_vec());
+                return self.wideband_16k.as_deref();
+            }
+            return None;
+        }
+
+        // Path 2: upsample from narrowband (may itself require a decode).
+        self.require_narrowband_8k()?;
+        let nb = self.narrowband_8k.as_ref().unwrap();
+        let mut wb = Vec::with_capacity(nb.len() * 2);
+        g722_up_into(nb, &mut self.g722_up_filter, &mut wb);
+        self.wideband_16k = Some(wb);
+        self.wideband_16k.as_deref()
+    }
+
+    /// Produce wire bytes encoded as `pt` by pulling the best-available
+    /// representation from `src` — the analogue of C++
+    /// `dstchan->outcodec.write(srcchan->incodec)` where the destination
+    /// decides what it wants from the source's bundle.
+    ///
+    /// Conversion chain, in preference order:
+    /// 1. If `src.wire_pt == pt` → same codec on both ends, just copy
+    ///    `src.wire_bytes` into our `out` cache for that PT. **Zero
+    ///    codec work** (no decode, no encode, no resample). This is the
+    ///    G.722↔G.722 and PCMA↔PCMA pass-through fast path.
+    /// 2. If `pt` is G.722 → ask `src` for its 16 kHz wideband (may
+    ///    already be cached from a recorder; otherwise decoded from
+    ///    G.722 wire or upsampled from narrowband). Encode via our
+    ///    persistent `g722_encoder`. Avoids the lossy 16→8→16 round
+    ///    trip when both ends are G.722 but a consumer also wanted
+    ///    narrowband.
+    /// 3. Else → ask `src` for narrowband 8 kHz and encode to PCMA /
+    ///    PCMU / iLBC via the appropriate stateful encoder on self.
+    ///
+    /// The encoder state (G.722 predictor, iLBC LP, up-sample filter)
+    /// stays on `self` across ticks for a coherent outbound stream.
+    pub fn encode_from(&mut self, pt: u8, src: &mut CodecBundle) -> Option<&[u8]> {
+        // Fast path: same codec on both ends — copy src's wire bytes.
+        if let Some(wire) = src.raw_wire_if_pt(pt) {
+            let owned = wire.to_vec();
+            match pt {
+                0 => { self.pcmu_out = Some(owned); return self.pcmu_out.as_deref(); }
+                8 => { self.pcma_out = Some(owned); return self.pcma_out.as_deref(); }
+                9 => { self.g722_out = Some(owned); return self.g722_out.as_deref(); }
+                p if self.is_ilbc_pt(p) => {
+                    self.ilbc_out = Some(owned);
+                    return self.ilbc_out.as_deref();
+                }
+                _ => {}
+            }
+        }
+
+        // G.722 encode: prefer src's wideband (if cached from recorder
+        // or decoded from G.722 wire). Falls through to upsample from
+        // src's narrowband when the source is a narrowband codec.
+        if pt == 9 {
+            let out: Vec<u8> = {
+                let wb = src.require_wideband_16k()?;
                 let enc = self.g722_encoder.get_or_insert_with(|| {
                     crate::g722::Encoder::new().expect("g722 encoder init")
                 });
-                Some(enc.encode(&self.g722_wideband_buf).to_vec())
+                let wire = enc.encode(wb);
+                if wire.is_empty() { return None; }
+                wire.to_vec()
+            };
+            self.g722_out = Some(out);
+            return self.g722_out.as_deref();
+        }
+
+        // Narrowband codecs (PCMA / PCMU / iLBC): pull src's narrowband.
+        if self.is_ilbc_pt(pt) {
+            let out: Option<Vec<u8>> = {
+                let nb = src.require_narrowband_8k()?;
+                let enc = self.ilbc_encoder.get_or_insert_with(|| {
+                    crate::ilbc::Encoder::new().expect("ilbc encoder init")
+                });
+                enc.encode_20ms(nb)
+            };
+            self.ilbc_out = out;
+            return self.ilbc_out.as_deref();
+        }
+        match pt {
+            0 => {
+                let nb = src.require_narrowband_8k()?;
+                let out: Vec<u8> = nb.iter().map(|&s| linear_to_ulaw(s as i32)).collect();
+                self.pcmu_out = Some(out);
+                self.pcmu_out.as_deref()
+            }
+            8 => {
+                let nb = src.require_narrowband_8k()?;
+                let out: Vec<u8> = nb.iter().map(|&s| linear_to_alaw(s as i32)).collect();
+                self.pcma_out = Some(out);
+                self.pcma_out.as_deref()
             }
             _ => None,
         }
     }
 
-    /// Transcode in one shot using the decode/encode pair above.
-    #[allow(dead_code)]
-    pub fn transcode(&mut self, src_pt: u8, dst_pt: u8, payload: &[u8]) -> Option<Vec<u8>> {
-        if src_pt == dst_pt { return Some(payload.to_vec()); }
-        let pcm = self.decode(src_pt, payload)?;
-        self.encode(dst_pt, &pcm)
+    /// Wire bytes encoded as `pt`. Computes via the shortest chain from
+    /// whatever input form is currently held. Cached so a repeat call
+    /// with the same `pt` returns the previous result.
+    pub fn require_wire_as(&mut self, pt: u8) -> Option<&[u8]> {
+        if self.is_ilbc_pt(pt) {
+            if self.ilbc_out.is_some() { return self.ilbc_out.as_deref(); }
+            self.require_narrowband_8k()?;
+            let nb = self.narrowband_8k.as_ref().unwrap();
+            let enc = self.ilbc_encoder.get_or_insert_with(|| {
+                crate::ilbc::Encoder::new().expect("ilbc encoder init")
+            });
+            let out = enc.encode_20ms(nb)?;
+            self.ilbc_out = Some(out);
+            return self.ilbc_out.as_deref();
+        }
+        match pt {
+            0 => {
+                if self.pcmu_out.is_some() { return self.pcmu_out.as_deref(); }
+                self.require_narrowband_8k()?;
+                let nb = self.narrowband_8k.as_ref().unwrap();
+                let out: Vec<u8> = nb.iter().map(|&s| linear_to_ulaw(s as i32)).collect();
+                self.pcmu_out = Some(out);
+                self.pcmu_out.as_deref()
+            }
+            8 => {
+                if self.pcma_out.is_some() { return self.pcma_out.as_deref(); }
+                self.require_narrowband_8k()?;
+                let nb = self.narrowband_8k.as_ref().unwrap();
+                let out: Vec<u8> = nb.iter().map(|&s| linear_to_alaw(s as i32)).collect();
+                self.pcma_out = Some(out);
+                self.pcma_out.as_deref()
+            }
+            9 => {
+                if self.g722_out.is_some() { return self.g722_out.as_deref(); }
+                self.require_wideband_16k()?;
+                let wb_samples = self.wideband_16k.as_ref().unwrap();
+                let enc = self.g722_encoder.get_or_insert_with(|| {
+                    crate::g722::Encoder::new().expect("g722 encoder init")
+                });
+                let wire = enc.encode(wb_samples);
+                if wire.is_empty() { return None; }
+                self.g722_out = Some(wire.to_vec());
+                self.g722_out.as_deref()
+            }
+            _ => None,
+        }
     }
 }
+
 
 /// 16 kHz → 8 kHz downsample: for each pair of input samples, run both
 /// through the shared LP filter (to update its state) and keep only the
@@ -267,10 +586,9 @@ fn g722_up_into(
     }
 }
 
+#[inline]
 pub fn ulaw_to_linear(ulaw: u8) -> i16 {
-    let u = !ulaw;
-    let t = (((u as i32 & 0x0F) << 3) + 0x84) << ((u as i32 & 0x70) >> 4);
-    if u & 0x80 != 0 { (0x84 - t) as i16 } else { (t - 0x84) as i16 }
+    ULAW_TO_LINEAR[ulaw as usize]
 }
 
 // JS-facing wrappers — match existing single-sample API in index.js.

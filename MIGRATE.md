@@ -29,6 +29,22 @@ docker run --rm projectrtp-test \
   test/interface/projectrtpplayrecord.js \
   test/interface/projectrtprecord.js \
   --exit
+  
+docker run --rm \
+  -v /home/nick/workspace/babble/projectrtp/test:/usr/src/projectrtp/test:Z \
+  -v /tmp/codecchain-out:/tmp:Z \
+  projectrtp-test \
+  ./node_modules/mocha/bin/_mocha \
+  test/interface/projectrtpserver.js \
+  test/interface/codecchain.js \
+  --grep "G.722 on the wire → mix → PCMA" \
+  --exit
+
+# G.722 on the wire → mix → PCMA
+# or PCMA on the wire → mix → PCMA out
+
+#or bash
+docker run -it --rm projectrtp-test sh
 
 ```
 

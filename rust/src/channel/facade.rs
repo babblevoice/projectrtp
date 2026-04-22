@@ -731,25 +731,28 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
         let _ = handle.cmd.try_send(super::commands::Command::Direction(initial_direction));
     }
 
-    // If params.remote was supplied, push it into the actor as a fire-and-forget
-    // — the actor will set state.remote_addr before any tick fires.
+    // If params.remote was supplied, enqueue a Remote command
+    // SYNCHRONOUSLY before `openchannel` returns. Using `try_send` here
+    // (rather than the old `tokio::spawn { ... .send().await }`) avoids
+    // a race: JS code that calls `channel.remote({...})` or
+    // `channel.mix(peer)` immediately after `await openchannel(...)`
+    // also uses `try_send`, so without this fix the spawned initial
+    // send could land in the actor's queue AFTER the JS follow-ups and
+    // silently revert any remote override applied by the caller.
+    // The command queue is empty at this point so `try_send` always
+    // succeeds; the actor will apply the remote on its first dispatch.
     if let Some(addr) = remote_addr {
-        let cmd_tx = handle.cmd.clone();
-        let icepwd = initial_remote_icepwd.clone();
-        let dtls = initial_remote_dtls.clone();
-        tokio::spawn(async move {
-            use super::commands::{Command, RemoteConfig};
-            let (ack, _) = tokio::sync::oneshot::channel();
-            let cfg = RemoteConfig {
-                addr,
-                payload_type: remote_pt,
-                ilbc_payload_type: Some(ilbc_pt),
-                rfc2833_payload_type: rfc2833_pt,
-                dtls,
-                icepwd,
-            };
-            let _ = cmd_tx.send(Command::Remote { cfg, ack }).await;
-        });
+        use super::commands::{Command, RemoteConfig};
+        let (ack, _) = tokio::sync::oneshot::channel();
+        let cfg = RemoteConfig {
+            addr,
+            payload_type: remote_pt,
+            ilbc_payload_type: Some(ilbc_pt),
+            rfc2833_payload_type: rfc2833_pt,
+            dtls: initial_remote_dtls.clone(),
+            icepwd: initial_remote_icepwd.clone(),
+        };
+        let _ = handle.cmd.try_send(Command::Remote { cfg, ack });
     }
 
     register_channel(&handle);

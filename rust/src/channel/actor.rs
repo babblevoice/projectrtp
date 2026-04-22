@@ -543,7 +543,7 @@ async fn handle_command_local(
                 state.rfc2833_pt = pt;
             }
             if let Some(pt) = cfg.ilbc_payload_type {
-                state.transcoder.set_local_ilbc_pt(pt);
+                state.codecx.set_local_ilbc_pt(pt);
             }
             if let Some(pwd) = &cfg.icepwd {
                 state.remote_icepwd = pwd.clone();

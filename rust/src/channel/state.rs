@@ -44,7 +44,7 @@ pub struct ChannelState {
     pub echo: bool,
     pub remote_confirmed: bool,
 
-    pub transcoder: crate::codec::Transcoder,
+    pub codecx: crate::codec::CodecBundle,
     pub remote_pt: u8,
 
     pub tick_count: u64,
@@ -97,7 +97,7 @@ impl ChannelState {
             ssrc,
             echo: false,
             remote_confirmed: false,
-            transcoder: crate::codec::Transcoder::new(),
+            codecx: crate::codec::CodecBundle::new(),
             remote_pt: 0,
             tick_count: 0,
             ticks_without_rtp: 0,

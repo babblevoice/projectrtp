@@ -12,9 +12,16 @@
 // checks couldn't detect reliably; this swap fixes the 4 g722 transcode
 // failures.
 //
-// We pass `G722_SAMPLE_RATE_8000 | G722_PACKED` so spandsp handles the
-// 8↔16 kHz resampling internally — saves us replicating the zero-insert +
-// lowpass / decimate dance the C++ side does by hand.
+// Mode: `G722_PACKED` only — true 16 kHz G.722. The `G722_SAMPLE_RATE_8000`
+// flag is a spandsp test-vector mode that produces non-standard wire bytes
+// that real peers decode as distorted audio; the up/down resampling is
+// done in `codec.rs::Transcoder` with an LP filter instead (matches C++).
+//
+// Frame sizing is strict and matches C++:
+//   encode: 320 samples in (16 kHz, 20 ms) → 160 wire bytes out
+//   decode: 160 wire bytes in → 320 samples out (16 kHz, 20 ms)
+// If spandsp returns anything other than those counts we treat it as a
+// failure — same defensive behaviour as C++ `projectrtpcodecx.cpp` does.
 
 use std::os::raw::c_int;
 
@@ -77,32 +84,26 @@ impl Encoder {
         Some(Self { state, out_buf: vec![0u8; G722_FRAME_BYTES] })
     }
 
-    /// Encode 16 kHz linear PCM to G.722. For a 20 ms packet pass 320
-    /// samples; the returned slice is 160 bytes (64 kbit/s G.722 packs
-    /// two 4-bit samples per byte).
-    ///
-    /// The returned slice borrows `self.out_buf` — valid until the next
-    /// encode call. Using spandsp's `G722_SAMPLE_RATE_8000` flag to
-    /// bypass the 16 kHz requirement is a test-vector mode that produces
-    /// non-standard wire bytes — real peers decode those as distorted
-    /// audio, so callers must upsample 8 kHz audio to 16 kHz first.
+    /// Encode 16 kHz linear PCM to G.722. Input must be exactly 320
+    /// samples (20 ms @ 16 kHz). Output is exactly 160 wire bytes; any
+    /// other count is treated as a failure and an empty slice is
+    /// returned. Mirrors C++ `projectrtpcodecx.cpp:374-379`.
     pub fn encode(&mut self, samples: &[i16]) -> &[u8] {
-        let needed = samples.len() / 2 + 1;
-        if self.out_buf.len() < needed {
-            self.out_buf.resize(needed, 0);
+        if samples.len() != G722_FRAME_SAMPLES {
+            return &[];
         }
         let n = unsafe {
             g722_encode(
                 self.state,
                 self.out_buf.as_mut_ptr(),
                 samples.as_ptr(),
-                samples.len() as c_int,
+                G722_FRAME_SAMPLES as c_int,
             )
         };
-        if n <= 0 {
+        if n as usize != G722_FRAME_BYTES {
             return &[];
         }
-        &self.out_buf[..n as usize]
+        &self.out_buf[..G722_FRAME_BYTES]
     }
 }
 
@@ -139,27 +140,26 @@ impl Decoder {
         Some(Self { state, out_buf: vec![0i16; G722_FRAME_SAMPLES] })
     }
 
-    /// Decode G.722 to 16 kHz linear PCM: 160 wire bytes → 320 samples.
-    /// The returned slice borrows `self.out_buf` — valid until the next
-    /// decode call. Callers mixing with 8 kHz audio must downsample (see
-    /// `Transcoder::decode`).
+    /// Decode G.722 to 16 kHz linear PCM. Input must be exactly 160
+    /// wire bytes (20 ms @ 64 kbit/s). Output is exactly 320 samples;
+    /// any other count is treated as a failure and an empty slice is
+    /// returned. Mirrors C++ `projectrtpcodecx.cpp:401-406`.
     pub fn decode(&mut self, bits: &[u8]) -> &[i16] {
-        let needed = bits.len() * 2;
-        if self.out_buf.len() < needed {
-            self.out_buf.resize(needed, 0);
+        if bits.len() != G722_FRAME_BYTES {
+            return &[];
         }
         let n = unsafe {
             g722_decode(
                 self.state,
                 self.out_buf.as_mut_ptr(),
                 bits.as_ptr(),
-                bits.len() as c_int,
+                G722_FRAME_BYTES as c_int,
             )
         };
-        if n <= 0 {
+        if n as usize != G722_FRAME_SAMPLES {
             return &[];
         }
-        &self.out_buf[..n as usize]
+        &self.out_buf[..G722_FRAME_SAMPLES]
     }
 }
 

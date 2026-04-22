@@ -160,105 +160,204 @@ async fn run(mut cmds: mpsc::Receiver<MixerCommand>) {
     }
 }
 
-// ---- mix tick: the unified per-tick pipeline ----
+// ---- Outbound helpers (Phase 3 of the mix tick) ----
 
-async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
-    let n_alive = members.len();
+/// N=2 outbound: each member's output is the peer's frame (source→dest
+/// pass-through, matches C++ `mix2`). We extract both members' mutable
+/// refs via `iter_mut` and call `send_leg` for each direction in turn
+/// — no intermediate Vec, one pass, analogous to the C++ which grabs
+/// chan1 and chan2 directly.
+///
+/// The RTP packet sent to the destination MUST use the DESTINATION's
+/// SRTP encrypt context, SSRC and outbound counters — those were
+/// negotiated on the destination's leg and are what the destination
+/// peer expects to decrypt/reassemble. Using the source's state
+/// produces audible noise or silence whenever at least one leg is SRTP
+/// (e.g. Chromium ↔ SIP), since the destination can't decrypt with
+/// the wrong key.
+async fn mix2_outbound(members: &mut HashMap<ChannelId, Box<Member>>) {
+    let mut iter = members.iter_mut();
+    let Some((_, first)) = iter.next() else { return; };
+    let Some((_, second)) = iter.next() else { return; };
+    // Peel the `Box<Member>` so we work with two `&mut Member`s.
+    let (a, b): (&mut Member, &mut Member) = (first, second);
 
-    // Cross-configure iLBC dynamic PTs for N=2 so each member's transcoder
-    // recognises the peer's wire PT for iLBC encode/decode.
-    if n_alive == 2 {
-        let pts: Vec<(ChannelId, u8)> = members.iter()
-            .map(|(&id, m)| (id, m.state.remote_pt))
-            .collect();
-        for (&id, m) in members.iter_mut() {
-            if let Some(&(_, peer_pt)) = pts.iter().find(|(pid, _)| *pid != id) {
-                if peer_pt >= 96 {
-                    m.state.transcoder.set_peer_ilbc_pt(peer_pt);
-                }
+    send_leg(a, b).await;
+    send_leg(b, a).await;
+}
+
+/// One direction of the N=2 pass-through. Dst pulls the best-available
+/// representation from src's bundle via `encode_from`:
+///   - same codec both ends → src's wire bytes are copied through
+///     verbatim (no decode, no encode — the G.722↔G.722 / PCMA↔PCMA
+///     fast path);
+///   - dst G.722 with different src codec → uses src's wideband (may
+///     already be cached) so the LP filter chain runs once instead of
+///     downsample-then-upsample;
+///   - else → src's 8 kHz linear feeds dst's stateful encoder.
+///
+/// The encoder state (G.722 predictor, iLBC LP, up-sample filter)
+/// persists on `dst.state.codecx` for a coherent outbound stream.
+async fn send_leg(src: &mut Member, dst: &mut Member) {
+    if !src.state.direction.send { return; }
+    if !src.frame_present { return; }
+    let Some(dest_addr) = dst.state.get_remote_addr() else { return; };
+    let peer_pt = dst.state.remote_pt;
+
+    let Some(wire) = dst.state.codecx.encode_from(peer_pt, &mut src.state.codecx) else { return; };
+    // Owned copy so the `&mut dst.state.codecx` borrow ends before the
+    // RTP packet build / SRTP encrypt / send path needs other
+    // `&mut dst.state` borrows.
+    let payload: Vec<u8> = wire.to_vec();
+
+    let mut pkt = RtpPacket::new();
+    pkt.init(dst.state.ssrc);
+    pkt.set_payload_type(peer_pt);
+    pkt.set_sequence_number(dst.state.out_sn);
+    pkt.set_timestamp(dst.state.out_ts);
+    pkt.set_payload(&payload);
+    dst.state.out_sn = dst.state.out_sn.wrapping_add(1);
+    dst.state.out_ts = dst.state.out_ts.wrapping_add(MIX_FRAME_SAMPLES as u32);
+
+    let send_ok = if let Some(ref mut ctx) = dst.state.srtp_encrypt {
+        match ctx.encrypt_rtp(pkt.as_slice()) {
+            Ok(encrypted) => dst.state.rtp_sock.send_to(&encrypted, dest_addr).await.is_ok(),
+            Err(_) => false,
+        }
+    } else {
+        dst.state.rtp_sock.send_to(pkt.as_slice(), dest_addr).await.is_ok()
+    };
+    if send_ok {
+        dst.state.out_count += 1;
+    }
+}
+
+/// N≥3 outbound: each member's output is `summed - own`, encoded with
+/// its own codec, sent to its own remote. The summing is deferred until
+/// here — it's only useful at N≥3 (for N=2 it equals the peer's frame
+/// directly, which `mix2_outbound` uses via pass-through).
+async fn mix_all_outbound(members: &mut HashMap<ChannelId, Box<Member>>) {
+    // Sum all members' frames into a single int32 buffer.
+    let mut summed = vec![0i32; MIX_FRAME_SAMPLES];
+    for m in members.values() {
+        if !m.state.direction.recv { continue; }
+        if !m.frame_present { continue; }
+        for (slot, &sample) in summed.iter_mut().zip(m.frame.iter()) {
+            *slot = slot.saturating_add(sample as i32);
+        }
+    }
+
+    for m in members.values_mut() {
+        if !m.state.direction.send { continue; }
+        let Some(remote) = m.state.get_remote_addr() else { continue; };
+
+        let mut out_samples = vec![0i16; MIX_FRAME_SAMPLES];
+        if m.frame_present {
+            for i in 0..MIX_FRAME_SAMPLES {
+                let v = summed[i] - m.frame[i] as i32;
+                out_samples[i] = v.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+            }
+        } else {
+            for i in 0..MIX_FRAME_SAMPLES {
+                out_samples[i] = summed[i].clamp(i16::MIN as i32, i16::MAX as i32) as i16;
             }
         }
-    }
 
-    // No socket drain — the recv_loop continuously reads and pushes
-    // RTP/DTMF into jitter. DTMF is classified at pop time (Phase 2).
-    let mut dtmf_broadcast: Vec<(ChannelId, char)> = Vec::new();
-    let mut idle_members: Vec<ChannelId> = Vec::new();
-    for m in members.values_mut() {
-        m.state.tick_count += 1;
-    }
-
-    // ----- Phase 2: pop jitter, decode, cache frame, recorder, player, barge-in. -----
-    for m in members.values_mut() {
-        for s in m.frame.iter_mut() { *s = 0; }
-        m.frame_present = false;
-        m.inbound_this_tick = false;
-
-        let mut popped = m.state.jitter.lock().pop();
-        if popped.is_some() {
-            m.state.ticks_without_rtp = 0;
-        } else {
-            m.state.ticks_without_rtp += 1;
+        // Feed dst's (this member's) bundle the computed mix samples,
+        // then pull the wire bytes in its own remote_pt. Encoder state
+        // persists on `m.state.codecx`.
+        m.state.codecx.feed_linear_8k(&out_samples);
+        let pt = m.state.remote_pt;
+        if let Some(wire) = m.state.codecx.require_wire_as(pt) {
+            // Owned copy to release the `&mut m.state.codecx` borrow
+            // before the send call below needs the rest of m.state.
+            let payload: Vec<u8> = wire.to_vec();
+            send_encoded(&mut m.state, remote, &payload).await;
         }
+    }
+}
 
-        // SRTP decrypt if active.
-        if let (Some(ref mut pk), Some(ref mut ctx)) = (&mut popped, &mut m.state.srtp_decrypt) {
+// ---- Per-channel operations (methods on Member) ----
+//
+// Each tick calls a sequence of these on every member — mirroring the C++
+// style where each channel has `senddtmf`, `writerecordings`, `checkidlerecv`,
+// `endticktimer` etc. as methods. Keeps the tick orchestrator readable and
+// each operation reasonable in isolation.
+
+impl Member {
+    /// Clear per-tick state at the start of each tick. The mix frame is
+    /// zeroed so silent inbound doesn't leak last tick's audio into the
+    /// mix output.
+    fn reset_for_tick(&mut self) {
+        for s in self.frame.iter_mut() { *s = 0; }
+        self.frame_present = false;
+        self.inbound_this_tick = false;
+    }
+
+    /// Pop one packet from the jitter buffer and SRTP-decrypt in place if
+    /// an SRTP context is active. Returns None if no packet is available
+    /// or if decryption fails.
+    fn pop_inbound(&mut self) -> Option<RtpPacket> {
+        let mut popped = self.state.jitter.lock().pop();
+        if let (Some(ref mut pk), Some(ref mut ctx)) =
+            (&mut popped, &mut self.state.srtp_decrypt)
+        {
             match ctx.decrypt_rtp(pk.as_slice()) {
                 Ok(decrypted) => {
                     let n = decrypted.len().min(pk.buf.len());
                     pk.buf[..n].copy_from_slice(&decrypted[..n]);
                     pk.len = n;
                 }
-                Err(_) => { popped = None; }
+                Err(_) => return None,
             }
         }
+        popped
+    }
 
-        // DTMF at pop time — recv_loop pushes all RTP/DTMF into jitter.
-        if let Some(ref pk) = popped {
-            let pt = pk.payload_type();
-            if pt == m.state.rfc2833_pt {
-                let sn = pk.sequence_number();
-                let payload = &pk.as_slice()[super::rtp::RTP_FIXED_HEADER_LEN..pk.len()];
-                if let Some(digit) = m.subs.dtmf_recv.feed(sn, payload) {
-                    let mut activate_recorder = false;
-                    if let Some(p) = m.subs.player.as_ref() {
-                        if p.interrupts() {
-                            m.subs.player = None;
-                            m.subs.bargein = None;
-                            m.state.pending_events.push(Event::Play {
-                                state: PlayState::End,
-                                reason: Some("telephone-event".into()),
-                            });
-                            activate_recorder = true;
-                        }
-                    }
-                    m.state.pending_events.push(Event::TelephoneEvent { digit });
-                    // Broadcast to other members.
-                    dtmf_broadcast.push((m.state.id, digit));
-                    if activate_recorder {
-                        let _ = activate_pending_recorder(
-                            &mut m.subs,
-                            &mut m.state.pending_events,
-                        ).await;
-                    }
-                }
-                continue; // DTMF consumed — skip audio processing for this member.
+    /// Process an RFC-2833 DTMF packet: feed the receiver, interrupt an
+    /// interrupt-enabled player, emit `telephone-event`. Returns the
+    /// digit so the caller can queue it for peer broadcast.
+    async fn handle_dtmf_in(&mut self, pk: &RtpPacket) -> Option<char> {
+        let sn = pk.sequence_number();
+        let payload = &pk.as_slice()[super::rtp::RTP_FIXED_HEADER_LEN..pk.len()];
+        let digit = self.subs.dtmf_recv.feed(sn, payload)?;
+
+        let mut activate_recorder = false;
+        if let Some(p) = self.subs.player.as_ref() {
+            if p.interrupts() {
+                self.subs.player = None;
+                self.subs.bargein = None;
+                self.state.pending_events.push(Event::Play {
+                    state: PlayState::End,
+                    reason: Some("telephone-event".into()),
+                });
+                activate_recorder = true;
             }
         }
+        self.state.pending_events.push(Event::TelephoneEvent { digit });
+        if activate_recorder {
+            let _ = activate_pending_recorder(
+                &mut self.subs, &mut self.state.pending_events,
+            ).await;
+        }
+        Some(digit)
+    }
 
-        // Player: advance one frame. Player output becomes this member's
-        // mix contribution (its "voice") when no inbound is present.
+    /// Pull one frame from the active player, if any. Clears player +
+    /// bargein and activates a queued `playrecord` recorder when the
+    /// player has just finished.
+    async fn tick_player(&mut self) -> Option<Vec<i16>> {
         let mut player_frame: Option<Vec<i16>> = None;
         let mut player_just_ended = false;
-        if let Some(player) = m.subs.player.as_mut() {
+        if let Some(player) = self.subs.player.as_mut() {
             let frame = player.read(160).await;
             if !frame.samples.is_empty() {
                 player_frame = Some(frame.samples);
             }
             if player.is_finished() {
-                m.subs.player = None;
-                m.subs.bargein = None;
-                m.state.pending_events.push(Event::Play {
+                self.subs.player = None;
+                self.subs.bargein = None;
+                self.state.pending_events.push(Event::Play {
                     state: PlayState::End,
                     reason: Some("completed".into()),
                 });
@@ -266,237 +365,316 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
             }
         }
         if player_just_ended {
-            let _ = activate_pending_recorder(&mut m.subs, &mut m.state.pending_events).await;
+            let _ = activate_pending_recorder(
+                &mut self.subs, &mut self.state.pending_events,
+            ).await;
         }
+        player_frame
+    }
 
-        // Decode inbound once — shared by recorder, barge-in, and frame.
-        let inbound_samples: Option<Vec<i16>> = popped.as_ref().and_then(|in_pk| {
-            m.state.transcoder.decode(in_pk.payload_type(), in_pk.payload())
-        });
-
-        // Populate mix frame: inbound wins over player for the contribution
-        // (player audio is "our voice", inbound is what the far end sent —
-        // in a relay scenario the far end's audio should be what gets mixed).
-        if m.state.direction.recv {
-            if let Some(samples) = inbound_samples.as_ref() {
-                copy_into_frame(&mut m.frame, samples);
-                m.frame_present = true;
-                m.inbound_this_tick = true;
-            } else if let Some(samples) = player_frame.as_ref() {
-                copy_into_frame(&mut m.frame, samples);
-                m.frame_present = true;
-            }
-        }
-
-        // Barge-in on inbound power — must run before the recorder feed so
-        // that when bargein fires we can activate the pending recorder and
-        // flush the pre-buffer *before* this tick's sample would otherwise be
-        // written into an empty recorder.
-        let mut bargein_fired = false;
-        if let (Some(samples), Some(bi)) = (inbound_samples.as_ref(), m.subs.bargein.as_mut()) {
-            if m.subs.player.is_some() && m.state.in_count.load(Ordering::Relaxed) >= 100 {
-                let mut sum_sq: u64 = 0;
-                for s in samples {
-                    let v = *s as i64;
-                    sum_sq += (v * v) as u64;
-                }
-                let rms = if samples.is_empty() { 0 }
-                          else { ((sum_sq / samples.len() as u64) as f64).sqrt() as i32 };
-                let smoothed = bi.power_ma.execute(rms.min(i16::MAX as i32) as i16) as i32;
-                if smoothed > bi.power_threshold {
-                    m.subs.player = None;
-                    m.subs.bargein = None;
-                    m.state.pending_events.push(Event::Play {
-                        state: PlayState::End,
-                        reason: Some("interrupted".into()),
-                    });
-                    bargein_fired = true;
-                }
-            }
-        }
-        if bargein_fired {
-            let _ = activate_pending_recorder(&mut m.subs, &mut m.state.pending_events).await;
-        }
-
-        // Pre-buffer accumulation while `playrecord` is in its play phase —
-        // mirrors local tick.rs. Samples are flushed to the recorder on
-        // activation; skipped once activated.
-        if m.subs.player.is_some() && m.subs.pending_recorder.is_some() {
-            if let Some(samples) = inbound_samples.as_ref() {
-                let overflow = m.subs.prebuffer.len() + samples.len()
-                    > PREBUFFER_CAPACITY_SAMPLES;
-                if overflow {
-                    let drop_n = m.subs.prebuffer.len() + samples.len()
-                        - PREBUFFER_CAPACITY_SAMPLES;
-                    for _ in 0..drop_n.min(m.subs.prebuffer.len()) {
-                        m.subs.prebuffer.pop_front();
-                    }
-                }
-                for s in samples { m.subs.prebuffer.push_back(*s); }
-            }
-        }
-
-        // Recorder: feed inbound samples (wire audio, not mix output).
-        if let Some(samples) = inbound_samples.as_ref() {
-            let ch_count = m.state.in_count.load(std::sync::atomic::Ordering::Relaxed);
-            feed_recorders(&mut m.subs.recorders, samples, ch_count, &mut m.state.pending_events).await;
+    /// Populate the member's mix contribution. Inbound wins over player
+    /// (matches C++ relay semantics — the far end's audio is what should
+    /// be mixed, not our own playback).
+    fn populate_mix_frame(&mut self, inbound: Option<&[i16]>, player: Option<&[i16]>) {
+        if !self.state.direction.recv { return; }
+        if let Some(samples) = inbound {
+            copy_into_frame(&mut self.frame, samples);
+            self.frame_present = true;
+            self.inbound_this_tick = true;
+        } else if let Some(samples) = player {
+            copy_into_frame(&mut self.frame, samples);
+            self.frame_present = true;
         }
     }
 
-    // Fan out detected DTMF digits to peers' relay queues.
-    for (origin, digit) in &dtmf_broadcast {
+    /// Barge-in on inbound power. Fires a player-end event and activates
+    /// a queued recorder when the smoothed RMS crosses the threshold.
+    async fn run_bargein(&mut self, inbound: Option<&[i16]>) {
+        let Some(samples) = inbound else { return; };
+        let Some(bi) = self.subs.bargein.as_mut() else { return; };
+        if self.subs.player.is_none() { return; }
+        if self.state.in_count.load(Ordering::Relaxed) < 100 { return; }
+
+        let mut sum_sq: u64 = 0;
+        for s in samples {
+            let v = *s as i64;
+            sum_sq += (v * v) as u64;
+        }
+        let rms = if samples.is_empty() { 0 }
+                  else { ((sum_sq / samples.len() as u64) as f64).sqrt() as i32 };
+        let smoothed = bi.power_ma.execute(rms.min(i16::MAX as i32) as i16) as i32;
+        if smoothed <= bi.power_threshold { return; }
+
+        self.subs.player = None;
+        self.subs.bargein = None;
+        self.state.pending_events.push(Event::Play {
+            state: PlayState::End,
+            reason: Some("interrupted".into()),
+        });
+        let _ = activate_pending_recorder(
+            &mut self.subs, &mut self.state.pending_events,
+        ).await;
+    }
+
+    /// While `playrecord` is in its play phase (player active AND
+    /// recorder queued), accumulate inbound samples into `prebuffer`.
+    /// Drops oldest samples when the cap is hit.
+    fn accumulate_playrecord_prebuffer(&mut self, inbound: Option<&[i16]>) {
+        if self.subs.player.is_none() || self.subs.pending_recorder.is_none() { return; }
+        let Some(samples) = inbound else { return; };
+
+        if self.subs.prebuffer.len() + samples.len() > PREBUFFER_CAPACITY_SAMPLES {
+            let drop_n = self.subs.prebuffer.len() + samples.len() - PREBUFFER_CAPACITY_SAMPLES;
+            for _ in 0..drop_n.min(self.subs.prebuffer.len()) {
+                self.subs.prebuffer.pop_front();
+            }
+        }
+        for s in samples { self.subs.prebuffer.push_back(*s); }
+    }
+
+    /// Feed active recorders the inbound 8 kHz linear samples for this
+    /// tick. The codec bundle's `narrowband_8k` cache was populated
+    /// earlier in the tick (frame populate). Called AFTER the mix phase
+    /// to match C++ `writerecordings` ordering — the mix output has
+    /// already been sent by the time recordings land on disk.
+    ///
+    /// `peer_samples` (when `Some`) is the mix peer's inbound 8 kHz
+    /// linear. Stereo recorders on this channel use it as the right
+    /// channel, giving a true stereo call recording (L=this leg,
+    /// R=far leg) — matches C++ mix recording semantics. When `None`
+    /// (Local mode, N≥3, or peer had no inbound this tick) stereo
+    /// falls back to duplicate-mono.
+    async fn write_recordings(&mut self, peer_samples: Option<&[i16]>) {
+        if !self.inbound_this_tick { return; }
+        let Some(samples) = self.state.codecx.require_narrowband_8k().map(|s| s.to_vec()) else { return; };
+        let ch_count = self.state.in_count.load(Ordering::Relaxed);
+        feed_recorders(
+            &mut self.subs.recorders, &samples, peer_samples, ch_count,
+            &mut self.state.pending_events,
+        ).await;
+    }
+
+    /// Emit any queued RFC-2833 DTMF (own + relayed-from-peer) to this
+    /// channel's own remote. Fires on every mix size.
+    async fn send_dtmf_outbound(&mut self) {
+        if !self.state.direction.send { return; }
+        let Some(remote) = self.state.get_remote_addr() else { return; };
+        let pt = self.state.rfc2833_pt;
+        if let Some((_ev, payload)) = self.subs.dtmf_send.next_event() {
+            send_dtmf_to_remote(&mut self.state, remote, pt, &payload).await;
+        }
+        if let Some((_ev, payload)) = self.subs.dtmf_relay.next_event() {
+            send_dtmf_to_remote(&mut self.state, remote, pt, &payload).await;
+        }
+    }
+
+    /// Drain `state.pending_events` through the channel's `EventSink`.
+    /// Events are batched within the tick so downstream sees them in
+    /// tick-produced order.
+    fn drain_pending_events(&mut self) {
+        for ev in self.state.pending_events.drain(..) {
+            self.events.post(ev);
+        }
+    }
+
+    /// Multi-tier idle check matching C++ `checkidlerecv`.
+    fn is_idle(&self) -> bool {
+        use super::tick::{IDLE_TICK_LIMIT, HARD_TIMEOUT_NO_REMOTE, HARD_TIMEOUT_NO_RECV};
+        if self.state.direction.recv {
+            if self.state.remote_confirmed {
+                self.state.ticks_without_rtp >= IDLE_TICK_LIMIT
+            } else {
+                self.state.tick_count >= HARD_TIMEOUT_NO_REMOTE
+            }
+        } else {
+            self.state.tick_count >= HARD_TIMEOUT_NO_RECV
+        }
+    }
+
+    /// Emit a Close event with the current stats snapshot. Called when
+    /// the channel is being removed from the mix (idle or externally).
+    fn emit_close_event(&self, reason: &str) {
+        self.events.post(Event::Close {
+            reason: reason.into(),
+            stats: super::actor::ChannelStats {
+                in_count: self.state.in_count.load(Ordering::Relaxed),
+                in_dropped: self.state.in_dropped + self.state.jitter.lock().dropped,
+                in_skip: self.state.in_skip,
+                out_count: self.state.out_count,
+            },
+        });
+    }
+}
+
+// ---- Mix-group orchestrator ----
+//
+// The tick runs in this order — deliberately mirroring C++:
+//
+//   1. per-member inbound processing (decode, frame populate, bargein)
+//   2. DTMF fan-out to peer relay queues
+//   3. outbound mix (mix2 or mix_all)
+//   4. write recordings               ← AFTER mix, matches C++
+//   5. send queued DTMF outbound
+//   6. drain events to sinks
+//   7. idle check + close
+//
+// Putting recordings after the mix means the bytes on the wire this tick
+// are already sent by the time we touch disk, and the frame cache is
+// still valid (the mix encode path doesn't clear the inbound
+// narrowband_8k cache).
+
+async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
+    let n_alive = members.len();
+
+    configure_peer_ilbc_pts(members, n_alive);
+
+    // Inbound pass: decode, frame populate, bargein, prebuffer.
+    // Also collects DTMF digits for the peer-fanout below.
+    let mut dtmf_broadcast: Vec<(ChannelId, char)> = Vec::new();
+    for m in members.values_mut() {
+        m.state.tick_count += 1;
+        m.reset_for_tick();
+
+        let popped = m.pop_inbound();
+        if popped.is_some() {
+            m.state.ticks_without_rtp = 0;
+        } else {
+            m.state.ticks_without_rtp += 1;
+        }
+
+        // DTMF consumes the packet — no audio processing for DTMF frames.
+        if let Some(ref pk) = popped {
+            if pk.payload_type() == m.state.rfc2833_pt {
+                if let Some(digit) = m.handle_dtmf_in(pk).await {
+                    dtmf_broadcast.push((m.state.id, digit));
+                }
+                continue;
+            }
+        }
+
+        let player_frame = m.tick_player().await;
+
+        // Feed the wire bytes into the codec bundle. Decoding is lazy —
+        // the first consumer that calls `require_narrowband_8k` triggers
+        // it; subsequent callers (mix encode_from, write_recordings)
+        // share the cache.
+        if let Some(in_pk) = popped.as_ref() {
+            m.state.codecx.feed_wire(in_pk.payload_type(), in_pk.payload());
+        }
+        let inbound: Option<Vec<i16>> = if popped.is_some() {
+            m.state.codecx.require_narrowband_8k().map(|s| s.to_vec())
+        } else {
+            None
+        };
+
+        m.populate_mix_frame(inbound.as_deref(), player_frame.as_deref());
+        m.run_bargein(inbound.as_deref()).await;
+        m.accumulate_playrecord_prebuffer(inbound.as_deref());
+    }
+
+    broadcast_dtmf_to_peer_relays(members, &dtmf_broadcast);
+
+    // Outbound mix. mix2 is direct pass-through; mix_all does summed -
+    // own. Both use the destination's codec bundle for encoding.
+    if n_alive == 2 {
+        mix2_outbound(members).await;
+    } else if n_alive >= 3 {
+        mix_all_outbound(members).await;
+    }
+
+    // Post-mix per-member work. Order matches C++: writerecordings →
+    // senddtmf → endticktimer (events drain here).
+    //
+    // For N=2, stereo recorders want (self, peer) interleaved. We
+    // always populate BOTH members' slots in `peer_samples_by_id` —
+    // if a member has no inbound this tick (e.g. its jitter buffer
+    // hasn't primed yet) its entry is 160 silence samples rather than
+    // absent. Otherwise a peer mid-jitter-fill would make the other
+    // channel's stereo recorder fall back to duplicate-mono and
+    // mirror its own audio to the "peer" side.
+    const TICK_SAMPLES_8K: usize = 160;
+    let peer_samples_by_id: HashMap<ChannelId, Vec<i16>> = if n_alive == 2 {
+        members.iter_mut()
+            .map(|(&id, m)| {
+                let samples = if m.inbound_this_tick {
+                    m.state.codecx.require_narrowband_8k()
+                        .map(|s| s.to_vec())
+                        .unwrap_or_else(|| vec![ 0i16; TICK_SAMPLES_8K ])
+                } else {
+                    vec![ 0i16; TICK_SAMPLES_8K ]
+                };
+                (id, samples)
+            })
+            .collect()
+    } else {
+        HashMap::new()
+    };
+
+    // Clone the id list so we can look up each member's peer samples
+    // from the sibling map while holding a &mut to the member.
+    let ids: Vec<ChannelId> = members.keys().copied().collect();
+    for id in ids {
+        let peer_samples: Option<Vec<i16>> = if n_alive == 2 {
+            // Always Some in N=2 — zero-length / silence when the peer
+            // has no audio this tick; never None (which would trigger
+            // the duplicate-mono fallback).
+            peer_samples_by_id.iter()
+                .find_map(|(&pid, s)| if pid != id { Some(s.clone()) } else { None })
+                .or_else(|| Some(vec![ 0i16; TICK_SAMPLES_8K ]))
+        } else {
+            None
+        };
+        let Some(m) = members.get_mut(&id) else { continue; };
+        m.write_recordings(peer_samples.as_deref()).await;
+        m.send_dtmf_outbound().await;
+        m.drain_pending_events();
+    }
+
+    // Idle sweep and close — drops idle members from the mix.
+    close_idle_members(members);
+}
+
+/// For N=2, tell each member's codec bundle the peer's iLBC wire PT
+/// (when dynamic, i.e. ≥96) so the bridge can decode/encode at the
+/// right PT on both sides of an asymmetric-dynamic pair.
+fn configure_peer_ilbc_pts(members: &mut HashMap<ChannelId, Box<Member>>, n_alive: usize) {
+    if n_alive != 2 { return; }
+    let pts: Vec<(ChannelId, u8)> = members.iter()
+        .map(|(&id, m)| (id, m.state.remote_pt))
+        .collect();
+    for (&id, m) in members.iter_mut() {
+        if let Some(&(_, peer_pt)) = pts.iter().find(|(pid, _)| *pid != id) {
+            if peer_pt >= 96 {
+                m.state.codecx.set_peer_ilbc_pt(peer_pt);
+            }
+        }
+    }
+}
+
+/// Push each detected DTMF digit into every PEER's relay queue (not the
+/// origin's).
+fn broadcast_dtmf_to_peer_relays(
+    members: &mut HashMap<ChannelId, Box<Member>>,
+    digits: &[(ChannelId, char)],
+) {
+    for (origin, digit) in digits {
         let digit_str = digit.to_string();
         for (&id, m) in members.iter_mut() {
             if id == *origin { continue; }
             m.subs.dtmf_relay.enqueue(&digit_str);
         }
     }
+}
 
-    // ----- Phase 3: outbound. -----
-    // Build summed frame (used by both N=2 and N≥3 — for N=2 it's the same
-    // as the single peer's frame, but computing it uniformly simplifies the
-    // code and makes 2→3 transitions seamless).
-    let mut summed = vec![0i32; MIX_FRAME_SAMPLES];
-    for m in members.values() {
-        if !m.state.direction.recv { continue; }
-        if !m.frame_present { continue; }
-        for (slot, &s) in summed.iter_mut().zip(m.frame.iter()) {
-            *slot = slot.saturating_add(s as i32);
-        }
-    }
-
-    if n_alive == 2 {
-        // N=2: each member's output = peer's frame (= summed - own).
-        // Send via the PEER's socket so the far end's autocorrect latches
-        // onto the peer's port (matching C++ `dstchan->writepacket()`).
-        //
-        // Two-pass because the RTP packet we send to the destination must
-        // use the DESTINATION's SRTP encrypt context, SSRC and outbound
-        // counters — those were negotiated on the destination's leg and
-        // are what the destination peer expects to decrypt/reassemble.
-        // Using the source's state produces audible noise or silence
-        // whenever at least one leg is SRTP (e.g. Chromium ↔ SIP), since
-        // the destination can't decrypt with the wrong key.
-        let peer_info: Vec<(ChannelId, ChannelId, Option<SocketAddr>, u8)> = {
-            let ids: Vec<ChannelId> = members.keys().copied().collect();
-            ids.iter().map(|&id| {
-                let peer_id = ids.iter().find(|&&k| k != id).copied().unwrap_or(id);
-                let peer = members.get(&peer_id).unwrap();
-                (id, peer_id, peer.state.get_remote_addr(), peer.state.remote_pt)
-            }).collect()
-        };
-
-        // Pass 1: encode the source's frame into the destination's codec.
-        // `transcoder.encode` lives on the source's state; touch only that.
-        let mut encoded: Vec<(ChannelId, Vec<u8>, SocketAddr)> = Vec::new();
-        for &(id, dest_id, peer_remote, peer_pt) in &peer_info {
-            let m = members.get_mut(&id).unwrap();
-            if !m.state.direction.send { continue; }
-            if !m.frame_present { continue; }
-            let Some(dest_addr) = peer_remote else { continue; };
-            if let Some(payload) = m.state.transcoder.encode(peer_pt, &m.frame) {
-                encoded.push((dest_id, payload, dest_addr));
-            }
-        }
-
-        // Pass 2: build the packet with DEST's state (ssrc/out_sn/out_ts)
-        // and DEST's SRTP context, then send via DEST's socket.
-        for (dest_id, payload, dest_addr) in encoded {
-            let Some(dest) = members.get_mut(&dest_id) else { continue; };
-            let mut pkt = RtpPacket::new();
-            pkt.init(dest.state.ssrc);
-            pkt.set_payload_type(dest.state.remote_pt);
-            pkt.set_sequence_number(dest.state.out_sn);
-            pkt.set_timestamp(dest.state.out_ts);
-            pkt.set_payload(&payload);
-            dest.state.out_sn = dest.state.out_sn.wrapping_add(1);
-            dest.state.out_ts = dest.state.out_ts.wrapping_add(MIX_FRAME_SAMPLES as u32);
-            let wire_data: Vec<u8> = if let Some(ref mut ctx) = dest.state.srtp_encrypt {
-                match ctx.encrypt_rtp(pkt.as_slice()) {
-                    Ok(encrypted) => encrypted.to_vec(),
-                    Err(_) => continue,
-                }
-            } else {
-                pkt.as_slice().to_vec()
-            };
-            if dest.state.rtp_sock.send_to(&wire_data, dest_addr).await.is_ok() {
-                dest.state.out_count += 1;
-            }
-        }
-    } else {
-        // N≥3: summed - own, encode to own codec, send to own remote.
-        for m in members.values_mut() {
-            if !m.state.direction.send { continue; }
-            let Some(remote) = m.state.get_remote_addr() else { continue; };
-
-            let mut out_samples = vec![0i16; MIX_FRAME_SAMPLES];
-            if m.frame_present {
-                for i in 0..MIX_FRAME_SAMPLES {
-                    let v = summed[i] - m.frame[i] as i32;
-                    out_samples[i] = v.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-                }
-            } else {
-                for i in 0..MIX_FRAME_SAMPLES {
-                    out_samples[i] = summed[i].clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-                }
-            }
-
-            if let Some(payload) = m.state.transcoder.encode(m.state.remote_pt, &out_samples) {
-                send_encoded(&mut m.state, remote, &payload).await;
-            }
-        }
-    }
-
-    // DTMF: send to own remote for all mix sizes. Audio and DTMF coexist.
-    for m in members.values_mut() {
-        if !m.state.direction.send { continue; }
-        let Some(remote) = m.state.get_remote_addr() else { continue; };
-        if let Some((_ev, payload)) = m.subs.dtmf_send.next_event() {
-            let pt = m.state.rfc2833_pt;
-            send_dtmf_to_remote(&mut m.state, remote, pt, &payload).await;
-        }
-        if let Some((_ev, payload)) = m.subs.dtmf_relay.next_event() {
-            let pt = m.state.rfc2833_pt;
-            send_dtmf_to_remote(&mut m.state, remote, pt, &payload).await;
-        }
-    }
-
-    // ----- Phase 5: drain pending events. -----
-    for m in members.values_mut() {
-        for ev in m.state.pending_events.drain(..) {
-            m.events.post(ev);
-        }
-    }
-
-    // ----- Phase 6: idle detection (matches C++ checkidlerecv per member). -----
-    use super::tick::{IDLE_TICK_LIMIT, HARD_TIMEOUT_NO_REMOTE, HARD_TIMEOUT_NO_RECV};
-    for (&id, m) in members.iter() {
-        let idle = if m.state.direction.recv {
-            if m.state.remote_confirmed {
-                m.state.ticks_without_rtp >= IDLE_TICK_LIMIT
-            } else {
-                m.state.tick_count >= HARD_TIMEOUT_NO_REMOTE
-            }
-        } else {
-            m.state.tick_count >= HARD_TIMEOUT_NO_RECV
-        };
-        if idle {
-            idle_members.push(id);
-        }
-    }
-
-    // Close idle members — emit close event and remove.
-    for id in idle_members {
+/// Remove idle members from the mix and emit each one's Close event.
+fn close_idle_members(members: &mut HashMap<ChannelId, Box<Member>>) {
+    let idle_ids: Vec<ChannelId> = members.iter()
+        .filter(|(_, m)| m.is_idle())
+        .map(|(&id, _)| id)
+        .collect();
+    for id in idle_ids {
         if let Some(m) = members.remove(&id) {
-            m.events.post(Event::Close {
-                reason: "idle".into(),
-                stats: super::actor::ChannelStats {
-                    in_count: m.state.in_count.load(Ordering::Relaxed),
-                    in_dropped: m.state.in_dropped + m.state.jitter.lock().dropped,
-                    in_skip: m.state.in_skip,
-                    out_count: m.state.out_count,
-                },
-            });
+            m.emit_close_event("idle");
         }
     }
 }
@@ -509,9 +687,25 @@ fn copy_into_frame(dst: &mut [i16], src: &[i16]) {
     for s in &mut dst[n..] { *s = 0; }
 }
 
+/// Feed every active recorder on this channel one tick's worth of audio.
+///
+/// For stereo recorders (`num_channels == 2`) the left channel is the
+/// channel's own inbound (`samples`) and the right channel is the mix
+/// peer's inbound (`peer_samples`, when present). Matches C++ call-
+/// recording semantics where a mixed 2-leg call is written as a true
+/// stereo file — left = this leg, right = far leg — so playback lets
+/// you hear each party on a separate ear.
+///
+/// When `peer_samples` is `None` (Local mode, prebuffer flush, N≥3 mix
+/// with no canonical peer), the right channel falls back to the same
+/// samples as the left — a functional but less informative stereo.
+///
+/// If `peer_samples` is shorter than `samples`, missing positions are
+/// zero-filled rather than truncating the left channel.
 async fn feed_recorders(
     recorders: &mut Vec<Recorder>,
     samples: &[i16],
+    peer_samples: Option<&[i16]>,
     channel_in_count: u64,
     pending_events: &mut Vec<Event>,
 ) {
@@ -521,7 +715,18 @@ async fn feed_recorders(
         let prev_state = rec.state();
         let frame: Vec<i16> = if rec.num_channels() == 2 {
             let mut inter = Vec::with_capacity(samples.len() * 2);
-            for s in samples { inter.push(*s); inter.push(*s); }
+            match peer_samples {
+                Some(peer) => {
+                    for (idx, &s) in samples.iter().enumerate() {
+                        inter.push(s);
+                        inter.push(peer.get(idx).copied().unwrap_or(0));
+                    }
+                }
+                None => {
+                    // No peer available — duplicate-mono fallback.
+                    for &s in samples { inter.push(s); inter.push(s); }
+                }
+            }
             inter
         } else {
             samples.to_vec()
@@ -616,7 +821,7 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
                 m.state.rfc2833_pt = pt;
             }
             if let Some(pt) = cfg.ilbc_payload_type {
-                m.state.transcoder.set_local_ilbc_pt(pt);
+                m.state.codecx.set_local_ilbc_pt(pt);
             }
             if let Some(pwd) = &cfg.icepwd {
                 m.state.remote_icepwd = pwd.clone();
