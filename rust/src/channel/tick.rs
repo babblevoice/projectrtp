@@ -104,74 +104,93 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
         let _ = activate_pending_recorder(subs, &mut state.pending_events).await;
     }
 
-    // Recorder + barge-in.
-    if let Some(in_pk) = inbound_pkt.as_ref() {
+    // Decode inbound (if any) — cached in the codec bundle; barge-in,
+    // pre-buffer, and recorder all share this one decode.
+    let decoded: Option<Vec<i16>> = if let Some(in_pk) = inbound_pkt.as_ref() {
         let in_pt = in_pk.payload_type();
-        let payload = in_pk.payload();
-        // Feed wire bytes into the codec bundle; decode is deferred until
-        // a consumer (bargein / recorder / prebuffer / echo) actually
-        // asks for `narrowband_8k`. Multiple consumers in the same tick
-        // share a single decode via the bundle's cache.
-        state.codecx.feed_wire(in_pt, payload);
-        let decoded: Option<Vec<i16>> = state.codecx.require_narrowband_8k().map(|s| s.to_vec());
+        state.codecx.feed_wire(in_pt, in_pk.payload());
+        state.codecx.require_narrowband_8k().map(|s| s.to_vec())
+    } else {
+        None
+    };
 
-        let mut bargein_fired = false;
-        if let (Some(samples), Some(bi)) = (decoded.as_ref(), subs.bargein.as_mut()) {
-            if subs.player.is_some() && state.in_count.load(Ordering::Relaxed) >= 100 {
-                let mut sum_sq: u64 = 0;
-                for s in samples { let v = *s as i64; sum_sq += (v * v) as u64; }
-                let rms = if samples.is_empty() { 0 }
-                          else { ((sum_sq / samples.len() as u64) as f64).sqrt() as i32 };
-                let smoothed = bi.power_ma.execute(rms.min(i16::MAX as i32) as i16) as i32;
-                if smoothed > bi.power_threshold {
-                    subs.player = None;
-                    subs.bargein = None;
-                    state.pending_events.push(Event::Play {
-                        state: super::actor::PlayState::End,
-                        reason: Some("interrupted".into()),
-                    });
-                    bargein_fired = true;
-                }
+    // Barge-in — only when there's fresh decoded inbound + an active player.
+    let mut bargein_fired = false;
+    if let (Some(samples), Some(bi)) = (decoded.as_ref(), subs.bargein.as_mut()) {
+        if subs.player.is_some() && state.in_count.load(Ordering::Relaxed) >= 100 {
+            let mut sum_sq: u64 = 0;
+            for s in samples { let v = *s as i64; sum_sq += (v * v) as u64; }
+            let rms = if samples.is_empty() { 0 }
+                      else { ((sum_sq / samples.len() as u64) as f64).sqrt() as i32 };
+            let smoothed = bi.power_ma.execute(rms.min(i16::MAX as i32) as i16) as i32;
+            if smoothed > bi.power_threshold {
+                subs.player = None;
+                subs.bargein = None;
+                state.pending_events.push(Event::Play {
+                    state: super::actor::PlayState::End,
+                    reason: Some("interrupted".into()),
+                });
+                bargein_fired = true;
             }
         }
-        if bargein_fired {
-            let _ = activate_pending_recorder(subs, &mut state.pending_events).await;
-        }
+    }
+    if bargein_fired {
+        let _ = activate_pending_recorder(subs, &mut state.pending_events).await;
+    }
 
-        // Pre-buffer accumulation while `playrecord` is in its play phase.
-        // Samples gathered here are flushed into the recorder on activation
-        // (matches C++ `prebuffer` queue). Skipped once activated — the
-        // recorder loop below handles subsequent samples directly.
-        if subs.player.is_some() && subs.pending_recorder.is_some() {
-            if let Some(samples) = &decoded {
-                let overflow = subs.prebuffer.len() + samples.len()
-                    > PREBUFFER_CAPACITY_SAMPLES;
-                if overflow {
-                    let drop_n = subs.prebuffer.len() + samples.len()
-                        - PREBUFFER_CAPACITY_SAMPLES;
-                    for _ in 0..drop_n.min(subs.prebuffer.len()) {
-                        subs.prebuffer.pop_front();
-                    }
+    // Pre-buffer — only during the play phase of a `playrecord`, only when
+    // we have fresh decoded samples.
+    if subs.player.is_some() && subs.pending_recorder.is_some() {
+        if let Some(samples) = decoded.as_ref() {
+            let overflow = subs.prebuffer.len() + samples.len() > PREBUFFER_CAPACITY_SAMPLES;
+            if overflow {
+                let drop_n = subs.prebuffer.len() + samples.len() - PREBUFFER_CAPACITY_SAMPLES;
+                for _ in 0..drop_n.min(subs.prebuffer.len()) {
+                    subs.prebuffer.pop_front();
                 }
-                for s in samples { subs.prebuffer.push_back(*s); }
             }
+            for s in samples { subs.prebuffer.push_back(*s); }
         }
+    }
 
+    // Recorder — every tick (matches C++ handletick → writerecordings()).
+    // C++ incodec = decoded inbound, outcodec = player / echo / silence.
+    //   mono:   mix = in + out (saturated)
+    //   stereo: L = in, R = out (interleaved)
+    {
         let chan_in_count = state.in_count.load(Ordering::Relaxed);
+        const FRAME: usize = 160;
+        let silence = [0i16; FRAME];
+        let in_s: &[i16] = decoded.as_deref().unwrap_or(&silence);
+        let out_s: &[i16] = if let Some(pf) = player_frame.as_deref() {
+            pf
+        } else if state.echo {
+            in_s
+        } else {
+            &silence
+        };
+        let len = in_s.len().max(out_s.len());
+
         let mut i = 0;
         while i < subs.recorders.len() {
             let rec = &mut subs.recorders[i];
             let prev_state = rec.state();
-            if let Some(samples) = &decoded {
-                let frame = if rec.num_channels() == 2 {
-                    let mut inter = Vec::with_capacity(samples.len() * 2);
-                    for s in samples { inter.push(*s); inter.push(*s); }
-                    inter
-                } else {
-                    samples.clone()
-                };
-                let _ = rec.write_with_count(&frame, Some(chan_in_count)).await;
-            }
+            let frame: Vec<i16> = if rec.num_channels() == 2 {
+                let mut v = Vec::with_capacity(len * 2);
+                for j in 0..len {
+                    v.push(in_s.get(j).copied().unwrap_or(0));
+                    v.push(out_s.get(j).copied().unwrap_or(0));
+                }
+                v
+            } else {
+                (0..len).map(|j| {
+                    let a = in_s.get(j).copied().unwrap_or(0) as i32;
+                    let b = out_s.get(j).copied().unwrap_or(0) as i32;
+                    (a + b).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+                }).collect()
+            };
+            let _ = rec.write_with_count(&frame, Some(chan_in_count)).await;
+
             let new_state = rec.state();
             let file_str = rec.file().to_string_lossy().into_owned();
             if prev_state == super::recorder::RecorderState::Pending
