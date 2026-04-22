@@ -118,7 +118,7 @@ impl DcFilter {
 }
 
 // rtpfilter.filterlowfir(buf) — in-place lowpass across a Buffer of BE int16.
-#[napi(namespace = "rtpfilter", js_name = "filterlowfir")]
+#[cfg_attr(not(test), napi(namespace = "rtpfilter", js_name = "filterlowfir"))]
 pub fn js_filter_lowfir(mut buf: Buffer) -> Result<bool> {
     let bytes: &mut [u8] = buf.as_mut();
     if bytes.len() % 2 != 0 {

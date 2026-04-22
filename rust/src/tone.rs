@@ -215,7 +215,7 @@ fn append_to_wav(filename: &Path, new_data: &[u8]) -> Result<()> {
 
 fn wrap_io(e: std::io::Error) -> Error { Error::from_reason(e.to_string()) }
 
-#[napi(namespace = "tone", js_name = "generate")]
+#[cfg_attr(not(test), napi(namespace = "tone", js_name = "generate"))]
 pub fn js_generate(tone: String, filename: String) -> Result<bool> {
     generate(&tone, Path::new(&filename))?;
     Ok(true)

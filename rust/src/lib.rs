@@ -20,7 +20,7 @@ mod tone;
 const DEFAULT_PORT_START: u16 = 10_000;
 const DEFAULT_PORT_END:   u16 = 20_000;
 
-#[napi]
+#[cfg_attr(not(test), napi)]
 pub fn run(params: Option<Object>) -> napi::Result<()> {
     eprintln!("projectrtp {} (rust)", env!("CARGO_PKG_VERSION"));
     let (start, end) = params
@@ -36,7 +36,7 @@ pub fn run(params: Option<Object>) -> napi::Result<()> {
     Ok(())
 }
 
-#[napi]
+#[cfg_attr(not(test), napi)]
 pub async fn shutdown() -> napi::Result<()> {
     channel::facade::shutdown_all_channels();
 
@@ -55,7 +55,7 @@ pub async fn shutdown() -> napi::Result<()> {
     Ok(())
 }
 
-#[napi(object)]
+#[cfg_attr(not(test), napi(object))]
 pub struct ChannelCounts {
     pub current: u32,
     pub available: u32,
@@ -63,7 +63,7 @@ pub struct ChannelCounts {
     pub totalclosed: u32,
 }
 
-#[napi(object)]
+#[cfg_attr(not(test), napi(object))]
 pub struct Stats {
     pub channel: ChannelCounts,
     /// Number of worker threads in the tokio runtime — mirrors C++'s
@@ -77,7 +77,8 @@ pub struct Stats {
 /// to publish things the macros can't — notably plain *values* on a
 /// namespace (as opposed to functions). The C++ addon exports
 /// `dtls.fingerprint` as a string, so we override it here.
-#[napi_derive::module_exports]
+#[cfg_attr(not(test), napi_derive::module_exports)]
+#[allow(dead_code)]
 fn init_module_exports(mut exports: napi::JsObject, env: napi::Env) -> napi::Result<()> {
     let mut dtls_ns: napi::JsObject = match exports.get_named_property::<napi::JsObject>("dtls") {
         Ok(o) => o,
@@ -89,7 +90,7 @@ fn init_module_exports(mut exports: napi::JsObject, env: napi::Env) -> napi::Res
     Ok(())
 }
 
-#[napi]
+#[cfg_attr(not(test), napi)]
 pub fn stats() -> napi::Result<Stats> {
     // `current` / `totalcreated` / `totalclosed` still need a process-wide
     // channel registry. `available` now reflects the real pool size so

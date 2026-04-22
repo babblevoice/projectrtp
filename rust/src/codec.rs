@@ -607,13 +607,13 @@ fn clamp_linear_index(val: i32) -> Option<i16> {
     Some((shifted - 32768) as i16)
 }
 
-#[napi(namespace = "codecx", js_name = "linear162pcma")]
+#[cfg_attr(not(test), napi(namespace = "codecx", js_name = "linear162pcma"))]
 pub fn js_linear_to_pcma(sample: i32) -> Result<i32> {
     let s = clamp_linear_index(sample).ok_or_else(|| Error::from_reason("out of range"))?;
     Ok(linear_to_alaw(s as i32) as i32)
 }
 
-#[napi(namespace = "codecx", js_name = "pcma2linear16")]
+#[cfg_attr(not(test), napi(namespace = "codecx", js_name = "pcma2linear16"))]
 pub fn js_pcma_to_linear(sample: i32) -> Result<i32> {
     if !(0..=255).contains(&sample) {
         return Err(Error::from_reason("out of range"));
@@ -621,13 +621,13 @@ pub fn js_pcma_to_linear(sample: i32) -> Result<i32> {
     Ok(alaw_to_linear(sample as u8) as i32)
 }
 
-#[napi(namespace = "codecx", js_name = "linear162pcmu")]
+#[cfg_attr(not(test), napi(namespace = "codecx", js_name = "linear162pcmu"))]
 pub fn js_linear_to_pcmu(sample: i32) -> Result<i32> {
     let s = clamp_linear_index(sample).ok_or_else(|| Error::from_reason("out of range"))?;
     Ok(linear_to_ulaw(s as i32) as i32)
 }
 
-#[napi(namespace = "codecx", js_name = "pcmu2linear16")]
+#[cfg_attr(not(test), napi(namespace = "codecx", js_name = "pcmu2linear16"))]
 pub fn js_pcmu_to_linear(sample: i32) -> Result<i32> {
     if !(0..=255).contains(&sample) {
         return Err(Error::from_reason("out of range"));

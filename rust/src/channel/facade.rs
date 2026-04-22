@@ -117,7 +117,7 @@ impl EventSink for NullSink {
     fn post(&self, _ev: Event) {}
 }
 
-#[napi(object)]
+#[cfg_attr(not(test), napi(object))]
 #[allow(dead_code)]
 pub struct ChannelDtls {
     pub fingerprint: String,
@@ -125,7 +125,7 @@ pub struct ChannelDtls {
     pub icepwd: String,
 }
 
-#[napi(object)]
+#[cfg_attr(not(test), napi(object))]
 #[allow(dead_code)]
 pub struct ChannelLocal {
     pub port: u32,
@@ -134,7 +134,7 @@ pub struct ChannelLocal {
     pub dtls: ChannelDtls,
 }
 
-#[napi]
+#[cfg_attr(not(test), napi)]
 pub struct ChannelObject {
     handle: Handle,
     channel_ssrc: u32,
@@ -172,6 +172,12 @@ pub struct ChannelObject {
     write_senders: parking_lot::Mutex<std::collections::HashMap<u64, tokio::sync::mpsc::Sender<Vec<u8>>>>,
 }
 
+// The `#[napi]` proc macro on an impl block needs to expand before the
+// per-method `#[napi(...)]` attributes to recognise `self`. `cfg_attr`
+// breaks that ordering, so we cfg-gate the whole impl instead. Tests
+// don't exercise ChannelObject methods directly — they go through
+// ChannelState / Subsystems — so no test-side shim is needed.
+#[cfg(not(test))]
 #[napi]
 impl ChannelObject {
     #[napi(getter)]
@@ -500,7 +506,7 @@ impl ChannelObject {
     }
 }
 
-#[napi(object)]
+#[cfg_attr(not(test), napi(object))]
 pub struct DirectionOpts {
     pub send: Option<bool>,
     pub recv: Option<bool>,
@@ -783,7 +789,7 @@ fn extract_remote_dtls(params: &Object) -> Option<super::commands::RemoteDtls> {
     parse_remote_dtls(&remote)
 }
 
-#[napi(js_name = "openchannel")]
+#[cfg_attr(not(test), napi(js_name = "openchannel"))]
 pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<ChannelObject> {
     let remote_addr = extract_remote_addr(&params);
     let remote_pt = extract_remote_pt(&params);

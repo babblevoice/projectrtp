@@ -10,17 +10,22 @@ use napi_derive::napi;
 use crate::channel::jitter::{JitterBuffer, DEFAULT_BUFFER_PACKET_COUNT, DEFAULT_BUFFER_WATER_LEVEL};
 use crate::channel::rtp::RtpPacket;
 
-#[napi(object)]
+#[cfg_attr(not(test), napi(object))]
 pub struct BufferOptions {
     pub size: Option<u32>,
     pub waterlevel: Option<u32>,
 }
 
-#[napi]
+#[cfg_attr(not(test), napi)]
 pub struct RtpJitterBuffer {
     inner: JitterBuffer,
 }
 
+// Whole-impl cfg-gate: per-method `#[napi]` attributes need the impl's
+// own `#[napi]` to have expanded first, which doesn't compose with
+// cfg_attr. Test code doesn't call these methods directly — the JS
+// test suite exercises them from the other side of the FFI.
+#[cfg(not(test))]
 #[napi]
 impl RtpJitterBuffer {
     #[napi]
@@ -75,7 +80,7 @@ impl RtpJitterBuffer {
     }
 }
 
-#[napi(namespace = "rtpbuffer", js_name = "create")]
+#[cfg_attr(not(test), napi(namespace = "rtpbuffer", js_name = "create"))]
 pub fn create(opts: Option<BufferOptions>) -> Result<RtpJitterBuffer> {
     let (size, water) = match opts {
         Some(o) => (

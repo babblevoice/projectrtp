@@ -103,7 +103,7 @@ fn pcm_header(num_channels: u16, sample_rate: u32) -> WavHeader {
 
 // ---- JS-facing info() ----
 
-#[napi(object)]
+#[cfg_attr(not(test), napi(object))]
 pub struct WavInfo {
     pub audioformat: u32,
     pub channelcount: u32,
@@ -132,7 +132,7 @@ impl From<WavHeader> for WavInfo {
     }
 }
 
-#[napi(namespace = "soundfile", js_name = "info")]
+#[cfg_attr(not(test), napi(namespace = "soundfile", js_name = "info"))]
 pub fn js_info(filename: String) -> Result<WavInfo> {
     let bytes = std::fs::read(&filename)
         .map_err(|e| Error::from_reason(format!("open {filename}: {e}")))?;

@@ -292,17 +292,31 @@ mod tests {
 
     #[tokio::test]
     async fn start_gate_holds_until_power_above_threshold() {
+        // The recorder has a 100-packet warmup during which `pkt_power`
+        // is clamped to 0 — matches the C++ codecx.inpkcount gate. It
+        // also pre-filters with a DC blocker, so a DC-constant input
+        // like `vec![5000i16; 160]` still produces zero power once the
+        // blocker's transient decays. Use an alternating sign so the
+        // RMS-after-DC-filter is non-zero.
         let mut c = cfg("recorder_gate.wav");
         c.start_above_power = Some(50);
         let path = c.file.clone();
 
+        let loud_ac: Vec<i16> = (0..160).map(|i| if i % 2 == 0 { 5000 } else { -5000 }).collect();
+
         let mut rec = Recorder::open(c).await.unwrap();
-        // Silent frames — should not advance to Active.
+        // Silent frames during warmup — gate stays closed.
         for _ in 0..5 { rec.write(&vec![0i16; 160]).await.unwrap(); }
         assert_eq!(rec.state(), RecorderState::Pending);
 
-        // Loud frames — should open the gate.
-        for _ in 0..10 { rec.write(&vec![5000i16; 160]).await.unwrap(); }
+        // Pre-warmup loud frames — gate still closed because power is
+        // clamped to 0 until packets_observed ≥ 100.
+        for _ in 0..50 { rec.write(&loud_ac).await.unwrap(); }
+        assert_eq!(rec.state(), RecorderState::Pending);
+
+        // Now cross the warmup and keep feeding — MA filter fills,
+        // crosses 50, gate opens.
+        for _ in 0..200 { rec.write(&loud_ac).await.unwrap(); }
         assert_eq!(rec.state(), RecorderState::Active);
 
         rec.close(FinishReason::Completed);

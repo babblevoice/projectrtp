@@ -210,7 +210,10 @@ mod tests {
     use std::time::Duration;
     use tokio::net::UdpSocket;
 
-    #[tokio::test]
+    // Multi-thread flavor: DTLSConn spawns internal tasks (and the relay
+    // task above is a tokio::select! loop), so the handshake will
+    // deadlock on the default single-threaded runtime.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn dtls_handshake_between_two_peers() {
         let server_cert = Certificate::generate_self_signed(vec!["server".into()]).unwrap();
         let client_cert = Certificate::generate_self_signed(vec!["client".into()]).unwrap();
@@ -229,7 +232,11 @@ mod tests {
         let (server_dtls_tx, server_dtls_rx) = mpsc::channel::<Vec<u8>>(64);
         let (client_dtls_tx, client_dtls_rx) = mpsc::channel::<Vec<u8>>(64);
 
-        // Relay: read server_sock → client_dtls_tx, read client_sock → server_dtls_tx.
+        // Relay simulates recv_loop: it picks data off each side's socket
+        // (which the OS filled with the peer's outbound) and forwards it
+        // onto that side's own DTLS inbound queue. I.e. packets arriving
+        // on server_sock are from the client, so they belong on the
+        // server's mpsc (server_dtls_tx), not the client's.
         let srv_sock2 = server_sock.clone();
         let cli_sock2 = client_sock.clone();
         let relay = tokio::spawn(async move {
@@ -238,10 +245,10 @@ mod tests {
             loop {
                 tokio::select! {
                     Ok((n, _)) = srv_sock2.recv_from(&mut sbuf) => {
-                        if client_dtls_tx.send(sbuf[..n].to_vec()).await.is_err() { break; }
+                        if server_dtls_tx.send(sbuf[..n].to_vec()).await.is_err() { break; }
                     }
                     Ok((n, _)) = cli_sock2.recv_from(&mut cbuf) => {
-                        if server_dtls_tx.send(cbuf[..n].to_vec()).await.is_err() { break; }
+                        if client_dtls_tx.send(cbuf[..n].to_vec()).await.is_err() { break; }
                     }
                 }
             }
