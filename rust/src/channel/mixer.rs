@@ -206,8 +206,7 @@ async fn send_leg(src: &mut Member, dst: &mut Member) {
 
     let Some(wire) = dst.state.codecx.encode_from(peer_pt, &mut src.state.codecx) else { return; };
     // Owned copy so the `&mut dst.state.codecx` borrow ends before the
-    // RTP packet build / SRTP encrypt / send path needs other
-    // `&mut dst.state` borrows.
+    // `&mut dst.state` borrows later for the RTP send.
     let payload: Vec<u8> = wire.to_vec();
 
     let mut pkt = RtpPacket::new();

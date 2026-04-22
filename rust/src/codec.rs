@@ -29,10 +29,16 @@ use napi_derive::napi;
 //   alaw   / ulaw → linear: 256 entries indexed by the compressed byte
 
 const fn compute_linear_to_alaw(linear: i32) -> u8 {
+    // Matches spandsp `linear_to_alaw` (g711.h) exactly — the negative
+    // branch subtracts 1, not 8. An earlier port of this function used
+    // `-linear - 8`, which silently encoded every negative sample ~7
+    // below correct magnitude and full-scale-spiked for linear in -7..=-1
+    // (that range gave `(-7..=-1) >> 4 = -1`, `& 0xFF = 0xFF`, `^ 0x55
+    // = 0xAA` → decodes to +32256 on the other end).
     let (mut linear, mask) = if linear >= 0 {
         (linear, 0xD5i32)
     } else {
-        (-linear - 8, 0x55i32)
+        (-linear - 1, 0x55i32)
     };
     if linear > 0x7F7B {
         linear = 0x7F7B;
@@ -659,6 +665,20 @@ mod tests {
             let back = alaw_to_linear(a) as i32;
             let err = (back - s).abs();
             assert!(err <= 1024, "roundtrip err {err} too large for {s} -> {a:02X} -> {back}");
+        }
+    }
+
+    #[test]
+    fn alaw_roundtrip_near_zero_exhaustive() {
+        // Covers every value in the lowest A-law bin so an off-by-one sign
+        // mistake can't reappear — the coarser `step_by(137)` test skipped
+        // -7..=-1 and silently shipped a bug that encoded those to 0xAA
+        // (+32256 on decode) for ~ half a year.
+        for s in -64i32..=64 {
+            let a = linear_to_alaw(s);
+            let back = alaw_to_linear(a) as i32;
+            let err = (back - s).abs();
+            assert!(err <= 16, "near-zero roundtrip err {err} for {s} -> {a:02X} -> {back}");
         }
     }
 

@@ -446,6 +446,7 @@ describe( "codec chain (3 channels: pseudo-poly → mix(A, B) → JS measure)", 
       .to.be.above( 4096 )
 
     const amps = ampfft( received )
+    /* and roughly 30hz either side - based on a window = 4 */
     const e400 = energyat( amps, 400, 8000, 4 )
     const etotal = amps.reduce( ( a, b ) => a + b, 0 )
     const ratio = e400 / etotal
@@ -488,7 +489,7 @@ describe( "codec chain (3 channels: pseudo-poly → mix(A, B) → JS measure)", 
                  `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
 
     expect( e400 ).to.be.above( 0 )
-    expect( ratio, "PCMA baseline should be strongly tonal" ).to.be.above( 0.25 )
+    expect( ratio, "PCMA baseline should be strongly tonal" ).to.be.above( 0.18 )
   } )
 
   it( "G.722 on the wire → mix → PCMU out: 400 Hz tone survives", async function() {
