@@ -478,7 +478,12 @@ class projectrtp {
          The underlying napi method fires its callback once per 20 ms frame
          with a Buffer; a zero-length Buffer is the end-of-stream sentinel
          (fired by the Rust forwarder task when the channel closes or the
-         reader is explicitly destroyed). */
+         reader is explicitly destroyed).
+
+         Guarded: the C++ build doesn't expose these methods, so the
+         wrapping is a no-op there — keeps the shared index.js shim
+         loadable against either backend. */
+      if( "function" !== typeof chan.createReadStream ) return chan
       const napiCreateReadStream = chan.createReadStream.bind( chan )
       const napiDestroyReadStream = chan.destroyReadStream.bind( chan )
       chan.createReadStream = function( opts = {} ) {

@@ -26,6 +26,7 @@ const { projectrtp } = require( "../index.js" )
 const CHANNELS = Number( process.env.CHANNELS || 500 )
 const DURATION_MS = Number( process.env.DURATION_MS || 10_000 )
 const PTIME_MS = Number( process.env.PTIME_MS || 20 )
+const MODE = process.env.MODE || "echo" // "echo" | "mix2" | "idle"
 const PAYLOAD_BYTES = 160 // PCMU @ 8kHz, 20ms
 const PT = 0 // PCMU
 
@@ -46,8 +47,19 @@ function percentile( sorted, q ) {
   return sorted[ idx ]
 }
 
+/* Memory snapshot — node's process.memoryUsage(). `rss` is resident
+ * set size (bytes), the useful proxy for "how much RAM is Rust +
+ * the Node shim using right now". We diff before/after channel open
+ * to report per-channel overhead. */
+function memSnapshot() {
+  const m = process.memoryUsage()
+  return { rss: m.rss, heap: m.heapUsed }
+}
+
 async function main() {
   projectrtp.run()
+
+  const baselineMem = memSnapshot()
 
   const channels = []
   const endpoints = []
@@ -57,8 +69,13 @@ async function main() {
   let totalReceived = 0
   const latencies = []
 
-  console.log( `perfbench: opening ${CHANNELS} channels...` )
+  console.log( `perfbench: mode=${MODE}  opening ${CHANNELS} channels...` )
 
+  // In "mix2" mode we open channels in pairs and mix them. Each pair
+  // shares ONE endpoint (even-indexed channel sends; odd-indexed
+  // receives) — simulates the typical "A calls B" bridging scenario.
+  // Latency is measured round-trip: A's endpoint sends, the mix
+  // forwards to B's endpoint, B echoes back, mix forwards to A.
   for ( let i = 0; i < CHANNELS; i++ ) {
     const endpoint = dgram.createSocket( "udp4" )
     endpoint.bind()
@@ -69,11 +86,18 @@ async function main() {
       forcelocal: true,
       remote: { address: "127.0.0.1", port, codec: PT },
     }, () => {} )
-    chan.echo()
+
+    if ( MODE === "echo" ) chan.echo()
 
     const chanIdx = i
     endpoint.on( "message", ( msg ) => {
       if ( msg.length < 12 ) return
+      // In mix2 mode the odd-side endpoints echo back so A hears its
+      // own audio — same round-trip shape as echo mode for latency.
+      if ( MODE === "mix2" && ( chanIdx % 2 === 1 ) ) {
+        endpoint.send( msg, chan.local.port, "127.0.0.1" )
+        return
+      }
       const sn = msg.readUInt16BE( 2 )
       const key = `${chanIdx}:${sn}`
       const t0 = sendTimes.get( key )
@@ -88,6 +112,15 @@ async function main() {
     channels.push( chan )
   }
 
+  if ( MODE === "mix2" ) {
+    for ( let i = 0; i < CHANNELS; i += 2 ) {
+      if ( i + 1 < CHANNELS ) channels[ i ].mix( channels[ i + 1 ] )
+    }
+  }
+
+  const afterOpenMem = memSnapshot()
+  const perChannelMemKb = ( ( afterOpenMem.rss - baselineMem.rss ) / CHANNELS ) / 1024
+
   // Give channels a beat to settle before we start timing.
   await new Promise( ( r ) => setTimeout( r, 200 ) )
 
@@ -97,14 +130,22 @@ async function main() {
   const wallStart = performance.now()
   let sn = 0
 
+  // In mix2 mode only the even-indexed endpoints originate traffic;
+  // the odd-indexed ones just echo, so sending them packets would be
+  // redundant and would also mess with the latency measurement. In
+  // echo / idle modes every channel originates.
+  const sendEvery = ( MODE === "mix2" ) ? 2 : 1
+
   const sendTimer = setInterval( () => {
     const now = performance.now()
-    for ( let i = 0; i < CHANNELS; i++ ) {
-      const pkt = buildpk( sn, 0x10000000 + i )
-      const key = `${i}:${sn & 0xffff}`
-      sendTimes.set( key, now )
-      totalSent++
-      endpoints[ i ].send( pkt, channels[ i ].local.port, "127.0.0.1" )
+    if ( MODE !== "idle" ) {
+      for ( let i = 0; i < CHANNELS; i += sendEvery ) {
+        const pkt = buildpk( sn, 0x10000000 + i )
+        const key = `${i}:${sn & 0xffff}`
+        sendTimes.set( key, now )
+        totalSent++
+        endpoints[ i ].send( pkt, channels[ i ].local.port, "127.0.0.1" )
+      }
     }
     sn++
     if ( now - wallStart >= DURATION_MS ) {
@@ -119,6 +160,7 @@ async function main() {
 
     const cpu = process.cpuUsage( cpuStart )
     const wallMs = performance.now() - wallStart
+    const peakMem = memSnapshot()
 
     for ( const ch of channels ) ch.close()
     for ( const ep of endpoints ) ep.close()
@@ -132,6 +174,7 @@ async function main() {
 
     console.log()
     console.log( `Config:` )
+    console.log( `  mode:         ${MODE}` )
     console.log( `  channels:     ${CHANNELS}` )
     console.log( `  duration:     ${DURATION_MS}ms (wall ${wallMs.toFixed( 0 )}ms)` )
     console.log( `  ptime:        ${PTIME_MS}ms` )
@@ -153,6 +196,12 @@ async function main() {
     console.log( `  sys:          ${sysMs.toFixed( 0 )}ms` )
     console.log( `  cpu / wall:   ${( cpuMs / wallMs * 100 ).toFixed( 1 )}% (of 1 core)` )
     console.log( `  cpu / all:    ${( cpuMs / wallMs / coreCount * 100 ).toFixed( 1 )}% (of ${coreCount} cores)` )
+    console.log()
+    console.log( `Memory:` )
+    console.log( `  baseline rss: ${( baselineMem.rss / 1024 / 1024 ).toFixed( 1 )} MiB` )
+    console.log( `  after-open:   ${( afterOpenMem.rss / 1024 / 1024 ).toFixed( 1 )} MiB` )
+    console.log( `  peak:         ${( peakMem.rss / 1024 / 1024 ).toFixed( 1 )} MiB` )
+    console.log( `  per channel:  ${perChannelMemKb.toFixed( 1 )} KiB` )
 
     setTimeout( () => process.exit( 0 ), 100 )
   }

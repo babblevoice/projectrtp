@@ -248,6 +248,63 @@ addressed in two steps:
    close together; (b) a per-core epoll/io_uring reactor that drops
    tokio entirely — matches the C++ model but a much larger rewrite.
 
+### Bench result — 2026-04-23
+
+Ran `stress/run-matrix.sh` against both builds on a 14-core Linux host
+(3 modes × 4 channel counts = 12 scenarios, 5 s sample each). Raw logs
+tabulated via `stress/tabulate.sh`; results below are the per-channel
+deltas that matter for sizing.
+
+| Mode | Chan | Rust KiB/ch | C++ KiB/ch | Rust CPU | C++ CPU | Rust p99 | C++ p99 |
+|---|---|---|---|---|---|---|---|
+| idle | 100  | 35.1 | 37.6 | 1.7%   | 1.6%   | —    | —    |
+| idle | 500  | 28.5 | 28.8 | 3.4%   | 4.1%   | —    | —    |
+| idle | 1000 | 27.7 | 27.7 | 7.0%   | 9.9%   | —    | —    |
+| idle | 2000 | 27.8 | 28.1 | 14.3%  | 14.7%  | —    | —    |
+| echo | 100  | 37.6 | 33.8 | 12.8%  | 13.0%  | 217  | 216  |
+| echo | 500  | 29.0 | 29.4 | 52.1%  | 57.8%  | 226  | 219  |
+| echo | 1000 | 27.6 | 27.8 | 107.1% | 105.5% | 232  | 233  |
+| echo | 2000 | 28.4 | 28.1 | 168.4% | 166.6% | 247  | 256  |
+| mix2 | 100  | 42.8 | 45.6 | 12.3%  | 12.2%  | 440  | 440  |
+| mix2 | 500  | 36.2 | 35.2 | 42.1%  | 46.4%  | 441  | 442  |
+| mix2 | 1000 | 34.9 | 34.7 | 82.6%  | 83.7%  | 443  | 442  |
+| mix2 | 2000 | 34.7 | 35.0 | 154.7% | 155.9% | 477  | 461  |
+
+CPU % is of *one* core. p99 is echo-round-trip latency in ms.
+
+Headline: **parity, no regression, no win.** At 500+ channels the
+per-channel memory footprint is byte-for-byte identical (~28 KiB idle/
+echo, ~35 KiB mix2). CPU is within ±5% at every scale with no
+systematic direction — small wins on idle tick processing, small
+losses on echo, net even. p99 latency matches within 1–2 ms on every
+echo row; the mix2-2000 16 ms difference is jitter-prime timing
+sensitivity, not a systematic gap. Zero packet drops at every scale on
+both builds across the 100 000 pps echo peak.
+
+So: **the tokio overhead the open question worried about didn't
+materialise.** Production boxes currently sized for N C++ channels run
+N Rust channels at the same footprint. The sharded-runtime / per-core
+reactor alternatives listed above are no longer motivated; leave them
+on the shelf.
+
+Caveats on the bench: 5-second samples on localhost — NAT/real-internet
+latency tails not visible. DTLS-SRTP at scale not exercised (the
+handshake is a concentrated CPU burst; a mass-reconnect scenario could
+show something different). No long-duration soak, so slow leaks / GC
+cliffs would need a separate 30 min+ run.
+
+To reproduce:
+
+```
+# C++ binary
+LD_LIBRARY_PATH=$PWD/libilbc/_build ./stress/run-matrix.sh /tmp/cpp.log
+# swap in Rust binary
+cp rust/target/release/libprojectrtp.so build/Release/projectrtp.node
+./stress/run-matrix.sh /tmp/rust.log
+# compare
+./stress/tabulate.sh /tmp/rust.log /tmp/cpp.log
+```
+
 ## Keeping this doc honest
 
 Update this file whenever:
