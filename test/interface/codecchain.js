@@ -89,14 +89,26 @@ function truncpow2( arr ) {
   return arr.slice( 0, n )
 }
 
-/** @param { number[] | Int16Array } samples → bin magnitudes (length = N) */
+/**
+ * Compute the single-sided magnitude spectrum — first N/2 bins only.
+ * The DFT of a real signal is conjugate-symmetric, so bin (N-k)
+ * mirrors bin k with the same magnitude. Before discarding the second
+ * half, `energyat/total` ratios were artificially halved (the tone's
+ * main lobe at bin k and its mirror at bin N-k both landed in
+ * `etotal` but only the first did in `e400`).
+ *
+ * @param { number[] | Int16Array } samples → bin magnitudes (length = N/2)
+ */
 function ampfft( samples ) {
   const c = fft( truncpow2( Array.from( samples ) ) )
-  return c.map( ( [ r, i ] ) => Math.sqrt( r * r + i * i ) )
+  const amps = c.map( ( [ r, i ] ) => Math.sqrt( r * r + i * i ) )
+  return amps.slice( 0, amps.length / 2 )
 }
 
 /**
- * Sum of magnitudes in the `±window` bins centred on `hz`.
+ * Sum of magnitudes in the `±window` bins centred on `hz`. Expects a
+ * single-sided spectrum from `ampfft` (length = N/2, indexed 0 → N/2-1
+ * across 0 → Nyquist Hz).
  * @param { number[] } amps
  * @param { number } hz
  * @param { number } sampleRate
@@ -104,7 +116,7 @@ function ampfft( samples ) {
  */
 function energyat( amps, hz, sampleRate, window = 4 ) {
   const nyquist = sampleRate / 2
-  const bin = Math.round( ( hz / nyquist ) * ( amps.length / 2 ) )
+  const bin = Math.round( ( hz / nyquist ) * amps.length )
   let s = 0
   for( let i = Math.max( 0, bin - window ); i <= Math.min( amps.length - 1, bin + window ); i++ ) {
     s += amps[ i ]
@@ -459,7 +471,7 @@ describe( "codec chain (3 channels: pseudo-poly → mix(A, B) → JS measure)", 
     // A clean chain produces a strong peak (ratio ≳ 0.4). 0.15 is the
     // "barely-present" threshold — if the test is only just passing at
     // ~0.15 the output is noisy even if not zero.
-    expect( ratio, "400 Hz is not dominant in the FFT — chain is noisy" ).to.be.above( 0.15 )
+    expect( ratio, "400 Hz is not dominant in the FFT — chain is noisy" ).to.be.above( 0.30 )
   } )
 
   it( "PCMA on the wire → mix → PCMA out (no G.722) — baseline", async function() {
@@ -489,7 +501,11 @@ describe( "codec chain (3 channels: pseudo-poly → mix(A, B) → JS measure)", 
                  `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
 
     expect( e400 ).to.be.above( 0 )
-    expect( ratio, "PCMA baseline should be strongly tonal" ).to.be.above( 0.18 )
+    // Single-sided spectrum restored — raising this back from 0.18 to
+    // 0.35 reflects genuinely-tonal behaviour for a pass-through PCMA
+    // chain. A regression that introduced codec distortion would show
+    // as harmonics at 1200/2000/2800 Hz and drop the ratio below 0.30.
+    expect( ratio, "PCMA baseline should be strongly tonal" ).to.be.above( 0.35 )
   } )
 
   it( "G.722 on the wire → mix → PCMU out: 400 Hz tone survives", async function() {
@@ -516,7 +532,7 @@ describe( "codec chain (3 channels: pseudo-poly → mix(A, B) → JS measure)", 
                  `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
 
     expect( e400 ).to.be.above( 0 )
-    expect( ratio ).to.be.above( 0.15 )
+    expect( ratio ).to.be.above( 0.30 )
   } )
 
 } )
@@ -644,7 +660,7 @@ describe( "dtls-srtp back-to-back (2 channels: A plays → SRTP → B records)",
                  `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
 
     expect( e400 ).to.be.above( 0 )
-    expect( ratio, "400 Hz not dominant in the FFT — SRTP audio not making it through" ).to.be.above( 0.15 )
+    expect( ratio, "400 Hz not dominant in the FFT — SRTP audio not making it through" ).to.be.above( 0.30 )
   } )
 
   // NOTE: a mix-mode variant of the above was attempted but removed. The
@@ -753,7 +769,7 @@ describe( "createReadStream — live audio tap", function() {
                  `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
 
     expect( e400 ).to.be.above( 0 )
-    expect( ratio, "400 Hz not dominant — tap pipeline broke the audio" ).to.be.above( 0.15 )
+    expect( ratio, "400 Hz not dominant — tap pipeline broke the audio" ).to.be.above( 0.30 )
   } )
 
 } )
@@ -856,7 +872,7 @@ describe( "createWriteStream — live audio inject", function() {
                  `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
 
     expect( e400 ).to.be.above( 0 )
-    expect( ratio, "400 Hz not dominant — writer pipeline broke the audio" ).to.be.above( 0.15 )
+    expect( ratio, "400 Hz not dominant — writer pipeline broke the audio" ).to.be.above( 0.30 )
   } )
 
 } )
