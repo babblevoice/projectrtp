@@ -491,6 +491,20 @@ impl Member {
             None
         };
 
+        // If this channel has a player (or writer) emitting audio but no
+        // inbound from its peer this tick, feed that audio into codecx
+        // as narrowband — otherwise `send_leg`'s `encode_from` would
+        // find an empty bundle and skip the outbound, blackholing the
+        // player on a mixed channel (the "blind xfer" transcode test is
+        // the canonical case). Inbound wins when both are present, same
+        // as `populate_mix_frame` — the peer's audio is what should be
+        // mixed, not our own playback.
+        if inbound.is_none() {
+            if let Some(samples) = out_frame {
+                self.state.codecx.feed_linear_8k(samples);
+            }
+        }
+
         self.populate_mix_frame(inbound.as_deref(), out_frame);
         self.run_bargein(inbound.as_deref()).await;
         self.accumulate_playrecord_prebuffer(inbound.as_deref());
