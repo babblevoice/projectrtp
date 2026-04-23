@@ -298,7 +298,10 @@ async fn write_recorder_frames(
         let rec = &mut subs.recorders[i];
         let prev_state = rec.state();
         let frame = build_recorder_frame(rec.num_channels(), in_s, out_s, len);
-        let _ = rec.write_with_count(&frame, Some(chan_in_count)).await;
+        // Power calc runs on the inbound narrowband only — matches C++
+        // `codecx::power()` which operates on the 160-sample mono slice
+        // rather than the interleaved stereo frame.
+        let _ = rec.write_frame(&frame, in_s, Some(chan_in_count)).await;
 
         let new_state = rec.state();
         let file_str = rec.file().to_string_lossy().into_owned();

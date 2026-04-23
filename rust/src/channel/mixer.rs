@@ -804,7 +804,9 @@ async fn feed_recorders(
         } else {
             samples.to_vec()
         };
-        let _ = rec.write_with_count(&frame, Some(channel_in_count)).await;
+        // Power calc on the narrowband `samples` (self's inbound), not
+        // the interleaved stereo `frame` — matches C++ `codecx::power()`.
+        let _ = rec.write_frame(&frame, samples, Some(channel_in_count)).await;
         let new_state = rec.state();
         let file_str = rec.file().to_string_lossy().into_owned();
         if prev_state == RecorderState::Pending && new_state == RecorderState::Active {

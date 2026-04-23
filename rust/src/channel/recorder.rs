@@ -147,22 +147,51 @@ impl Recorder {
     /// The 100-packet warm-up uses this count when provided, matching the C++
     /// `codecx::inpkcount` which is shared across the channel's lifetime
     /// rather than per-recorder.
+    ///
+    /// Power calc uses the incoming narrowband (pre-interleave) samples —
+    /// `power_samples` — not the wide frame that's being written. This
+    /// matches C++ `codecx::power()` which operates on the narrowband
+    /// slice, and avoids the DC blocker's state crossing L/R boundaries
+    /// on stereo recordings (which biases the smoothed power and delays
+    /// the below-power gate by ~200 ms).
+    ///
+    /// When `power_samples` is empty the caller has no narrowband slice
+    /// to offer (e.g. the `write_raw` code path) and we fall back to
+    /// using the frame itself — preserves backward compatibility for
+    /// callers that don't plumb the narrowband through.
     pub async fn write_with_count(&mut self, samples: &[i16], channel_in_count: Option<u64>) -> std::io::Result<bool> {
+        self.write_frame(samples, samples, channel_in_count).await
+    }
+
+    /// Same as `write_with_count` but lets the caller pass a narrowband
+    /// (pre-interleave) sample slice to drive the DC blocker / RMS /
+    /// MA. The frame written to disk can still be the full stereo
+    /// interleaving — only the power path is changed.
+    pub async fn write_frame(
+        &mut self,
+        samples: &[i16],
+        power_samples: &[i16],
+        channel_in_count: Option<u64>,
+    ) -> std::io::Result<bool> {
         if self.state == RecorderState::Finished { return Ok(false); }
         if self.state == RecorderState::Paused { return Ok(false); }
         self.packets_observed += 1;
 
         let warmup_count = channel_in_count.unwrap_or(self.packets_observed);
 
-        let pkt_power: i32 = if warmup_count < 100 || samples.is_empty() {
+        // Power source: prefer the explicit narrowband; if empty, fall
+        // back to the frame itself for compatibility.
+        let power_src: &[i16] = if !power_samples.is_empty() { power_samples } else { samples };
+
+        let pkt_power: i32 = if warmup_count < 100 || power_src.is_empty() {
             0
         } else {
             let mut sum_sq: u64 = 0;
-            for s in samples {
+            for s in power_src {
                 let filtered = self.dc_filter.execute(*s) as i64;
                 sum_sq += (filtered * filtered) as u64;
             }
-            ((sum_sq / samples.len() as u64) as f64).sqrt() as i32
+            ((sum_sq / power_src.len() as u64) as f64).sqrt() as i32
         };
         let pkt_power16 = pkt_power.min(i16::MAX as i32) as i16;
         self.last_power_calc = self.power_ma.execute(pkt_power16) as i32;
