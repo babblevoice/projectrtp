@@ -39,6 +39,10 @@ pub enum WriterFormat {
 }
 
 #[derive(Debug, Clone)]
+// v1 locks these to (L16, 8000, 1) so they're not read yet, but the
+// parser + struct are shaped the way the reader's config is shaped so
+// the format matrix can be opened up without reshuffling the API.
+#[allow(dead_code)]
 pub struct WriterConfig {
     pub format: WriterFormat,
     /// Only 8000 Hz in v1 — matches the narrowband pipeline end-to-end.

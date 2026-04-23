@@ -1,4 +1,15 @@
 #![deny(clippy::all)]
+// Regression guard for the release build: any new `warning:` becomes
+// an error, so dead code / unused imports can't silently accumulate.
+// Scoped to non-test because the test build cfg-gates out every napi
+// export (see task #9 — napi's symbols aren't linked into the test
+// binary), leaving ChannelObject + openchannel + their transitive
+// helpers "unused" at test time. We accept that under cfg(test) with
+// the blanket allow below.
+#![cfg_attr(not(test), deny(dead_code))]
+#![cfg_attr(not(test), deny(unused_imports))]
+#![cfg_attr(test, allow(dead_code))]
+#![cfg_attr(test, allow(unused_imports))]
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;

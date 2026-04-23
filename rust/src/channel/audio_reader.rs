@@ -104,7 +104,14 @@ impl AudioReader {
     }
 
     pub fn id(&self) -> u64 { self.id }
+    /// Surfaced for diagnostics / future dynamic reconfiguration
+    /// (e.g. if a reader's consumer wants to re-query its format
+    /// after the fact). Not called from the hot path today.
+    #[allow(dead_code)]
     pub fn config(&self) -> &ReaderConfig { &self.cfg }
+    /// Exposes the per-reader drops counter to an eventual `stats()`
+    /// summary. Not called yet — the counter is bumped internally.
+    #[allow(dead_code)]
     pub fn drops(&self) -> u64 { self.drops }
 
     /// True once the JS side has dropped its end (forwarder task exited).
