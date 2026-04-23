@@ -247,6 +247,14 @@ fn accumulate_prebuffer(subs: &mut Subsystems, decoded: Option<&[i16]>) {
 /// convention C++ uses for the WAV recorder), then feed every recorder
 /// and every audio reader. Garbage-collect readers whose JS consumer has
 /// gone away.
+///
+/// Recorder vs reader semantics:
+///   - **Recorder**: writes bytes only when there's *actual* audio
+///     (inbound or player). Idle ticks are no-ops, so a channel that's
+///     just holding open doesn't inflate the WAV file. Matches C++.
+///   - **Reader**: fed every tick, including silence, so STT / caption
+///     consumers get a continuous 20 ms stream — their FFT / VAD / ASR
+///     pipelines rely on steady framing.
 async fn feed_recorders_and_readers(
     state: &mut ChannelState,
     subs: &mut Subsystems,
@@ -266,7 +274,12 @@ async fn feed_recorders_and_readers(
         &silence
     };
 
-    write_recorder_frames(state, subs, in_s, out_s).await;
+    // Recorder writes only when there's real audio. `state.echo` without
+    // inbound produces no samples, so it doesn't qualify.
+    let has_recordable_audio = decoded.is_some() || player_frame.is_some();
+    if has_recordable_audio {
+        write_recorder_frames(state, subs, in_s, out_s).await;
+    }
     feed_readers(state, subs, in_s, out_s);
 }
 

@@ -614,6 +614,11 @@ fn parse_soundsoup(params: &Object) -> Option<super::player::SoundSoupSpec> {
         let Ok(wav): Result<String> = entry.get_named_property("wav") else { continue; };
         if wav.is_empty() { continue; }
         let path = std::path::PathBuf::from(wav);
+        // Skip entries whose file doesn't exist — matches C++
+        // `soundsoup::load` which drops missing files silently and
+        // (when every entry is missing) causes `channel.play()` to
+        // return false. Tests assert the false return explicitly.
+        if !path.exists() { continue; }
         // Per-file loop: JS accepts `true` (infinite — encoded as Some(0)
         // in player.rs) or a positive integer.
         let max_loops = if entry.get_named_property::<bool>("loop").ok() == Some(true) {
