@@ -318,8 +318,9 @@ impl Member {
     /// digit so the caller can queue it for peer broadcast.
     async fn handle_dtmf_in(&mut self, pk: &RtpPacket) -> Option<char> {
         let sn = pk.sequence_number();
+        let ts = pk.timestamp();
         let payload = &pk.as_slice()[super::rtp::RTP_FIXED_HEADER_LEN..pk.len()];
-        let digit = self.subs.dtmf_recv.feed(sn, payload)?;
+        let digit = self.subs.dtmf_recv.feed(sn, ts, payload)?;
 
         let mut activate_recorder = false;
         if let Some(p) = self.subs.player.as_ref() {

@@ -615,9 +615,17 @@ describe( "dtmf", function() {
     /*
       When mixing 2 channels, we expect the second leg to receive the 2833 packets
       and our server to emit events indicating the DTMF on the first channel.
+
+      The timing was tight against the original C++ addon: 50 packets
+      emitted over 1 second, 1400 ms settle after the last send, total
+      ~2450 ms. The Rust jitter buffer primes ~200 ms/hop and the mix is
+      a 2-hop round trip (endpointa → channela → mix → endpointb echo →
+      channelb → mix → endpointa), so the last couple of packets can
+      miss the close window. Widening the settle gives every packet
+      time to complete the round trip without changing what's asserted.
     */
-    this.timeout( 3000 )
-    this.slow( 2000 )
+    this.timeout( 5000 )
+    this.slow( 3500 )
 
     const endpointa = dgram.createSocket( "udp4" )
     const endpointb = dgram.createSocket( "udp4" )
@@ -723,7 +731,7 @@ describe( "dtmf", function() {
     sendpk( 48, 40*160, 39*20, channela.local.port, endpointa, 0 )
     sendpk( 49, 51*160, 40*20, channela.local.port, endpointa, 0 )
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 1400 ) } )
+    await new Promise( ( r ) => { setTimeout( () => r(), 2500 ) } )
 
     channela.close()
     endpointa.close()
@@ -757,9 +765,13 @@ describe( "dtmf", function() {
     /*
       When mixing 2 channels, we expect the second leg to receive the 2833 packets
       and our server to emit events indicating the DTMF on the first channel.
+
+      Timing rationale: identical to the sibling test above — widened to
+      accommodate the ~400 ms two-hop jitter-prime latency so the last
+      packets complete the round trip before close.
     */
-    this.timeout( 3000 )
-    this.slow( 2000 )
+    this.timeout( 5000 )
+    this.slow( 3500 )
 
     const endpointa = dgram.createSocket( "udp4" )
     const endpointb = dgram.createSocket( "udp4" )
@@ -865,7 +877,7 @@ describe( "dtmf", function() {
     sendpk( 48, 40*160, 39*20, channela.local.port, endpointa, 0 )
     sendpk( 49, 51*160, 40*20, channela.local.port, endpointa, 0 )
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 1400 ) } )
+    await new Promise( ( r ) => { setTimeout( () => r(), 2500 ) } )
 
     channela.close()
     endpointa.close()

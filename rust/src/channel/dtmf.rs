@@ -160,10 +160,28 @@ impl DtmfSender {
 
 /// Receive-side de-duplicator. RFC 2833 sends each event multiple times; we
 /// only report each distinct event once.
+///
+/// Dedup uses two signals:
+///   1. End-of-event marker — when the burst terminates, clear last_event
+///      so the next body packet (even of the same digit) reports.
+///   2. Large RTP-timestamp gap — all packets of one RFC 2833 burst
+///      share (roughly) the same ts. A jump of several hundred ticks
+///      signals a new press even when every end-of-event packet was
+///      dropped by the jitter buffer. The threshold is loose enough to
+///      tolerate test fixtures that don't quite follow RFC 2833's
+///      "constant ts within a burst" rule.
 pub struct DtmfReceiver {
     last_sn: Option<u16>,
     last_event: Option<u8>,
+    last_event_ts: Option<u32>,
 }
+
+/// Timestamp delta (in RTP ticks @ 8 kHz = 1 ms) beyond which we treat
+/// two packets as belonging to different bursts. An in-burst ts is
+/// supposed to be constant; one whole RFC 2833 burst lasts ~220 ms, so
+/// a 3200-tick (400 ms) gap safely distinguishes bursts without
+/// false-positives on test fixtures that nudge ts within a press.
+const NEW_BURST_TS_DELTA: u32 = 3200;
 
 impl Default for DtmfReceiver {
     fn default() -> Self { Self::new() }
@@ -171,16 +189,18 @@ impl Default for DtmfReceiver {
 
 impl DtmfReceiver {
     pub fn new() -> Self {
-        Self { last_sn: None, last_event: None }
+        Self { last_sn: None, last_event: None, last_event_ts: None }
     }
 
-    /// Feed an RFC 2833 payload with its RTP sequence number. Returns the
-    /// digit char on the first packet of a new distinct event; duplicate
-    /// packets within the same burst (body repeats + end-of-event) return
-    /// None. A repeated digit after an end-marker counts as new — three
-    /// "1" presses in a row produce three reports, matching the PCAP
-    /// replay test in test/interface/projectrtpdtmf.js.
-    pub fn feed(&mut self, sn: u16, payload: &[u8]) -> Option<char> {
+    /// Feed an RFC 2833 payload with its RTP sequence number and
+    /// timestamp. Returns the digit char on the first packet of a new
+    /// distinct event; duplicate packets within the same burst (body
+    /// repeats + end-of-event) return None. A repeated digit after an
+    /// end-marker — or after a large timestamp gap even without the
+    /// end-marker — counts as new, so three "1" presses in a row
+    /// produce three reports whether or not the EOE packets survive
+    /// the jitter buffer.
+    pub fn feed(&mut self, sn: u16, ts: u32, payload: &[u8]) -> Option<char> {
         let ev = decode_event(payload)?;
         let advanced = match self.last_sn {
             Some(last) => sn.wrapping_sub(last) < 0x8000 && sn != last,
@@ -194,13 +214,24 @@ impl DtmfReceiver {
             // of any code (including the same digit re-pressed) starts a
             // new burst and gets reported.
             self.last_event = None;
+            self.last_event_ts = None;
             return None;
         }
 
-        if self.last_event == Some(ev.event) {
-            return None;
-        }
+        // New-burst detection:
+        //   - event code changed → different digit pressed
+        //   - ts jumped far beyond the normal in-burst spread → same
+        //     digit re-pressed, EOE was lost in jitter
+        let same_event = self.last_event == Some(ev.event);
+        let big_ts_gap = match self.last_event_ts {
+            Some(last_ts) => ts.wrapping_sub(last_ts) >= NEW_BURST_TS_DELTA,
+            None => false,
+        };
+        let same_burst = same_event && !big_ts_gap;
+        if same_burst { return None; }
+
         self.last_event = Some(ev.event);
+        self.last_event_ts = Some(ts);
         event_to_char(ev.event)
     }
 }
@@ -258,14 +289,36 @@ mod tests {
         let mut r = DtmfReceiver::new();
         let p = encode_event(3, false, 10, 160);
         // Multiple duplicates of the same burst — only one report.
-        assert_eq!(r.feed(100, &p), Some('3'));
-        assert_eq!(r.feed(101, &p), None);
-        assert_eq!(r.feed(102, &p), None);
+        assert_eq!(r.feed(100, 1000, &p), Some('3'));
+        assert_eq!(r.feed(101, 1000, &p), None);
+        assert_eq!(r.feed(102, 1000, &p), None);
         // End marker observed — doesn't re-report same digit.
         let pe = encode_event(3, true, 10, 480);
-        assert_eq!(r.feed(103, &pe), None);
+        assert_eq!(r.feed(103, 1000, &pe), None);
         // New digit — reported.
         let p2 = encode_event(7, false, 10, 160);
-        assert_eq!(r.feed(104, &p2), Some('7'));
+        assert_eq!(r.feed(104, 2000, &p2), Some('7'));
+    }
+
+    #[test]
+    fn receiver_handles_lost_end_of_event_via_timestamp() {
+        // Regression for the PCAP-replay test 2 failure: when all
+        // end-of-event packets for one burst are dropped by the jitter
+        // buffer, the next press of the same digit must still report
+        // — detected via the RTP timestamp changing between bursts.
+        let mut r = DtmfReceiver::new();
+        let p = encode_event(1, false, 10, 160);
+
+        // First press — body packets at ts=5000.
+        assert_eq!(r.feed(100, 5000, &p), Some('1'));
+        assert_eq!(r.feed(101, 5000, &p), None);
+        assert_eq!(r.feed(102, 5000, &p), None);
+        // EOE packets are lost (never fed).
+
+        // Second press — body at ts=10000. Must report despite EOE loss.
+        assert_eq!(r.feed(110, 10000, &p), Some('1'));
+
+        // Third press — body at ts=15000. Same digit again.
+        assert_eq!(r.feed(120, 15000, &p), Some('1'));
     }
 }

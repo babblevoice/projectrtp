@@ -111,8 +111,9 @@ async fn classify_dtmf_inbound(
 ) -> bool {
     if pk.payload_type() != state.rfc2833_pt { return false; }
     let sn = pk.sequence_number();
+    let ts = pk.timestamp();
     let payload = &pk.as_slice()[rtp::RTP_FIXED_HEADER_LEN..pk.len()];
-    if let Some(digit) = subs.dtmf_recv.feed(sn, payload) {
+    if let Some(digit) = subs.dtmf_recv.feed(sn, ts, payload) {
         let mut activate_recorder = false;
         if let Some(p) = subs.player.as_ref() {
             if p.interrupts() {
