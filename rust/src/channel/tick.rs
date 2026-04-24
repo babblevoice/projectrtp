@@ -382,8 +382,8 @@ async fn send_outbound(
     if !state.direction.send { return; }
     let Some(remote) = state.get_remote_addr() else { return; };
 
-    if let Some((event, payload)) = subs.dtmf_send.next_event() {
-        send_dtmf(state, event, &payload, remote).await;
+    if let Some(pkt) = subs.dtmf_send.next_event(state.out_ts) {
+        send_dtmf(state, &pkt, remote).await;
     } else if let Some(samples) = player_frame {
         send_player_frame(state, samples, remote).await;
     } else if state.echo {
@@ -469,13 +469,17 @@ async fn send_rtp(state: &mut ChannelState, pkt: &RtpPacket, remote: SocketAddr)
     }
 }
 
-async fn send_dtmf(state: &mut ChannelState, _event: u8, payload: &[u8; 4], remote: SocketAddr) {
+async fn send_dtmf(state: &mut ChannelState, pkt: &super::dtmf::NextDtmfPacket, remote: SocketAddr) {
     let mut out = RtpPacket::new();
     out.init(state.ssrc);
     out.set_payload_type(state.rfc2833_pt);
     out.set_sequence_number(state.out_sn);
-    out.set_timestamp(state.out_ts);
-    out.set_payload(payload);
+    // Use the sender-latched burst TS rather than state.out_ts. Within a
+    // burst state.out_ts is effectively frozen in this path (DTMF wins
+    // over audio), but the latched value is authoritative regardless.
+    out.set_timestamp(pkt.timestamp);
+    out.set_marker(pkt.marker);
+    out.set_payload(&pkt.payload);
     state.out_sn = state.out_sn.wrapping_add(1);
     send_rtp(state, &out, remote).await;
 }

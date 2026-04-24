@@ -557,15 +557,23 @@ impl Member {
 
     /// Emit any queued RFC-2833 DTMF (own + relayed-from-peer) to this
     /// channel's own remote. Fires on every mix size.
+    ///
+    /// Timestamp note: the mixer's audio send-leg has already advanced
+    /// `state.out_ts` for this tick by the time we get here. We pass the
+    /// current `out_ts` to the sender so it can *latch* that value at the
+    /// start of each burst; within a burst the latched value is reused
+    /// for all 14 packets, even though audio continues to advance
+    /// `out_ts` on every intervening tick. RFC 2833 requires constant
+    /// TS per burst — strict receivers otherwise see 14 ghost events.
     async fn send_dtmf_outbound(&mut self) {
         if !self.state.direction.send { return; }
         let Some(remote) = self.state.get_remote_addr() else { return; };
         let pt = self.state.rfc2833_pt;
-        if let Some((_ev, payload)) = self.subs.dtmf_send.next_event() {
-            send_dtmf_to_remote(&mut self.state, remote, pt, &payload).await;
+        if let Some(pkt) = self.subs.dtmf_send.next_event(self.state.out_ts) {
+            send_dtmf_to_remote(&mut self.state, remote, pt, &pkt).await;
         }
-        if let Some((_ev, payload)) = self.subs.dtmf_relay.next_event() {
-            send_dtmf_to_remote(&mut self.state, remote, pt, &payload).await;
+        if let Some(pkt) = self.subs.dtmf_relay.next_event(self.state.out_ts) {
+            send_dtmf_to_remote(&mut self.state, remote, pt, &pkt).await;
         }
     }
 
@@ -884,16 +892,19 @@ async fn send_dtmf_to_remote(
     state: &mut ChannelState,
     remote: SocketAddr,
     pt: u8,
-    payload: &[u8; 4],
+    pkt: &super::dtmf::NextDtmfPacket,
 ) {
-    let mut pkt = RtpPacket::new();
-    pkt.init(state.ssrc);
-    pkt.set_payload_type(pt);
-    pkt.set_sequence_number(state.out_sn);
-    pkt.set_timestamp(state.out_ts);
-    pkt.set_payload(payload);
+    let mut out = RtpPacket::new();
+    out.init(state.ssrc);
+    out.set_payload_type(pt);
+    out.set_sequence_number(state.out_sn);
+    // Latched burst TS from the sender — crucially NOT state.out_ts,
+    // which has drifted forward on every audio send this burst.
+    out.set_timestamp(pkt.timestamp);
+    out.set_marker(pkt.marker);
+    out.set_payload(&pkt.payload);
     state.out_sn = state.out_sn.wrapping_add(1);
-    send_rtp(state, &pkt, remote).await;
+    send_rtp(state, &out, remote).await;
 }
 
 // ---- command forwarding ----

@@ -21,8 +21,16 @@ use std::collections::VecDeque;
 // test/interface/projectrtpdtmf.js.
 pub const EVENT_REPEATS: u8 = 11;
 pub const END_REPEATS: u8 = 3;
-pub const DEFAULT_VOLUME: u8 = 10; // dB below max, matches C++ `volume` const
+// dB below max — matches the C++ `volume = 13` constant in
+// projectrtpchannel.cpp senddtmf(). A prior Rust value of 10 was 3 dB
+// quieter than the C++ sender and was flagged during interop review.
+pub const DEFAULT_VOLUME: u8 = 13;
 pub const EVENT_DURATION_UNIT: u16 = 160; // one G.711 packet worth
+// Minimum gap between consecutive DTMF bursts, in tick units (20 ms). The
+// C++ sender enforces `snout - lastdtmfsn >= 10` before starting the next
+// burst, i.e. 200 ms. Some endpoints coalesce digits sent faster than
+// this into a single event or miss the second press entirely.
+pub const INTER_DIGIT_GAP_TICKS: u8 = 10;
 
 /// Maps a DTMF character to its RFC 2833 event code. Accepted chars match C++
 /// `dtmfchars[]` (channel.cpp:948).
@@ -82,15 +90,48 @@ pub fn decode_event(payload: &[u8]) -> Option<DecodedEvent> {
     Some(DecodedEvent { event, end, volume, duration })
 }
 
-/// Send-side queue. One `DtmfBurst` is enqueued per digit; each tick that
-/// should emit an event calls `next_event` which returns Some((event, end))
-/// for EVENT_REPEATS body packets + END_REPEATS end packets per digit.
+/// One packet ready to go on the wire. Callers copy these fields onto the
+/// outgoing RTP packet verbatim; do NOT substitute `state.out_ts` for
+/// `timestamp`, that defeats the burst-latching this type exists to enforce.
+#[derive(Debug, Clone, Copy)]
+pub struct NextDtmfPacket {
+    // Purely informational — the event code is already encoded in
+    // payload[0]. Send paths never need it; tests assert on it to
+    // verify which digit a burst is emitting.
+    #[allow(dead_code)]
+    pub event: u8,
+    pub payload: [u8; 4],
+    /// Set on the first body packet of each burst, matching the C++
+    /// sender's `dst->setmarker( 0 == this->dtmfsendcount )`. Some
+    /// endpoints (notably Cisco and some Avaya) key event-start detection
+    /// off the marker bit and miss digits entirely when it's absent.
+    pub marker: bool,
+    /// Constant for every packet in one burst — 11 body + 3 end all share
+    /// the value captured when the burst started. RFC 2833 requires this;
+    /// strict receivers treat packets with distinct TS as independent
+    /// events, which on a mix produces ghost digits or none at all.
+    pub timestamp: u32,
+}
+
+/// Send-side queue. One `DtmfBurst` is enqueued per digit; each tick the
+/// caller invokes `next_event(current_ts)`, which returns a ready-to-send
+/// packet (with latched burst TS and marker bit) or `None` if nothing
+/// should go on the wire this tick — including inter-digit gap waits.
 pub struct DtmfSender {
     queue: VecDeque<DtmfBurst>,
     ticks_remaining: u8,
     end_remaining: u8,
     duration_ticks: u16,
     current_event: Option<u8>,
+    /// RTP timestamp latched at the start of the current burst. Every
+    /// packet in the burst (body + end retransmits) carries this value
+    /// regardless of what the channel's running `out_ts` has drifted to.
+    burst_ts: Option<u32>,
+    /// Ticks elapsed since the previous burst's last end packet. Starts
+    /// saturated at INTER_DIGIT_GAP_TICKS so the very first burst fires
+    /// immediately. After a burst ends, resets to 0 and counts up on
+    /// subsequent calls until it's safe to pop the next queued digit.
+    idle_ticks_since_burst: u8,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -108,6 +149,8 @@ impl DtmfSender {
             end_remaining: 0,
             duration_ticks: 0,
             current_event: None,
+            burst_ts: None,
+            idle_ticks_since_burst: INTER_DIGIT_GAP_TICKS,
         }
     }
 
@@ -124,24 +167,44 @@ impl DtmfSender {
         self.current_event.is_none() && self.queue.is_empty()
     }
 
-    /// Advance one tick. Returns the event payload to send this tick, or None
-    /// if nothing to do.
-    pub fn next_event(&mut self) -> Option<(u8, [u8; 4])> {
+    /// Advance one tick. `current_ts` is the channel's running RTP
+    /// timestamp at the moment of the call; it's used only to latch the
+    /// burst start — body and end packets reuse the latched value.
+    ///
+    /// Returns `Some(packet)` when a DTMF packet should go out this tick,
+    /// or `None` if the sender is idle, queue-empty, or in the inter-digit
+    /// gap after a previous burst.
+    pub fn next_event(&mut self, current_ts: u32) -> Option<NextDtmfPacket> {
         if self.current_event.is_none() {
+            // Between-bursts idle: count up to the inter-digit minimum.
+            // Saturate so the counter stays at INTER_DIGIT_GAP_TICKS while
+            // the queue is empty, which lets the first enqueued digit
+            // fire on the very next tick.
+            if self.idle_ticks_since_burst < INTER_DIGIT_GAP_TICKS {
+                self.idle_ticks_since_burst += 1;
+            }
+            if self.queue.is_empty() { return None; }
+            if self.idle_ticks_since_burst < INTER_DIGIT_GAP_TICKS { return None; }
+
             let burst = self.queue.pop_front()?;
             self.current_event = Some(burst.event);
             self.ticks_remaining = EVENT_REPEATS;
             self.end_remaining = END_REPEATS;
             self.duration_ticks = EVENT_DURATION_UNIT;
+            self.burst_ts = Some(current_ts);
         }
 
         let event = self.current_event.unwrap();
+        let ts = self.burst_ts.expect("burst_ts set alongside current_event");
+        // Marker bit fires exactly once per burst: on the first body
+        // packet (ticks_remaining still at its just-seeded EVENT_REPEATS).
+        let marker = self.ticks_remaining == EVENT_REPEATS;
 
         if self.ticks_remaining > 0 {
             self.ticks_remaining -= 1;
             let payload = encode_event(event, false, DEFAULT_VOLUME, self.duration_ticks);
             self.duration_ticks = self.duration_ticks.saturating_add(EVENT_DURATION_UNIT);
-            return Some((event, payload));
+            return Some(NextDtmfPacket { event, payload, marker, timestamp: ts });
         }
 
         if self.end_remaining > 0 {
@@ -149,11 +212,17 @@ impl DtmfSender {
             let payload = encode_event(event, true, DEFAULT_VOLUME, self.duration_ticks);
             if self.end_remaining == 0 {
                 self.current_event = None;
+                self.burst_ts = None;
+                self.idle_ticks_since_burst = 0;
             }
-            return Some((event, payload));
+            return Some(NextDtmfPacket { event, payload, marker: false, timestamp: ts });
         }
 
+        // Unreachable: the `current_event.is_none()` guard above covers
+        // the end-of-burst state, and both the body and end branches
+        // handle their remaining counters exhaustively.
         self.current_event = None;
+        self.burst_ts = None;
         None
     }
 }
@@ -264,8 +333,8 @@ mod tests {
         s.enqueue("5");
         let mut body = 0;
         let mut ends = 0;
-        while let Some((_e, payload)) = s.next_event() {
-            if payload[1] & 0x80 != 0 { ends += 1; } else { body += 1; }
+        while let Some(pkt) = s.next_event(0) {
+            if pkt.payload[1] & 0x80 != 0 { ends += 1; } else { body += 1; }
         }
         assert_eq!(body, EVENT_REPEATS as usize);
         assert_eq!(ends, END_REPEATS as usize);
@@ -273,15 +342,83 @@ mod tests {
     }
 
     #[test]
-    fn sender_drains_multiple_digits() {
+    fn sender_drains_multiple_digits_with_gap() {
         let mut s = DtmfSender::new();
         s.enqueue("12");
-        let mut events = Vec::new();
-        while let Some((e, _)) = s.next_event() { events.push(e); }
         let body_ends = (EVENT_REPEATS + END_REPEATS) as usize;
-        assert_eq!(events.len(), body_ends * 2);
-        assert!(events[..body_ends].iter().all(|&e| e == 1));
-        assert!(events[body_ends..].iter().all(|&e| e == 2));
+
+        // Collect the first burst — fires immediately on tick 0.
+        let mut first = Vec::new();
+        for _ in 0..body_ends {
+            first.push(s.next_event(0).expect("first burst packet"));
+        }
+        assert!(first.iter().all(|p| p.event == 1));
+
+        // Inter-digit gap: next INTER_DIGIT_GAP_TICKS - 1 calls yield
+        // None (the tick that ended the burst reset the counter to 0; it
+        // increments by 1 each subsequent call and only unblocks when it
+        // hits INTER_DIGIT_GAP_TICKS).
+        for _ in 0..(INTER_DIGIT_GAP_TICKS as usize - 1) {
+            assert!(s.next_event(0).is_none(), "expected gap silence");
+        }
+
+        // Second burst fires once the gap has elapsed.
+        let mut second = Vec::new();
+        for _ in 0..body_ends {
+            second.push(s.next_event(0).expect("second burst packet"));
+        }
+        assert!(second.iter().all(|p| p.event == 2));
+        assert!(s.is_idle());
+    }
+
+    #[test]
+    fn marker_set_only_on_first_body_packet_of_each_burst() {
+        // Regression: C++ sets the marker bit on the first packet of
+        // each DTMF burst (setmarker( 0 == this->dtmfsendcount )). Rust
+        // previously never set it, which caused some endpoints to miss
+        // the event-start edge and drop the digit entirely.
+        let mut s = DtmfSender::new();
+        s.enqueue("7");
+        let body_ends = (EVENT_REPEATS + END_REPEATS) as usize;
+        let mut markers = Vec::new();
+        for _ in 0..body_ends {
+            markers.push(s.next_event(12345).unwrap().marker);
+        }
+        // First packet: marker=true. Every other packet (body repeats +
+        // end retransmits): marker=false.
+        assert!(markers[0], "first body packet must have marker=true");
+        assert!(markers[1..].iter().all(|&m| !m), "only first packet marks");
+    }
+
+    #[test]
+    fn timestamp_is_latched_for_entire_burst() {
+        // Regression: RFC 2833 requires a constant RTP timestamp across
+        // every packet of one burst. The mixer path advances out_ts on
+        // each audio send *before* send_dtmf_outbound fires, so if the
+        // caller passes a fresh current_ts each tick the sender must
+        // still reuse the one captured at burst start.
+        let mut s = DtmfSender::new();
+        s.enqueue("3");
+        let body_ends = (EVENT_REPEATS + END_REPEATS) as usize;
+        let mut ts_seen = Vec::new();
+        for n in 0..body_ends {
+            // Simulate the mixer: caller's out_ts drifts by 160 per tick.
+            let caller_ts: u32 = 1_000 + (n as u32) * 160;
+            ts_seen.push(s.next_event(caller_ts).unwrap().timestamp);
+        }
+        // Every packet in the burst must carry the burst-start value.
+        assert!(ts_seen.iter().all(|&ts| ts == 1_000),
+                "burst TS drifted: {:?}", ts_seen);
+    }
+
+    #[test]
+    fn first_burst_fires_immediately_no_startup_gap() {
+        // The inter-digit counter is seeded at INTER_DIGIT_GAP_TICKS so
+        // a freshly-enqueued digit never has to wait for a phantom gap
+        // from "the prior burst that never happened".
+        let mut s = DtmfSender::new();
+        s.enqueue("0");
+        assert!(s.next_event(0).is_some(), "first digit must fire immediately");
     }
 
     #[test]
