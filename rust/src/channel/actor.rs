@@ -433,6 +433,17 @@ async fn run(
         });
     }
     subs.prebuffer.clear();
+    // Abort any in-flight DTLS handshake task. Without this, a handshake
+    // that hasn't completed (peer disappeared, no response, etc.) outlives
+    // the channel and busy-spins the runtime: the task's mpsc senders are
+    // about to drop, and webrtc-dtls's handshake driver re-polls recv on
+    // every Err. Abort first, then drop the inbound sender — that order
+    // guarantees the spawned task is gone before any remaining `recv()`
+    // future would see `None`.
+    if let Some(abort) = state.dtls_handshake_abort.take() {
+        abort.abort();
+    }
+    *state.dtls_inbound_tx.lock() = None;
     // Cancel the recv_loop before collecting stats.
     if let Some(cancel) = state.recv_cancel.take() {
         cancel.cancel();
@@ -573,16 +584,24 @@ async fn handle_command_local(
             // The cert is the process-lifetime one whose fingerprint is what
             // the peer was promised via SDP — see `dtls::get_certificate`.
             if let Some(ref dtls) = cfg.dtls {
+                // If a previous Remote with DTLS already started a handshake,
+                // abort it before kicking off a new one — otherwise the old
+                // task would race against the new one for the same socket.
+                if let Some(abort) = state.dtls_handshake_abort.take() {
+                    abort.abort();
+                }
                 let (dtls_tx, dtls_rx) = mpsc::channel::<Vec<u8>>(64);
                 *state.dtls_inbound_tx.lock() = Some(dtls_tx);
-                state.dtls_result_rx = Some(super::dtls_session::spawn_handshake(
+                let h = super::dtls_session::spawn_handshake(
                     dtls.setup,
                     state.local_addr,
                     state.rtp_sock.clone(),
                     dtls_rx,
                     crate::dtls::get_certificate(),
                     state.remote_addr.clone(),
-                ));
+                );
+                state.dtls_result_rx = Some(h.result_rx);
+                state.dtls_handshake_abort = Some(h.abort);
             }
 
             state.remote = Some(cfg);

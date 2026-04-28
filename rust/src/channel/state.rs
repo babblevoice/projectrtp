@@ -69,6 +69,10 @@ pub struct ChannelState {
     // DTLS
     pub dtls_inbound_tx: Arc<PLMutex<Option<mpsc::Sender<Vec<u8>>>>>,
     pub dtls_result_rx: Option<tokio::sync::oneshot::Receiver<Option<super::dtls_session::HandshakeResult>>>,
+    /// AbortHandle for the spawned DTLS handshake task. Aborted on
+    /// channel close so an orphan handshake can't keep polling a dead
+    /// transport (which would busy-spin a tokio worker).
+    pub dtls_handshake_abort: Option<tokio::task::AbortHandle>,
     pub srtp_keys: Option<SrtpKeyingMaterial>,
     pub srtp_encrypt: Option<webrtc_srtp::context::Context>,
     pub srtp_decrypt: Option<webrtc_srtp::context::Context>,
@@ -114,6 +118,7 @@ impl ChannelState {
             recv_cancel: None,
             dtls_inbound_tx: Arc::new(PLMutex::new(None)),
             dtls_result_rx: None,
+            dtls_handshake_abort: None,
             srtp_keys: None,
             srtp_encrypt: None,
             srtp_decrypt: None,

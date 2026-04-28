@@ -445,11 +445,16 @@ pub(crate) fn poll_dtls_handshake(state: &mut ChannelState) {
                 ) { state.srtp_decrypt = Some(dec); }
                 state.srtp_keys = Some(keys);
                 state.dtls_result_rx = None;
+                state.dtls_handshake_abort = None;
             }
-            Ok(None) => { state.dtls_result_rx = None; }
+            Ok(None) => {
+                state.dtls_result_rx = None;
+                state.dtls_handshake_abort = None;
+            }
             Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
             Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
                 state.dtls_result_rx = None;
+                state.dtls_handshake_abort = None;
             }
         }
     }

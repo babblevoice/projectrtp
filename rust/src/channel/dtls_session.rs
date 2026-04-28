@@ -67,11 +67,24 @@ impl webrtc_util::Conn for DtlsTransport {
     }
 
     async fn recv(&self, buf: &mut [u8]) -> webrtc_util::Result<usize> {
-        let data = self.inbound_rx.lock().await.recv().await
-            .ok_or_else(|| webrtc_util::Error::Other("dtls channel closed".into()))?;
-        let n = data.len().min(buf.len());
-        buf[..n].copy_from_slice(&data[..n]);
-        Ok(n)
+        let mut guard = self.inbound_rx.lock().await;
+        match guard.recv().await {
+            Some(data) => {
+                let n = data.len().min(buf.len());
+                buf[..n].copy_from_slice(&data[..n]);
+                Ok(n)
+            }
+            None => {
+                // All senders dropped — channel is tearing down. Without a
+                // delay here, webrtc-dtls's handshake driver re-polls recv
+                // immediately on every Err and pegs a CPU until the spawned
+                // task is finally aborted. The 50 ms sleep caps that worst
+                // case at 20 Hz.
+                drop(guard);
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                Err(webrtc_util::Error::Other("dtls channel closed".into()))
+            }
+        }
     }
 
     async fn recv_from(&self, buf: &mut [u8]) -> webrtc_util::Result<(usize, SocketAddr)> {
@@ -115,6 +128,22 @@ pub struct HandshakeResult {
     pub is_client: bool,
 }
 
+/// Handle returned by `spawn_handshake`. The actor stores `abort` on
+/// `ChannelState` and calls `abort.abort()` on close so the spawned
+/// handshake task can't outlive the channel and busy-spin on a dead
+/// transport — the original cause of a 99% CPU per orphan handshake
+/// reported in production.
+pub struct HandshakeHandle {
+    pub result_rx: tokio::sync::oneshot::Receiver<Option<HandshakeResult>>,
+    pub abort: tokio::task::AbortHandle,
+}
+
+/// Hard cap on the handshake. WebRTC peers complete in well under a
+/// second when the network is healthy; 10 s allows for retransmits but
+/// guarantees the spawned task exits even if the peer disappears
+/// mid-handshake. Mirrors the C++ side's idle teardown of stalled remotes.
+const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Spawn the DTLS handshake as a background task. The transport reads the
 /// UDP socket directly for fast handshake round-trips. Non-DTLS packets
 /// (RTP, STUN) are forwarded via the returned `forwarded_rx` channel so
@@ -129,7 +158,7 @@ pub fn spawn_handshake(
     inbound_rx: mpsc::Receiver<Vec<u8>>,
     certificate: Certificate,
     remote_addr: Arc<PLMutex<Option<SocketAddr>>>,
-) -> tokio::sync::oneshot::Receiver<Option<HandshakeResult>> {
+) -> HandshakeHandle {
     let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
     let transport = Arc::new(DtlsTransport {
@@ -144,7 +173,7 @@ pub fn spawn_handshake(
         webrtc_dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
     ];
 
-    tokio::spawn(async move {
+    let join = tokio::spawn(async move {
         let config = DtlsConfig {
             certificates: vec![certificate],
             srtp_protection_profiles: srtp_profiles,
@@ -153,29 +182,35 @@ pub fn spawn_handshake(
             ..Default::default()
         };
 
-        match DTLSConn::new(transport, config, is_client, None).await {
-            Ok(conn) => {
+        let outcome = tokio::time::timeout(
+            HANDSHAKE_TIMEOUT,
+            DTLSConn::new(transport, config, is_client, None),
+        ).await;
+
+        let result = match outcome {
+            Ok(Ok(conn)) => {
                 use webrtc_util::KeyingMaterialExporter;
                 let state = conn.connection_state().await;
                 let label = "EXTRACTOR-dtls_srtp";
                 let profile = ProtectionProfile::Aes128CmHmacSha1_80;
                 let km_len = 2 * (profile.key_len() + profile.salt_len());
                 match state.export_keying_material(label, &[], km_len).await {
-                    Ok(km) => {
-                        let _ = result_tx.send(Some(HandshakeResult {
-                            keying_material: km,
-                            profile,
-                            is_client,
-                        }));
-                    }
-                    Err(_) => { let _ = result_tx.send(None); }
+                    Ok(km) => Some(HandshakeResult {
+                        keying_material: km,
+                        profile,
+                        is_client,
+                    }),
+                    Err(_) => None,
                 }
             }
-            Err(_) => { let _ = result_tx.send(None); }
-        }
+            // Ok(Err(_)) — DTLSConn::new returned an error.
+            // Err(_)     — outer timeout fired; peer never finished.
+            _ => None,
+        };
+        let _ = result_tx.send(result);
     });
 
-    result_rx
+    HandshakeHandle { result_rx, abort: join.abort_handle() }
 }
 
 /// Split exported keying material into client/server key + salt pairs.
@@ -256,20 +291,20 @@ mod tests {
 
         let server_remote = Arc::new(PLMutex::new(Some(client_addr)));
         let client_remote = Arc::new(PLMutex::new(Some(server_addr)));
-        let server_result_rx = spawn_handshake(
+        let server_h = spawn_handshake(
             DtlsSetup::Passive, server_addr, server_sock, server_dtls_rx, server_cert,
             server_remote,
         );
-        let client_result_rx = spawn_handshake(
+        let client_h = spawn_handshake(
             DtlsSetup::Active, client_addr, client_sock, client_dtls_rx, client_cert,
             client_remote,
         );
 
-        let server_result = tokio::time::timeout(Duration::from_secs(5), server_result_rx)
+        let server_result = tokio::time::timeout(Duration::from_secs(5), server_h.result_rx)
             .await
             .expect("server handshake timeout")
             .expect("server oneshot dropped");
-        let client_result = tokio::time::timeout(Duration::from_secs(5), client_result_rx)
+        let client_result = tokio::time::timeout(Duration::from_secs(5), client_h.result_rx)
             .await
             .expect("client handshake timeout")
             .expect("client oneshot dropped");
