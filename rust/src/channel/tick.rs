@@ -48,6 +48,17 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     state.tick_count += 1;
     poll_dtls_handshake(state);
 
+    // Match C++ projectrtpchannel::handletick: tsout += G711PAYLOADBYTES
+    // (160) at the start of every tick, *unconditionally*. The outbound
+    // RTP timestamp is a media clock — if we let it stall during a
+    // pause (no player, no echo, no DTMF), the first packet sent after
+    // the pause carries a stale timestamp relative to the receiver's
+    // expected media clock, and downstream jitter buffers treat it as
+    // a late/duplicate packet (silent or stuttered playback at the far
+    // end). See ivr_exit_fail_rtp.pcap: 960 ms of wall-clock pause
+    // between two outbound audio packets, but ts_delta=160.
+    state.out_ts = state.out_ts.wrapping_add(FRAME_SAMPLES as u32);
+
     // Mirrors C++ projectrtpchannel::handletick: drain every queued
     // RFC-2833 packet first, then process at most one audio packet for
     // the rest of the tick. Some RFC 2833 senders interleave one DTMF
@@ -516,7 +527,8 @@ async fn send_player_frame(state: &mut ChannelState, samples: &[i16], remote: So
     out.set_timestamp(state.out_ts);
     out.set_payload(&payload);
     state.out_sn = state.out_sn.wrapping_add(1);
-    state.out_ts = state.out_ts.wrapping_add(samples.len() as u32);
+    // out_ts is advanced once per tick at the top of `run` (mirrors
+    // C++ incrtsout). Don't double-advance here.
     send_rtp(state, &out, remote).await;
 }
 

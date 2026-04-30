@@ -216,7 +216,8 @@ async fn send_leg(src: &mut Member, dst: &mut Member) {
     pkt.set_timestamp(dst.state.out_ts);
     pkt.set_payload(&payload);
     dst.state.out_sn = dst.state.out_sn.wrapping_add(1);
-    dst.state.out_ts = dst.state.out_ts.wrapping_add(MIX_FRAME_SAMPLES as u32);
+    // out_ts is advanced once per tick in process_inbound (mirrors
+    // C++ incrtsout). Don't double-advance here.
 
     let send_ok = if let Some(ref mut ctx) = dst.state.srtp_encrypt {
         match ctx.encrypt_rtp(pkt.as_slice()) {
@@ -452,6 +453,14 @@ impl Member {
     async fn process_inbound(&mut self) -> Option<char> {
         self.state.tick_count += 1;
         self.reset_for_tick();
+
+        // Match C++ projectrtpchannel::handletick: advance the outbound
+        // RTP media clock by one frame every tick, regardless of whether
+        // a packet ends up being sent for this leg. send_leg/send_encoded
+        // no longer advance it themselves. See tick::run for the same
+        // reasoning.
+        self.state.out_ts =
+            self.state.out_ts.wrapping_add(MIX_FRAME_SAMPLES as u32);
 
         // Build SRTP contexts as soon as the DTLS handshake completes.
         // In Local mode this runs via `tick::run`; in the mixer the
@@ -904,7 +913,8 @@ async fn send_encoded(state: &mut ChannelState, remote: SocketAddr, payload: &[u
     pkt.set_timestamp(state.out_ts);
     pkt.set_payload(payload);
     state.out_sn = state.out_sn.wrapping_add(1);
-    state.out_ts = state.out_ts.wrapping_add(MIX_FRAME_SAMPLES as u32);
+    // out_ts is advanced once per tick in process_inbound (mirrors
+    // C++ incrtsout). Don't double-advance here.
     send_rtp(state, &pkt, remote).await;
 }
 
