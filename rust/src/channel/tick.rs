@@ -48,18 +48,30 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     state.tick_count += 1;
     poll_dtls_handshake(state);
 
-    let inbound_pkt = pop_and_decrypt_inbound(state);
-    if inbound_pkt.is_some() {
+    // Mirrors C++ projectrtpchannel::handletick: drain every queued
+    // RFC-2833 packet first, then process at most one audio packet for
+    // the rest of the tick. Some RFC 2833 senders interleave one DTMF
+    // packet per audio packet (same SSRC, shared SN counter) so the wire
+    // doubles to ~100 pps for the burst's duration. Without this drain,
+    // popping just one packet per 50 Hz tick would let the jitter buffer
+    // grow by ~10 packets per burst and overflow on the next press —
+    // exactly the symptom in ivr_dtmf_issue_9_1_9_9_3.pcap.
+    let mut inbound_pkt: Option<RtpPacket> = None;
+    let mut popped_any = false;
+    loop {
+        let Some(pk) = pop_and_decrypt_inbound(state) else { break; };
+        popped_any = true;
+        if pk.payload_type() == state.rfc2833_pt {
+            classify_dtmf_inbound(state, subs, &pk).await;
+            continue;
+        }
+        inbound_pkt = Some(pk);
+        break;
+    }
+    if popped_any {
         state.ticks_without_rtp = 0;
     } else {
         state.ticks_without_rtp += 1;
-    }
-
-    if let Some(ref pk) = inbound_pkt {
-        if classify_dtmf_inbound(state, subs, pk).await {
-            // DTMF consumed the packet; skip audio processing this tick.
-            return TickOutcome::Continue;
-        }
     }
 
     let player_frame = tick_player(state, subs).await;
@@ -572,5 +584,167 @@ mod tests {
             peer_sock.recv_from(&mut [0u8; 2000]),
         ).await;
         assert!(r.is_err());
+    }
+
+    #[tokio::test]
+    async fn tick_drains_burst_when_dtmf_interleaved_with_audio() {
+        // Regression for ivr_dtmf_issue_9_1_9_9_3.pcap: some senders
+        // interleave one DTMF body packet per audio packet within the
+        // same SSRC, doubling the wire to ~100 pps for the burst's
+        // duration. Popping just one packet per 50 Hz tick let the
+        // jitter buffer overflow on subsequent presses; the tick must
+        // drain every queued DTMF packet and one audio packet per call.
+        //
+        // Pattern: 11 bursts (9, 1, 9, 9, 3, 3, 1, 1, 1, 1, 2) — sequence
+        // numbers, timestamps, and end-bits are taken verbatim from the
+        // pcap, with audio-PT-0 packets interleaved between burst body /
+        // end packets at the SNs the pcap captured (so the buffer ordering
+        // matches the wire exactly).
+        use crate::channel::dtmf::encode_event;
+        use crate::channel::rtp::RtpPacket;
+
+        let (mut state, _peer_sock, _peer_addr) = fresh_state().await;
+        let mut subs = crate::channel::actor::Subsystems::default();
+        state.set_remote_addr(_peer_addr);
+
+        // Each burst: (ts, event_code, [(dtmf_sn, end_bit), ...]). The
+        // audio SNs interleaved between burst body / end packets are
+        // synthesised below so the buffer ordering matches the wire.
+        let bursts: &[(u32, u8, &[(u16, bool)])] = &[
+            (36160,  9, &[(226,false),(228,false),(230,false),(232,false),
+                          (234,false),(236,false),(238,false),
+                          (239,true),(241,true),(242,true)]),
+            (113280, 1, &[(718,false),(720,false),(722,false),(724,false),
+                          (726,false),(728,false),(730,false),
+                          (731,true),(733,true),(734,true)]),
+            (116640, 9, &[(749,false),(751,false),(753,false),(755,false),
+                          (757,false),(759,false),(761,false),
+                          (762,true),(764,true),(765,true)]),
+            (120000, 9, &[(780,false),(782,false),(784,false),(786,false),
+                          (788,false),(790,false),(792,false),
+                          (793,true),(795,true),(796,true)]),
+            (123200, 3, &[(810,false),(812,false),(814,false),(816,false),
+                          (818,false),(820,false),(822,false),
+                          (823,true),(825,true),(826,true)]),
+            (179840, 3, &[(1174,false),(1176,false),(1178,false),(1180,false),
+                          (1182,false),(1184,false),(1186,false),
+                          (1187,true),(1189,true),(1190,true)]),
+            (232640, 1, &[(1514,false),(1516,false),(1518,false),(1520,false),
+                          (1522,false),(1524,false),(1526,false),
+                          (1527,true),(1529,true),(1530,true)]),
+            (235200, 1, &[(1540,false),(1542,false),(1544,false),(1546,false),
+                          (1548,false),(1550,false),
+                          (1551,true),(1553,true),(1554,true)]),
+            (261440, 1, &[(1713,false),(1715,false),(1717,false),(1719,false),
+                          (1721,false),(1723,false),(1725,false),
+                          (1726,true),(1728,true),(1729,true)]),
+            (324800, 1, &[(2119,false),(2121,false),(2123,false),(2125,false),
+                          (2127,false),(2129,false),(2131,false),
+                          (2132,true),(2134,true),(2135,true)]),
+            (328480, 2, &[(2152,false),(2154,false),(2156,false),(2158,false),
+                          (2160,false),(2162,false),(2164,false),
+                          (2165,true),(2167,true),(2168,true)]),
+        ];
+        let dtmf_pt = state.rfc2833_pt;
+
+        // Build a time-indexed packet schedule that mirrors the wire:
+        // 50 pps audio everywhere, plus 50 pps interleaved DTMF inside
+        // each burst. Two packets per 20 ms tick during a burst, one
+        // per tick otherwise — same shape as the pcap.
+        //
+        // The bug only fires when the buffer has carry-over from a
+        // prior burst when the next burst starts; pushing each burst
+        // into an empty buffer hides it. So we push exactly the wire's
+        // packets per 20 ms slot, run one tick, repeat — letting the
+        // buffer state at the start of each burst be whatever the
+        // previous burst left it as.
+        let mut all_dtmf_sns: std::collections::HashMap<u16, (u32, u8, bool)> =
+            std::collections::HashMap::new();
+        let mut min_sn = u16::MAX;
+        let mut max_sn: u16 = 0;
+        for (ts, ev, packets) in bursts {
+            for (sn, end) in *packets {
+                all_dtmf_sns.insert(*sn, (*ts, *ev, *end));
+                if *sn < min_sn { min_sn = *sn; }
+                if *sn > max_sn { max_sn = *sn; }
+            }
+        }
+
+        // Walk SNs from min..=max. For SNs that are DTMF, push as DTMF.
+        // Otherwise push as audio. Each push advances "wire time" by
+        // 10 ms — DTMF and audio in a burst are 10 ms apart, audio in
+        // gaps is 20 ms apart, so:
+        //   - DTMF SN: was just preceded by an audio SN at the same
+        //     20 ms tick → no wire-time advance.
+        //   - Audio SN with no immediately-prior DTMF SN at the same
+        //     tick: 20 ms advance.
+        //   - Otherwise (audio SN preceded by paired DTMF SN): 10 ms
+        //     advance.
+        // Every full 20 ms of wire time, run one tick.
+        let mut audio_ts: u32 = 32_000;
+        let mut digits: Vec<char> = Vec::new();
+        let mut wire_ms: u32 = 0;
+        let mut tick_target_ms: u32 = 20;
+        let mut prev_was_audio = false;
+        for sn in min_sn..=max_sn {
+            // If this SN is the second packet of a burst pair (audio
+            // immediately preceded by DTMF at sn-1), wire delta is 10 ms.
+            // Otherwise it's 20 ms (steady audio cadence).
+            let is_dtmf = all_dtmf_sns.contains_key(&sn);
+            let prev_dtmf = sn > min_sn && all_dtmf_sns.contains_key(&(sn-1));
+            let delta_ms = if is_dtmf && prev_was_audio {
+                // DTMF arrives 10 ms after the paired audio
+                10
+            } else if !is_dtmf && prev_dtmf {
+                // Audio arrives 10 ms after the paired DTMF
+                10
+            } else {
+                20
+            };
+            wire_ms += delta_ms;
+
+            // Push the packet.
+            let mut p = RtpPacket::new();
+            p.init(0xC0FFEE);
+            p.set_sequence_number(sn);
+            if let Some((ts, ev, end)) = all_dtmf_sns.get(&sn) {
+                p.set_payload_type(dtmf_pt);
+                p.set_timestamp(*ts);
+                p.set_payload(&encode_event(*ev, *end, 10, 160));
+            } else {
+                p.set_payload_type(0);
+                p.set_timestamp(audio_ts);
+                p.set_payload(&[0u8; 160]);
+                audio_ts = audio_ts.wrapping_add(160);
+            }
+            state.jitter.lock().push(p);
+            prev_was_audio = !is_dtmf;
+
+            // Fire one tick for every 20 ms of wire time elapsed.
+            while wire_ms >= tick_target_ms {
+                run(&mut state, &mut subs).await;
+                for ev in state.pending_events.drain(..) {
+                    if let crate::channel::actor::Event::TelephoneEvent { digit } = ev {
+                        digits.push(digit);
+                    }
+                }
+                tick_target_ms += 20;
+            }
+        }
+        // Drain anything still in the buffer.
+        for _ in 0..40 {
+            run(&mut state, &mut subs).await;
+            for ev in state.pending_events.drain(..) {
+                if let crate::channel::actor::Event::TelephoneEvent { digit } = ev {
+                    digits.push(digit);
+                }
+            }
+        }
+
+        assert_eq!(
+            digits,
+            vec!['9','1','9','9','3','3','1','1','1','1','2'],
+            "expected full IVR digit sequence; got {:?}", digits
+        );
     }
 }

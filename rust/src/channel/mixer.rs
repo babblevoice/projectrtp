@@ -460,18 +460,38 @@ impl Member {
         // forever and SRTP packets can't be decrypted.
         super::tick::poll_dtls_handshake(&mut self.state);
 
-        let popped = self.pop_inbound();
-        if popped.is_some() {
+        // Drain consecutive RFC-2833 packets first, then take at most one
+        // audio packet — same shape as `tick::run` for the local path.
+        // Some senders interleave DTMF with audio in the same SSRC, so
+        // the wire effectively doubles to ~100 pps during a burst; popping
+        // only one packet per 50 Hz tick lets the jitter buffer overflow
+        // and silently drop subsequent presses.
+        let mut popped: Option<RtpPacket> = None;
+        let mut popped_any = false;
+        let mut last_dtmf_digit: Option<char> = None;
+        loop {
+            let Some(pk) = self.pop_inbound() else { break; };
+            popped_any = true;
+            if pk.payload_type() == self.state.rfc2833_pt {
+                if let Some(d) = self.handle_dtmf_in(&pk).await {
+                    last_dtmf_digit = Some(d);
+                }
+                continue;
+            }
+            popped = Some(pk);
+            break;
+        }
+        if popped_any {
             self.state.ticks_without_rtp = 0;
         } else {
             self.state.ticks_without_rtp += 1;
         }
 
-        // DTMF consumes the packet — skip all audio work for this tick.
-        if let Some(ref pk) = popped {
-            if pk.payload_type() == self.state.rfc2833_pt {
-                return self.handle_dtmf_in(pk).await;
-            }
+        // If only DTMF was popped (no audio), skip the rest of the audio
+        // pipeline for this tick — same early return shape as before, so
+        // the player doesn't advance during a DTMF-only tick.
+        if popped.is_none() && last_dtmf_digit.is_some() {
+            return last_dtmf_digit;
         }
 
         let player_frame = self.tick_player().await;
@@ -936,7 +956,7 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
                 m.subs.bargein = None;
                 m.events.post(Event::Play {
                     state: PlayState::End,
-                    reason: Some("new".into()),
+                    reason: Some("replaced".into()),
                 });
             }
             // Bare `play` supersedes any pending playrecord recorder. No
@@ -1016,7 +1036,7 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
                 m.subs.bargein = None;
                 m.events.post(Event::Play {
                     state: PlayState::End,
-                    reason: Some("new".into()),
+                    reason: Some("replaced".into()),
                 });
             }
             m.subs.pending_recorder = None;
@@ -1053,7 +1073,7 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
                 m.subs.bargein = None;
                 m.events.post(Event::Play {
                     state: PlayState::End,
-                    reason: Some("new".into()),
+                    reason: Some("replaced".into()),
                 });
             }
             // Supersede any previously-queued pending recorder — matches the

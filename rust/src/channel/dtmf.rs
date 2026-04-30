@@ -438,6 +438,67 @@ mod tests {
     }
 
     #[test]
+    fn receiver_handles_ivr_pcap_full_sequence() {
+        // Regression for ivr_dtmf_issue_9_1_9_9_3.pcap: real call where the
+        // caller dialed 9, then 1-9-9-3 (IVR didn't trigger), then 3 again,
+        // then 1-1-1-1-2 retrying. Sequence numbers, timestamps, event
+        // codes, and end-bits are taken verbatim from the pcap.
+        //
+        // The two close-spaced "1" presses (ts=232640 and ts=235200,
+        // delta=2560) press-start to press-start are 320 ms apart — under
+        // the 400 ms NEW_BURST_TS_DELTA threshold. End packets are present
+        // in the pcap so the second "1" must be reported via end-bit
+        // clearing, not the timestamp fallback.
+        let mut r = DtmfReceiver::new();
+        let bursts: &[(u32, u8, &[(u16, bool)])] = &[
+            (36160,  9, &[(226,false),(228,false),(230,false),(232,false),
+                          (234,false),(236,false),(238,false),
+                          (239,true),(241,true),(242,true)]),
+            (113280, 1, &[(718,false),(720,false),(722,false),(724,false),
+                          (726,false),(728,false),(730,false),
+                          (731,true),(733,true),(734,true)]),
+            (116640, 9, &[(749,false),(751,false),(753,false),(755,false),
+                          (757,false),(759,false),(761,false),
+                          (762,true),(764,true),(765,true)]),
+            (120000, 9, &[(780,false),(782,false),(784,false),(786,false),
+                          (788,false),(790,false),(792,false),
+                          (793,true),(795,true),(796,true)]),
+            (123200, 3, &[(810,false),(812,false),(814,false),(816,false),
+                          (818,false),(820,false),(822,false),
+                          (823,true),(825,true),(826,true)]),
+            (179840, 3, &[(1174,false),(1176,false),(1178,false),(1180,false),
+                          (1182,false),(1184,false),(1186,false),
+                          (1187,true),(1189,true),(1190,true)]),
+            (232640, 1, &[(1514,false),(1516,false),(1518,false),(1520,false),
+                          (1522,false),(1524,false),(1526,false),
+                          (1527,true),(1529,true),(1530,true)]),
+            (235200, 1, &[(1540,false),(1542,false),(1544,false),(1546,false),
+                          (1548,false),(1550,false),
+                          (1551,true),(1553,true),(1554,true)]),
+            (261440, 1, &[(1713,false),(1715,false),(1717,false),(1719,false),
+                          (1721,false),(1723,false),(1725,false),
+                          (1726,true),(1728,true),(1729,true)]),
+            (324800, 1, &[(2119,false),(2121,false),(2123,false),(2125,false),
+                          (2127,false),(2129,false),(2131,false),
+                          (2132,true),(2134,true),(2135,true)]),
+            (328480, 2, &[(2152,false),(2154,false),(2156,false),(2158,false),
+                          (2160,false),(2162,false),(2164,false),
+                          (2165,true),(2167,true),(2168,true)]),
+        ];
+        let mut got: Vec<char> = Vec::new();
+        for (ts, event, packets) in bursts {
+            for (sn, end) in *packets {
+                let p = encode_event(*event, *end, 10, 160);
+                if let Some(c) = r.feed(*sn, *ts, &p) {
+                    got.push(c);
+                }
+            }
+        }
+        assert_eq!(got, vec!['9','1','9','9','3','3','1','1','1','1','2'],
+                   "expected full IVR sequence, got {:?}", got);
+    }
+
+    #[test]
     fn receiver_handles_lost_end_of_event_via_timestamp() {
         // Regression for the PCAP-replay test 2 failure: when all
         // end-of-event packets for one burst are dropped by the jitter

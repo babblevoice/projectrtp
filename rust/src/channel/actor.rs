@@ -614,7 +614,7 @@ async fn handle_command_local(
             if subs.player.is_some() {
                 subs.player = None;
                 subs.bargein = None;
-                events.post(Event::Play { state: PlayState::End, reason: Some("new".into()) });
+                events.post(Event::Play { state: PlayState::End, reason: Some("replaced".into()) });
             }
             // A bare `play` supersedes any `playrecord` pending recorder.
             // No Recording event was emitted for it yet (activation hasn't
@@ -696,12 +696,13 @@ async fn handle_command_local(
 
         Command::CreateWriteStream { id, cfg, receiver } => {
             // A writer supersedes any active player — they share the
-            // outbound-source slot. Emit `play/end reason=new` to match
-            // what `Command::Play` does when it replaces another player.
+            // outbound-source slot. Emit `play/end reason=replaced` to
+            // match what `Command::Play` does when it replaces another
+            // player.
             if subs.player.is_some() {
                 subs.player = None;
                 subs.bargein = None;
-                events.post(Event::Play { state: PlayState::End, reason: Some("new".into()) });
+                events.post(Event::Play { state: PlayState::End, reason: Some("replaced".into()) });
             }
             subs.pending_recorder = None;
             subs.prebuffer.clear();
@@ -743,7 +744,7 @@ async fn handle_command_local(
             if subs.player.is_some() {
                 subs.player = None;
                 subs.bargein = None;
-                events.post(Event::Play { state: PlayState::End, reason: Some("new".into()) });
+                events.post(Event::Play { state: PlayState::End, reason: Some("replaced".into()) });
             }
             // Supersede any previously-queued pending recorder — its file was
             // never opened, so no Record event is owed (matches C++: no file

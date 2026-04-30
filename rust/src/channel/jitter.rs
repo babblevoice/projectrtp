@@ -14,7 +14,12 @@
 
 use super::rtp::RtpPacket;
 
-pub const DEFAULT_BUFFER_PACKET_COUNT: usize = 20;
+// Matches C++ BUFFERPACKETCOUNT/BUFFERPACKETCAP. Doubling the wire rate
+// during a DTMF burst (RFC 2833 senders interleave one DTMF packet per
+// audio packet — see ivr_dtmf_issue_9_1_9_9_3.pcap) is absorbed by the
+// per-tick drain loop in tick.rs, NOT by extra slots, so 32 with
+// water_level 10 is the long-running C++ default.
+pub const DEFAULT_BUFFER_PACKET_COUNT: usize = 32;
 pub const DEFAULT_BUFFER_WATER_LEVEL: usize = 10;
 
 pub struct JitterBuffer {

@@ -1301,4 +1301,72 @@ describe( "dtmf", function() {
     expect( receivedmessages[ 5 ] ).to.deep.include( expectedmessages[ 5 ] )
 
   } )
+
+  /*
+    Regression for the IVR bug captured in
+    test/interface/pcaps/ivr_dtmf_issue_9_1_9_9_3.pcap.
+
+    The caller dialed 9, then 1-9-9-3 (which should have triggered an IVR
+    branch), then retried with 3 and a few more digits. C++ produced the
+    full digit stream; Rust dropped or merged something so the IVR never
+    matched. This test replays the pcap exactly as it arrived on the wire
+    and asserts every digit press surfaces as one telephone-event.
+  */
+  it( "DTMF PCAP IVR 9-1-9-9-3 sequence", async function() {
+
+    this.timeout( 50000 )
+    this.slow( 45000 )
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const receivedmessages = []
+
+    const server = dgram.createSocket( "udp4" )
+    server.on( "message", function() {} )
+
+    server.bind()
+    server.on( "listening", async function() {
+
+      const ourport = server.address().port
+      const channel = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
+        receivedmessages.push( d )
+
+        if( "close" === d.action ) {
+          server.close()
+          done()
+        }
+      } )
+
+      // Pcap last DTMF lands at 41.2 s; offset 4 s of audio so the first
+      // press fires almost immediately. Close shortly after the last
+      // expected digit so the channel posts its close event.
+      const offset = 4000
+      setTimeout( () => channel.close(), 1000 * 40 )
+      const dstport = channel.local.port
+
+      const ourpcap = await pcap.readpcap( "test/interface/pcaps/ivr_dtmf_issue_9_1_9_9_3.pcap" )
+
+      ourpcap.forEach( ( packet ) => {
+        if( packet.ipv4 && packet.ipv4.udp && 11408 == packet.ipv4.udp.dstport ) {
+          const sendat = ( 1000 * packet.ts_sec_offset ) - offset
+          if ( 0 < sendat ) {
+            sendpayload( sendat, packet.ipv4.udp.data, dstport, server )
+          }
+        }
+      } )
+    } )
+
+    await finished
+
+    const dtmf = receivedmessages
+      .filter( m => "telephone-event" === m.action )
+      .map( m => m.event )
+
+    expect( dtmf ).to.deep.equal(
+      [ "9", "1", "9", "9", "3", "3", "1", "1", "1", "1", "2" ],
+      `expected full IVR digit sequence; got ${ JSON.stringify( dtmf ) }`
+    )
+
+  } )
 } )
