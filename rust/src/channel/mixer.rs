@@ -492,7 +492,11 @@ impl Member {
         }
         if popped_any {
             self.state.ticks_without_rtp = 0;
-        } else {
+        } else if self.state.direction.recv {
+            // Match C++ checkidlerecv: freeze the no-RTP counter while
+            // recv=false (on hold). Otherwise the counter races past
+            // the 20s soft timeout during a hold and the channel is
+            // killed with reason="idle-timeout" the moment it's remixed.
             self.state.ticks_without_rtp += 1;
         }
 
