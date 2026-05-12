@@ -857,7 +857,17 @@ async fn feed_recorders(
             }
             inter
         } else {
-            samples.to_vec()
+            // Mono: saturated sum of self leg + peer leg, matching C++
+            // `soundfilewriter::write` where mono advances buf by 1 in
+            // both loops so the second leg is `*buf += outval`.
+            match peer_samples {
+                Some(peer) => samples.iter().enumerate().map(|(idx, &s)| {
+                    let a = s as i32;
+                    let b = peer.get(idx).copied().unwrap_or(0) as i32;
+                    (a + b).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+                }).collect(),
+                None => samples.to_vec(),
+            }
         };
         // Power calc on the narrowband `samples` (self's inbound), not
         // the interleaved stereo `frame` — matches C++ `codecx::power()`.
