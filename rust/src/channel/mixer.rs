@@ -542,7 +542,13 @@ impl Member {
         self.run_bargein(inbound.as_deref()).await;
         self.accumulate_playrecord_prebuffer(inbound.as_deref());
 
-        None
+        // Surface any digit detected during the early DTMF drain so the
+        // orchestrator can fan it out to the other legs. Without this the
+        // event still fires locally (handle_dtmf_in pushed it onto
+        // pending_events) but the peer relay queues never see it — so on a
+        // bridged call where a sender interleaves DTMF with audio (e.g.
+        // 3CX, sinora.pcap), the far leg gets no RFC-2833 packets.
+        last_dtmf_digit
     }
 
     /// Sibling of `tick_player` on the mixer side — same role (outbound

@@ -159,7 +159,15 @@ describe( "rtpbuffer", function() {
   it( "ensure our peeked buffer is maintained", async function() {
     const b = projectrtp.rtpbuffer.create()
     const buffersize = b.size()
-    const halffull = Math.floor( buffersize / 2 )
+    /* Loop count must equal the buffer's water level: priming sets
+       out_sn to (first_sn - water_level), so exactly `water_level`
+       push+pop cycles return undefined and leave out_sn lined up on
+       slot 0 — the next peek then returns the very first packet
+       (pk[3] == 0). When buffersize was 20 this happened to equal
+       buffersize/2; with buffersize=32 it no longer does. Keep it
+       pinned to the water level so the test survives future buffer
+       resizes. */
+    const halffull = 10
 
     let step = 0
     for ( ; step < halffull; step++ ) {
