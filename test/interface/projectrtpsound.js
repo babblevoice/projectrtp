@@ -508,7 +508,11 @@ describe( "rtpsound", function() {
 
     //console.log( endtime - starttime )
     expect( receviedaudio.length ).to.be.greaterThan( 23000 )
-    expect( endtime - starttime ).to.be.greaterThan( 4000 )
+    // The lower bound was 4000 exclusive — the Rust player hits exactly
+    // 4000 ms on nominal runs (nothing to allow JS timer jitter above
+    // the sample-perfect duration), so accept the boundary. Upper bound
+    // unchanged — anything over 4200 would indicate a real scheduling lag.
+    expect( endtime - starttime ).to.be.at.least( 4000 )
     expect( endtime - starttime ).to.be.lessThan( 4200 )
     
   } )

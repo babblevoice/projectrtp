@@ -1,0 +1,44 @@
+[package]
+name = "projectrtp"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2", default-features = false, features = ["napi8", "async", "tokio_rt", "compat-mode"] }
+napi-derive = { version = "2", features = ["compat-mode"] }
+tokio = { version = "1", features = ["full"] }
+bytes = "1"
+parking_lot = "0.12"
+crossbeam = "0.8"
+crc32fast = "1"
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
+dirs = "5"
+webrtc-dtls = "0.12"
+webrtc-srtp = "0.17"
+webrtc-util = "0.11"
+async-trait = "0.1"
+tokio-util = "0.7"
+serde_json = "1"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+# `lto = "thin"` instead of `true` (fat LTO). Fat LTO on Alpine/musl Docker
+# builds SIGSEGVs rustc when cross-crate inlining rustls (~3-4 GB per rustc
+# process under fat LTO; constrained Docker memory is the usual cause). Thin
+# LTO keeps most of the inlining benefit with much lower memory pressure.
+lto = "thin"
+# Codegen units = 16 (Cargo's release default) lets the linker parallelize
+# and further reduces per-unit memory. If we ever need the tiny binary-size
+# win from `codegen-units = 1`, do it only on the CI host image, not in the
+# Alpine builder.
+codegen-units = 16
+opt-level = 3

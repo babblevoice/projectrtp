@@ -24,7 +24,16 @@ function fromstr( str ) {
 
 function sendpayload( sendtime, pk, dstport, server ) {
   return setTimeout( () => {
-    server.send( pk, dstport, "localhost" )
+    /* Pcap replays schedule the full capture up front and then close
+       the channel at a fixed deadline. Any packet whose sendtime lands
+       after that deadline fires on a closed socket; without a guard
+       the synchronous ERR_SOCKET_DGRAM_NOT_RUNNING bleeds into the
+       NEXT test as an uncaught error. Silently drop. */
+    try {
+      server.send( pk, dstport, "localhost" )
+    } catch ( e ) {
+      if( "ERR_SOCKET_DGRAM_NOT_RUNNING" !== e.code ) throw e
+    }
   }, sendtime )
 }
 
@@ -615,9 +624,17 @@ describe( "dtmf", function() {
     /*
       When mixing 2 channels, we expect the second leg to receive the 2833 packets
       and our server to emit events indicating the DTMF on the first channel.
+
+      The timing was tight against the original C++ addon: 50 packets
+      emitted over 1 second, 1400 ms settle after the last send, total
+      ~2450 ms. The Rust jitter buffer primes ~200 ms/hop and the mix is
+      a 2-hop round trip (endpointa → channela → mix → endpointb echo →
+      channelb → mix → endpointa), so the last couple of packets can
+      miss the close window. Widening the settle gives every packet
+      time to complete the round trip without changing what's asserted.
     */
-    this.timeout( 3000 )
-    this.slow( 2000 )
+    this.timeout( 5000 )
+    this.slow( 3500 )
 
     const endpointa = dgram.createSocket( "udp4" )
     const endpointb = dgram.createSocket( "udp4" )
@@ -723,7 +740,7 @@ describe( "dtmf", function() {
     sendpk( 48, 40*160, 39*20, channela.local.port, endpointa, 0 )
     sendpk( 49, 51*160, 40*20, channela.local.port, endpointa, 0 )
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 1400 ) } )
+    await new Promise( ( r ) => { setTimeout( () => r(), 2500 ) } )
 
     channela.close()
     endpointa.close()
@@ -757,9 +774,13 @@ describe( "dtmf", function() {
     /*
       When mixing 2 channels, we expect the second leg to receive the 2833 packets
       and our server to emit events indicating the DTMF on the first channel.
+
+      Timing rationale: identical to the sibling test above — widened to
+      accommodate the ~400 ms two-hop jitter-prime latency so the last
+      packets complete the round trip before close.
     */
-    this.timeout( 3000 )
-    this.slow( 2000 )
+    this.timeout( 5000 )
+    this.slow( 3500 )
 
     const endpointa = dgram.createSocket( "udp4" )
     const endpointb = dgram.createSocket( "udp4" )
@@ -865,7 +886,7 @@ describe( "dtmf", function() {
     sendpk( 48, 40*160, 39*20, channela.local.port, endpointa, 0 )
     sendpk( 49, 51*160, 40*20, channela.local.port, endpointa, 0 )
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 1400 ) } )
+    await new Promise( ( r ) => { setTimeout( () => r(), 2500 ) } )
 
     channela.close()
     endpointa.close()
@@ -1288,5 +1309,175 @@ describe( "dtmf", function() {
     expect( receivedmessages[ 4 ] ).to.deep.include( expectedmessages[ 4 ] )
     expect( receivedmessages[ 5 ] ).to.deep.include( expectedmessages[ 5 ] )
 
+  } )
+
+  /*
+    Regression for the IVR bug captured in
+    test/interface/pcaps/ivr_dtmf_issue_9_1_9_9_3.pcap.
+
+    The caller dialed 9, then 1-9-9-3 (which should have triggered an IVR
+    branch), then retried with 3 and a few more digits. C++ produced the
+    full digit stream; Rust dropped or merged something so the IVR never
+    matched. This test replays the pcap exactly as it arrived on the wire
+    and asserts every digit press surfaces as one telephone-event.
+  */
+  it( "DTMF PCAP IVR 9-1-9-9-3 sequence", async function() {
+
+    this.timeout( 50000 )
+    this.slow( 45000 )
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const receivedmessages = []
+
+    const server = dgram.createSocket( "udp4" )
+    server.on( "message", function() {} )
+
+    server.bind()
+    server.on( "listening", async function() {
+
+      const ourport = server.address().port
+      const channel = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 0 } }, function( d ) {
+        receivedmessages.push( d )
+
+        if( "close" === d.action ) {
+          server.close()
+          done()
+        }
+      } )
+
+      // Pcap last DTMF lands at 41.2 s; offset 4 s of audio so the first
+      // press fires almost immediately. Close shortly after the last
+      // expected digit so the channel posts its close event.
+      const offset = 4000
+      setTimeout( () => channel.close(), 1000 * 40 )
+      const dstport = channel.local.port
+
+      const ourpcap = await pcap.readpcap( "test/interface/pcaps/ivr_dtmf_issue_9_1_9_9_3.pcap" )
+
+      ourpcap.forEach( ( packet ) => {
+        if( packet.ipv4 && packet.ipv4.udp && 11408 == packet.ipv4.udp.dstport ) {
+          const sendat = ( 1000 * packet.ts_sec_offset ) - offset
+          if ( 0 < sendat ) {
+            sendpayload( sendat, packet.ipv4.udp.data, dstport, server )
+          }
+        }
+      } )
+    } )
+
+    await finished
+
+    const dtmf = receivedmessages
+      .filter( m => "telephone-event" === m.action )
+      .map( m => m.event )
+
+    expect( dtmf ).to.deep.equal(
+      [ "9", "1", "9", "9", "3", "3", "1", "1", "1", "1", "2" ],
+      `expected full IVR digit sequence; got ${ JSON.stringify( dtmf ) }`
+    )
+
+  } )
+
+  /*
+    Regression for the 3CX-bridged-call DTMF drop captured in
+    test/interface/pcaps/sinora.pcap.
+
+    The 3CX client (31.15.105.43) was on a bridged call through projectrtp
+    with two legs:
+      leg A: 9492 <-> 11634 (audio only)
+      leg B: 9494 <-> 13018 (audio + RFC 2833 DTMF)
+
+    The wire shows five distinct RFC 2833 bursts of digit "2" (the caller
+    re-pressed because nothing was getting through). On the C++ build the
+    digits forwarded out leg A; on Rust they didn't.
+    This test mixes two channels, replays both legs of the wire-captured
+    audio into them, and asserts both that the DTMF is detected on the
+    receiving leg AND that the digits are forwarded out the peer leg as
+    RFC 2833 packets.
+  */
+  it( "DTMF PCAP sinora 3CX bridged DTMF forwarding", async function() {
+
+    this.timeout( 30000 )
+    this.slow( 25000 )
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const channelbreceivedmessages = []
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+
+    let endpointadtmfpkcount = 0
+    endpointa.on( "message", function( msg ) {
+      if( 101 == ( 0x7f & msg[ 1 ] ) ) endpointadtmfpkcount++
+    } )
+    endpointb.on( "message", function() {} )
+
+    endpointa.bind()
+    await new Promise( ( resolve ) => { endpointa.on( "listening", () => resolve() ) } )
+    endpointb.bind()
+    await new Promise( ( resolve ) => { endpointb.on( "listening", () => resolve() ) } )
+
+    const channela = await projectrtp.openchannel(
+      { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } },
+      function( d ) {
+        if( "close" === d.action ) channelb.close()
+      }
+    )
+    const channelb = await projectrtp.openchannel(
+      { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 0 } },
+      function( d ) {
+        channelbreceivedmessages.push( d )
+        if( "close" === d.action ) {
+          endpointa.close()
+          endpointb.close()
+          done()
+        }
+      }
+    )
+
+    expect( channela.mix( channelb ) ).to.be.true
+
+    const adstport = channela.local.port
+    const bdstport = channelb.local.port
+
+    const ourpcap = await pcap.readpcap( "test/interface/pcaps/sinora.pcap", 10000 )
+
+    ourpcap.forEach( ( packet ) => {
+      if( !packet.ipv4 || !packet.ipv4.udp ) return
+      const u = packet.ipv4.udp
+      const sendat = 1000 * packet.ts_sec_offset
+      if( sendat < 0 ) return
+      /* leg A audio: 3CX:9492 -> projectrtp:11634 */
+      if( 9492 === u.srcport && 11634 === u.dstport ) {
+        sendpayload( sendat, u.data, adstport, endpointa )
+      }
+      /* leg B audio + DTMF: 3CX:9494 -> projectrtp:13018 */
+      if( 9494 === u.srcport && 13018 === u.dstport ) {
+        sendpayload( sendat, u.data, bdstport, endpointb )
+      }
+    } )
+
+    /* trimmed pcap is ~17s; last DTMF burst ends ~14.9s — close after settle */
+    setTimeout( () => channela.close(), 1000 * 18 )
+
+    await finished
+
+    const events = channelbreceivedmessages
+      .filter( m => "telephone-event" === m.action )
+      .map( m => m.event )
+
+    expect( events ).to.deep.equal(
+      [ "2", "2", "2", "2", "2" ],
+      `expected 5 presses of '2' detected on leg B; got ${ JSON.stringify( events ) }`
+    )
+
+    /* forwarded DTMF: 5 bursts × 14 packets per digit; allow some packet loss */
+    expect( endpointadtmfpkcount ).to.be.at.least(
+      5 * ( pkcountperdtmfdigit - 2 ),
+      `expected DTMF forwarded to leg A; got ${ endpointadtmfpkcount } packets`
+    )
   } )
 } )

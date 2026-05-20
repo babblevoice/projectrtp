@@ -1,6 +1,6 @@
 {
   "name": "@babblevoice/projectrtp",
-  "version": "2.6.25",
+  "version": "3.0.0",
   "description": "A scalable Node addon RTP server",
   "main": "index.js",
   "directories": {
@@ -9,19 +9,19 @@
     "test": "test"
   },
   "scripts": {
-    "test": "ASAN_OPTIONS=$(cat asan.options) LD_PRELOAD=/usr/lib64/libasan.so.8 ./node_modules/mocha/bin/_mocha test/interface/*.js test/unit/*.js --check-leaks",
+    "test": "./node_modules/mocha/bin/_mocha test/interface/*.js test/unit/*.js --check-leaks --exit",
+    "build": "cd rust && cargo build --release && mkdir -p ../build/Release && cp target/release/libprojectrtp.so ../build/Release/projectrtp.node",
+    "build:dev": "cd rust && cargo build && mkdir -p ../build/Debug && cp target/debug/libprojectrtp.so ../build/Debug/projectrtp.node",
+    "clean": "cd rust && cargo clean",
+    "rust:check": "cd rust && cargo check --all-targets",
+    "rust:fmt": "cd rust && cargo fmt --all -- --check",
+    "rust:clippy": "cd rust && cargo clippy --all-targets -- -D warnings",
+    "rust:test": "cd rust && cargo test --lib",
+    "rust:test:release": "cd rust && cargo test --lib --release",
     "github:check": "node test/basictests.js; npm update; ./node_modules/mocha/bin/_mocha test/interface/*.js test/unit/*.js --check-leaks --exit",
     "check": "tsc --checkJs --noEmit --target es6 --module commonjs --skipLibCheck *.js test/**/*.js; ./node_modules/eslint/bin/eslint.js ./",
     "docs": "jsdoc -c jsdoc.conf.json ./README.md",
-    "stress": "ASAN_OPTIONS=$(cat asan.options) LD_PRELOAD=/usr/lib64/libasan.so.8 node stress/index.js",
-    "configure:dev": "node-gyp configure --build_type=dev",
-    "configure": "node-gyp configure",
-    "clean": "node-gyp clean",
-    "build:dev": "node-gyp configure build --build_type=dev",
-    "build": "node-gyp configure build",
-    "rebuild": "node-gyp rebuild",
-    "rebuild:dev": "node-gyp configure --build_type=dev; node-gyp rebuild --build_type=dev",
-    "install": "node-gyp rebuild"
+    "stress": "node stress/index.js"
   },
   "repository": {
     "type": "git",
@@ -34,7 +34,6 @@
   },
   "homepage": "https://github.com/babblevoice/projectrtp#readme",
   "dependencies": {
-    "node-addon-api": "^8.2.2",
     "uuid": "^9.0.0"
   },
   "keywords": [

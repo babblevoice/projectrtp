@@ -54,12 +54,28 @@ module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
   }
   */
 
-  /* http://www.tcpdump.org/linktypes.html */
-  if ( 1 != data.readUInt32LE( 5 * 4 ) ) {
-    console.error( "Link layer should be LINKTYPE_ETHERNET" )
+  /* http://www.tcpdump.org/linktypes.html
+     Supported link layers:
+       1   LINKTYPE_ETHERNET     — 14-byte header, ethertype at offset 12-13
+       113 LINKTYPE_LINUX_SLL    — 16-byte cooked header, proto at offset 14-15
+       276 LINKTYPE_LINUX_SLL2   — 20-byte cooked-v2 header, proto at offset 0-1
+     The IVR DTMF pcap is SLL2 because it was captured on a Linux `any`
+     interface; SLL is the older v1 form. Both put an EtherType-compatible
+     protocol field somewhere in the frame header and the L3 payload right
+     after it, so we just key the offsets off the linktype. */
+  const linktype = data.readUInt32LE( 5 * 4 )
+  let l3offset, protooff, hasmac
+  switch( linktype ) {
+  case 1:
+    l3offset = 14; protooff = 12; hasmac = true; break
+  case 113:
+    l3offset = 16; protooff = 14; hasmac = false; break
+  case 276:
+    l3offset = 20; protooff = 0;  hasmac = false; break
+  default:
+    console.error( `Unsupported link layer ${ linktype } — expected ETHERNET (1), LINUX_SLL (113) or LINUX_SLL2 (276)` )
     return
   }
-  //console.log( "LINKTYPE_ETHERNET" )
   /* Read our first packet header */
   fileposition += 24
 
@@ -86,9 +102,11 @@ module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
 
     etherpacket.ts_sec_offset = ( ts_sec + ( ts_usec / 1000000 ) ) - ts_firstether
     //etherpacket.ts_usec = ts_usec
-    etherpacket.src = "" + toHex( data.readUInt8( fileposition ) ) + ":" + toHex( data.readUInt8( fileposition + 1 ) ) + ":" + toHex( data.readUInt8( fileposition + 2 ) ) + ":" + toHex( data.readUInt8( fileposition + 3 ) ) + ":" + toHex( data.readUInt8( fileposition + 4 ) ) + ":" + toHex( data.readUInt8( fileposition + 5 ) )
-    etherpacket.dst = "" + toHex( data.readUInt8( fileposition + 6 ) ) + ":" + toHex( data.readUInt8( fileposition + 7 ) ) + ":" + toHex( data.readUInt8( fileposition + 8 ) ) + ":" + toHex( data.readUInt8( fileposition + 9 ) ) + ":" + toHex( data.readUInt8( fileposition + 10 ) ) + ":" + toHex( data.readUInt8( fileposition + 11 ) )
-    etherpacket.ethertype = "" + toHex( data.readUInt8( fileposition + 12 ) ) + toHex( data.readUInt8( fileposition + 13 ) )
+    if( hasmac ) {
+      etherpacket.src = "" + toHex( data.readUInt8( fileposition ) ) + ":" + toHex( data.readUInt8( fileposition + 1 ) ) + ":" + toHex( data.readUInt8( fileposition + 2 ) ) + ":" + toHex( data.readUInt8( fileposition + 3 ) ) + ":" + toHex( data.readUInt8( fileposition + 4 ) ) + ":" + toHex( data.readUInt8( fileposition + 5 ) )
+      etherpacket.dst = "" + toHex( data.readUInt8( fileposition + 6 ) ) + ":" + toHex( data.readUInt8( fileposition + 7 ) ) + ":" + toHex( data.readUInt8( fileposition + 8 ) ) + ":" + toHex( data.readUInt8( fileposition + 9 ) ) + ":" + toHex( data.readUInt8( fileposition + 10 ) ) + ":" + toHex( data.readUInt8( fileposition + 11 ) )
+    }
+    etherpacket.ethertype = "" + toHex( data.readUInt8( fileposition + protooff ) ) + toHex( data.readUInt8( fileposition + protooff + 1 ) )
     if ( 1536 < parseInt( etherpacket.ethertype, 16 ) ) {
 
       let hostid
@@ -97,7 +115,7 @@ module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
       case "0800":
         /* IPV4 */
         etherpacket.ipv4 = {}
-        etherpacket.ipv4.data = data.subarray( fileposition + 14, fileposition + 14 + incl_len )//uint8array.slice( 14, uint8array.length )
+        etherpacket.ipv4.data = data.subarray( fileposition + l3offset, fileposition + l3offset + incl_len )//uint8array.slice( 14, uint8array.length )
         etherpacket.ipv4.version = parseInt( toHex( ( etherpacket.ipv4.data[ 0 ] >> 4 ) & 0xf ), 16 )
         etherpacket.ipv4.ihl = parseInt( toHex( etherpacket.ipv4.data[ 0 ] & 0xf ), 16 )
         etherpacket.ipv4.dscp = toHex( ( etherpacket.ipv4.data[ 1 ] >> 2 ) & 0x3f )

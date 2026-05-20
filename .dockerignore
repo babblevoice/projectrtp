@@ -11,5 +11,24 @@ build
 Dockerfile
 
 node_modules
-libilbc
+# libilbc/ used to be ignored because the C++ build linked `-lilbc` from
+# the host image. The Rust Docker build compiles it from this in-repo
+# tree (Alpine has no libilbc package), so the source must ship in the
+# build context. Exclude the .tar.gz snapshot and the pre-extracted
+# libilbc-3.0.4 copy instead — both are redundant with libilbc/.
+libilbc-3.0.4
+libilbc-3.0.4.tar.gz
+libilbc-3.0.4.tar.gz.1
 out
+
+# Host-built cmake cache for libilbc must not ship into the image — the
+# Dockerfile re-runs cmake inside Alpine/musl and a Fedora-path
+# CMakeCache.txt baked in here silently poisons that re-run, causing
+# libilbc.so.3 to vanish from /usr/local/lib and the Rust link step to
+# fail with `cannot find -l:libilbc.so.3`.
+libilbc/_build
+libilbc/CMakeFiles
+libilbc/CMakeCache.txt
+libilbc/cmake_install.cmake
+libilbc/Makefile
+libilbc/libilbc.so*

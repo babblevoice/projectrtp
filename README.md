@@ -1,8 +1,13 @@
 # ProjectRTP
 
+Also see:
+[MIGRATE.md](./MIGRATE.md)
+[ARCHITECTURE.md](./ARCHITECTURE.md)
+
+
 [![Build](https://github.com/babblevoice/projectrtp/actions/workflows/buildimage.yaml/badge.svg)](https://github.com/babblevoice/projectrtp/actions/workflows/buildimage.yaml)
 
-An RTP node addon which offers functionality to process RTP data streams and mix it. All performance tasks are implemented in C++ and use boost::asio for IO completion ports for high concurrency.
+An RTP node addon which offers functionality to process RTP data streams and mix it. All performance tasks are implemented in Rust (a napi-rs native module) with a per-channel tokio actor model for high concurrency.
 
 ProjectRTP is designed to scale to multiple servers serving other signalling servers. RTP and signalling should be kept separate, and this architecture allows that. It is provided with a proxy server and client to allow for remote nodes.
 
@@ -43,30 +48,33 @@ Public docker images for amd64 and arm64 available on [Docker Hub](https://hub.d
 
 ## Tests
 
-Tests require a native build environment (C++ toolchain, libilbc, etc.) so they run inside Docker using the builder stage.
+Tests need the native module built (libilbc + libspandsp), so the simplest path is the Docker `test` stage. Locally, `npm run build` produces `build/Release/projectrtp.node` from the Rust crate and `npm test` runs the suite against it (requires `libilbc` and `libspandsp` on the host).
 
 ### Build the test image
 
 ```bash
-docker build --target builder -t projectrtp-test .
+docker build --target test -t projectrtp-test .
 ```
 
 ### Run all tests
 
 ```bash
-docker run --rm projectrtp-test sh -c \
-  "cd /usr/src/projectrtp && npm install mocha chai && npx mocha 'test/interface/*.js' 'test/unit/*.js' --check-leaks --exit"
+docker run --rm projectrtp-test
 ```
 
-Note: use `test/interface/*.js` and `test/unit/*.js` — not `test/**/*.js` — because `test/basictests.js` and `test/codectests.js` are standalone scripts (not mocha tests) that will hang if loaded by mocha.
+The image's default command runs `mocha test/interface/*.js test/unit/*.js --exit`.
+
+Note: the suite uses `test/interface/*.js` and `test/unit/*.js` — not `test/**/*.js` — because `test/basictests.js` and `test/codectests.js` are standalone scripts (not mocha tests) that will hang if loaded by mocha.
 
 ### Run a specific test
 
 Most test files rely on the server test (`projectrtpserver.js`) to initialise the native module first, so include it when running individual files:
 
 ```bash
-docker run --rm projectrtp-test sh -c \
-  "cd /usr/src/projectrtp && npm install mocha chai && npx mocha test/interface/projectrtpserver.js test/interface/projectrtpplayrecord.js --exit --timeout 20000"
+docker run --rm projectrtp-test \
+  ./node_modules/mocha/bin/_mocha \
+  test/interface/projectrtpserver.js test/interface/projectrtpplayrecord.js \
+  --exit --timeout 20000
 ```
 
 ### Test with local edits
@@ -77,11 +85,21 @@ Mount `test/` and `lib/` so you can edit and re-run without rebuilding the nativ
 docker run --rm \
   -v ./test:/usr/src/projectrtp/test \
   -v ./lib:/usr/src/projectrtp/lib \
-  projectrtp-test sh -c \
-  "cd /usr/src/projectrtp && npm install mocha chai && npx mocha test/interface/projectrtpserver.js test/interface/projectrtpplayrecord.js --exit --timeout 20000"
+  projectrtp-test \
+  ./node_modules/mocha/bin/_mocha \
+  test/interface/projectrtpserver.js test/interface/projectrtpplayrecord.js \
+  --exit --timeout 20000
 ```
 
-If you change C++ source files, rebuild the image.
+If you change Rust source files, rebuild the image.
+
+### Rust unit tests
+
+The crate's own unit tests run via cargo:
+
+```bash
+npm run rust:test          # or: cd rust && cargo test --lib
+```
 
 ### Stress tests
 
@@ -94,7 +112,7 @@ docker run --rm projectrtp-test sh -c \
 
 ### Mic test tool
 
-`test/tools/mictest.js` is a CLI tool for manually testing playrecord with a real microphone and speakers. It requires a native build of projectrtp and `sox` on the host — see the Dockerfile for the full list of build dependencies.
+`test/tools/mictest.js` is a CLI tool for manually testing playrecord with a real microphone and speakers. It requires a local native build (`npm run build`) and `sox` on the host — see the Dockerfile for the full list of build dependencies.
 
 ```bash
 node test/tools/mictest.js [--prompt <file>] [--output <file>] [--duration <ms>] [--interrupt] [--bargeinpower <n>]
@@ -335,6 +353,125 @@ channel.record( {
 } )
 ```
 
+### Live audio — `channel.createReadStream`
+
+Returns a standard Node `Readable` that emits decoded audio buffers as the channel receives / sends them. Use this to feed the audio into anything that takes a stream — STT, translation, captioning, WebSocket forwarders, on-disk capture — without going through the recorder / file path.
+
+The byte shape of every emitted chunk is fixed for the lifetime of the reader and exposed as properties on the Readable:
+
+```js
+const reader = channel.createReadStream( {
+  direction:   "in",    // "in" (default) | "out" | "both"
+  format:      "l16",   // "l16" (default) | "pcma" | "pcmu" | "g722" | "ilbc"
+  samplerate:  8000,    // 8000 (default) | 16000  — only meaningful for l16
+  numchannels: 1        // 1 (default) | 2  — stereo interleaves L=in R=out
+} )
+
+reader.format        // "l16"
+reader.samplerate    // 8000
+reader.numchannels   // 1
+reader.direction     // "in"
+reader.readerId      // monotonic id (handy for log correlation)
+
+reader.on( "data", ( buf ) => { /* Buffer, one 20 ms frame */ } )
+reader.on( "end",  () => {} )   // fires on channel close or reader.destroy()
+
+reader.pipe( wsStream )         // standard Node stream composition
+reader.destroy()                // explicit teardown
+```
+
+**Direction**
+
+- `"in"` — audio the peer sent us, post-decode. What you want for STT / voice biometrics on the caller.
+- `"out"` — audio this channel is sending (player, echo, or the mix output). What the peer hears.
+- `"both"` — stereo, interleaved, L = in, R = out. Requires `numchannels: 2`.
+
+For independent per-speaker streams (e.g. diarised captions), create **two readers on the same channel** — one `direction: "in"`, one `direction: "out"`. Two mono streams, two independent STT pipelines, no coupling between them.
+
+**Format**
+
+`"l16"` gives linear PCM-16 LE at the chosen sample rate — the universal format that every STT / translation API accepts. The wire formats (`"pcma"`, `"pcmu"`, `"g722"`, `"ilbc"`) deliver raw codec bytes, useful when you want to forward a leg elsewhere without re-encoding.
+
+**Backpressure and drops**
+
+The pipeline never blocks the 20 ms RTP tick. If the consumer (or the Node event loop, or the napi queue) falls behind, frames are dropped. In practice this only bites if the consumer is genuinely stuck — typical STT / WebSocket consumers keep up with 20 ms frames comfortably.
+
+**Example — pipe a leg into a WebSocket STT service:**
+
+```js
+const reader = channel.createReadStream( { direction: "in", format: "l16", samplerate: 16000 } )
+const ws = new WebSocket( "wss://stt.example.com/stream?rate=16000&format=l16" )
+
+reader.on( "data", ( buf ) => ws.send( buf ) )
+ws.on( "message", ( transcript ) => console.log( "→", transcript.toString() ) )
+
+/* When the call ends the reader emits `end` and the ws.send loop quiets. */
+reader.on( "end", () => ws.close() )
+```
+
+**Example — dual-speaker call recording split per channel:**
+
+```js
+const caller = channel.createReadStream( { direction: "in" } )
+const agent  = channel.createReadStream( { direction: "out" } )
+
+caller.pipe( fs.createWriteStream( "/tmp/caller.pcm" ) )
+agent.pipe(  fs.createWriteStream( "/tmp/agent.pcm" ) )
+```
+
+### Live audio — `channel.createWriteStream`
+
+The symmetric counterpart to `createReadStream`. Returns a Node `Writable` that injects live audio into the channel's outbound leg — pipe in a TTS stream, a live translation feed, a bot's synthesised voice, anything that produces PCM.
+
+```js
+const writer = channel.createWriteStream( {
+  format:      "l16",   // v1: l16 only
+  samplerate:  8000,    // v1: 8000 only
+  numchannels: 1        // v1: mono only
+} )
+
+writer.format        // "l16"
+writer.samplerate    // 8000
+writer.numchannels   // 1
+writer.writerId      // monotonic id
+
+writer.write( pcmBuffer )   // accepts any chunk size — framed internally
+writer.end()                 // flushes the tail then reverts to silence
+writer.destroy()             // immediate teardown, discards buffered samples
+
+ttsStream.pipe( writer )     // standard Node stream composition
+```
+
+**Relationship to `play`**
+
+A writer and `channel.play` share the single outbound-source slot on a channel. Starting a writer supersedes any active player (emits `play/end reason=new`); likewise `channel.play` supersedes an active writer. There is always at most one outbound source; when neither is present the channel sends silence.
+
+**Framing**
+
+You can `.write` any chunk size — the Rust side buffers bytes and frames them into 20 ms slots for the tick. An 8 kHz L16 stream needs ~16 000 bytes/sec (320 bytes per 20 ms frame), so a typical `.pipe` from a WebSocket or HTTP body keeps up comfortably.
+
+**Backpressure**
+
+The Rust-side buffer is bounded at 1 s (50 × 20 ms). If the consumer writes faster than the tick drains, `_write` delays its callback until space frees up — standard Node `Writable` backpressure kicks in and `.write` returns `false`. On underrun (nothing written for a tick) the channel sends silence for that slot.
+
+**End-of-stream**
+
+`writer.end()` drops the JS-side sender. The Rust `AudioWriter` sees the close, flushes any partial frame padded with silence, then retires itself from the channel. A `play/end reason=completed` event fires — symmetric with how a file-based `play` naturally ends.
+
+**Example — pipe a TTS response into a live call:**
+
+```js
+const writer = channel.createWriteStream()
+
+const res = await fetch( "https://tts.example.com/say", {
+  method: "POST",
+  body:   JSON.stringify( { text: "Your call is important to us." } ),
+} )
+// res.body is a Readable web stream of raw PCM-16 @ 8 kHz mono.
+// Pipe straight through; backpressure is preserved end-to-end.
+res.body.pipe( writer )
+```
+
 ## Utils
 
 ### Tone generation
@@ -396,10 +533,10 @@ prtp.tone.generate( "697+1209*0.5/0/697+1336*0.5/0/697+1477*0.5/0:400/100", "dtm
 ### TODO
 
 * Format conversion between wav file types (l16, rate pcmu, pcma etc).
-* Add support for cppcheck on commit and tidy up current warnings (see below).
+* Keep clippy clean on commit (enforced in CI):
 
 ```
-cppcheck --enable=warning,performance,portability,style --error-exitcode=1 src/
+cd rust && cargo clippy --all-targets -- -D warnings
 ```
 
 # Ref

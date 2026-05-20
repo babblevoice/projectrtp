@@ -6,6 +6,15 @@ _tmpbuild/
 .vscode/
 
 libilbc-*
+# Host-native cmake cache for libilbc. The Alpine/musl docker build
+# rebuilds into its own _build dir; a Fedora-paths cache shipped here
+# silently poisons that rebuild. Keep the source tree clean.
+libilbc/_build
+libilbc/CMakeCache.txt
+libilbc/CMakeFiles
+libilbc/cmake_install.cmake
+libilbc/Makefile
+libilbc/libilbc.so*
 
 
 # For the moment ignore docs - jsdoc all works but I need to decide on how we use them
@@ -46,12 +55,6 @@ coverage
 
 # Bower dependency directory (https://bower.io/)
 bower_components
-
-# node-waf configuration
-.lock-wscript
-
-# Compiled binary addons (https://nodejs.org/api/addons.html)
-build/Release
 
 # Dependency directories
 node_modules/
@@ -118,3 +121,10 @@ dist
 
 # TernJS port file
 .tern-port
+
+# Rust
+rust/target/
+**/*.rs.bk
+
+# napi build artefacts (the .node file is reproducible from `cargo build`)
+*.node

@@ -466,7 +466,15 @@ describe( "record", function() {
     await new Promise( resolve => server.close( () => resolve() ) )
 
     let stats = fs.statSync( "/tmp/dualrecordingpower.wav" )
-    expect( stats.size ).to.be.within( 30000 , 41000 )
+    // Bound widened from 30000..41000. The Rust port computes
+    // sum-of-squares in u64, whereas the C++ version uses uint32_t which
+    // overflows on tone-amplitude audio (160 × 14142² ≈ 3.2e10 > 2³²).
+    // C++'s wrapped result produces smaller pkt_power, hence an MA
+    // trajectory that crosses the finish threshold slightly earlier.
+    // The Rust recording of ~1.46 s (power-gate from ~220 ms warmup to
+    // 240 ms after tone ends, which is the MA(10) decay time) is
+    // mathematically correct; the ceiling was C++-calibrated.
+    expect( stats.size ).to.be.within( 30000, 50000 )
 
     stats = fs.statSync( "/tmp/dualrecording.wav" )
     expect( stats.size ).to.be.within( 110000, 190000 )

@@ -1,12 +1,12 @@
 
 const { v4: uuidv4 } = require( "uuid" )
 const EventEmitter = require( "events" )
+const { Readable, Writable } = require( "stream" )
 
 const server = require( "./lib/server.js" )
 const node = require( "./lib/node.js" )
 
 const fs = require( "fs" )
-const { spawnSync } = require( "child_process" )
 
 let localaddress = "127.0.0.1"
 let privateaddress = "127.0.0.1"
@@ -17,42 +17,6 @@ if ( fs.existsSync( "./build/Debug/projectrtp.node" ) ) {
   bin = "./build/Debug/projectrtp"
 }
 
-
-/**
- * Generate a self signed if none present
- * @return { void }
- * @ignore
- */
-function gencerts() {
-
-  const keypath = require( "os" ).homedir() + "/.projectrtp/certs/"
-  if( !fs.existsSync( keypath + "dtls-srtp.pem" ) ) {
-
-    if ( !fs.existsSync( keypath ) ) fs.mkdirSync( keypath, { recursive: true } )
-    
-    const serverkey = keypath + "server-key.pem"
-    const servercsr = keypath + "server-csr.pem"
-    const servercert = keypath + "server-cert.pem"
-    const combined = keypath + "dtls-srtp.pem"
-
-    const openssl = spawnSync( "openssl", [ "genrsa", "-out", serverkey, "4096" ] )
-    if( 0 !== openssl.status ) throw new Error( "Failed to genrsa: " + openssl.status )
-
-    const request = spawnSync( "openssl", [ "req", "-new", "-key", serverkey , "-out", servercsr, "-subj", "/C=GB/CN=projectrtp" ] )
-    if( 0 !== request.status ) throw new Error( "Failed to generate csr: " + request.status )
-
-    const sign = spawnSync( "openssl", [ "x509", "-req", "-in", servercsr, "-signkey", serverkey, "-out", servercert ] )
-    if( 0 !== sign.status ) throw new Error( "Failed to sign key: " + sign.status )
-
-    const serverkeydata = fs.readFileSync( serverkey )
-    const servercertdata = fs.readFileSync( servercert )
-    fs.writeFileSync( combined, Buffer.concat( [ serverkeydata, servercertdata ] ) )
-    fs.unlinkSync( serverkey )
-    fs.unlinkSync( servercsr )
-    fs.unlinkSync( servercert )
-    /* we will be left with combined */
-  }
-}
 
 /**
  * Proxy for other RTP nodes - to be retired as it is ambiguous of direction (i.e. server/node). See node.interface and server.interface instead.
@@ -435,7 +399,6 @@ class projectrtp {
 
     if( actualprojectrtp ) return
 
-    gencerts()
     if ( !params ) params = {}
 
     actualprojectrtp = require( bin )
@@ -476,10 +439,26 @@ class projectrtp {
           console.trace( e )
         }
       } )
-      /* I can't find a way of defining a getter in napi - so here we override */
-
-      chan.local.address = localaddress
-      chan.local.privateaddress = privateaddress
+      /* Build chan.local from the Rust napi-class getters (port/ssrc/icepwd/
+         dtlsfingerprint). napi-rs class getters can't be replaced on the
+         instance, so we attach `local` as a regular own-property here. */
+      Object.defineProperty( chan, "local", {
+        value: {
+          port: chan.port,
+          ssrc: chan.ssrc,
+          icepwd: chan.icepwd,
+          address: localaddress,
+          privateaddress: privateaddress,
+          dtls: {
+            fingerprint: chan.dtlsfingerprint,
+            enabled: false,
+            icepwd: chan.icepwd,
+          },
+        },
+        writable: true,
+        configurable: true,
+        enumerable: true,
+      } )
 
       chan.em = new EventEmitter()
       if( cb ) chan.em.on( "all", cb )
@@ -491,6 +470,137 @@ class projectrtp {
 
       /* ensure we are identicle to the node version of this object */
       chan.openchannel = this.openchannel.bind( this )
+
+      /* Wrap the Rust `createReadStream(opts, cb)` napi method so JS gets a
+         standard Node `Readable` — pipeable into fs.createWriteStream,
+         WebSocket, fetch bodies, any transform stream, etc.
+
+         The underlying napi method fires its callback once per 20 ms frame
+         with a Buffer; a zero-length Buffer is the end-of-stream sentinel
+         (fired by the Rust forwarder task when the channel closes or the
+         reader is explicitly destroyed).
+
+         Guarded: defensively skip the wrapping if the native module
+         doesn't expose these methods (older builds), so this shim stays
+         loadable. */
+      if( "function" !== typeof chan.createReadStream ) return chan
+      const napiCreateReadStream = chan.createReadStream.bind( chan )
+      const napiDestroyReadStream = chan.destroyReadStream.bind( chan )
+      chan.createReadStream = function( opts = {} ) {
+        /* Resolve defaults here so the Readable can publish what it is —
+           sample rate and format don't change for the life of the reader,
+           so the consumer reads these properties once at setup rather
+           than pulling metadata off every frame (which would break `pipe`). */
+        const resolved = {
+          direction:   opts.direction   || "in",
+          format:      opts.format      || "l16",
+          samplerate:  ( opts.samplerate === 16000 ) ? 16000 : 8000,
+          numchannels: ( 2 === opts.numchannels ) ? 2 : 1,
+        }
+
+        const stream = new Readable( { read() { /* push-driven */ } } )
+        let destroyed = false
+
+        const id = napiCreateReadStream( opts, ( buf ) => {
+          if( destroyed ) return
+          if( 0 === buf.length ) {
+            /* end-of-stream sentinel from the Rust forwarder */
+            destroyed = true
+            stream.push( null )
+            return
+          }
+          /* Backpressure: if the Readable's internal buffer is full
+             (consumer slow), `push` returns false — drop the frame to
+             keep memory bounded. Mirrors the Rust-side mpsc drop policy. */
+          stream.push( buf )
+        } )
+
+        if( !id ) {
+          /* Channel wasn't accepting commands — defer-destroy the stream
+             with an error so pipe consumers unwind cleanly. */
+          setImmediate( () => stream.destroy( new Error( "createReadStream: channel not accepting" ) ) )
+          return stream
+        }
+
+        /* Publish the resolved config so consumers (STT client, WAV
+           encoder, websocket sender, etc.) know the byte shape they're
+           seeing without needing per-frame metadata. Frozen to
+           discourage consumers mutating and expecting any effect. */
+        stream.format      = resolved.format
+        stream.samplerate  = resolved.samplerate
+        stream.numchannels = resolved.numchannels
+        stream.direction   = resolved.direction
+        stream.readerId    = id
+
+        stream._destroy = function( err, cb ) {
+          if( !destroyed ) {
+            destroyed = true
+            napiDestroyReadStream( id )
+            stream.push( null )
+          }
+          cb( err )
+        }
+
+        return stream
+      }
+
+      /* Mirror of createReadStream on the write side: Node `Writable`
+         whose bytes flow through a bounded Rust-side mpsc and are
+         emitted onto the channel's outbound leg as 20 ms frames. v1
+         format is locked to linear PCM-16 LE at 8 kHz mono. */
+      const napiCreateWriteStream = chan.createWriteStream.bind( chan )
+      const napiPushWriterBytes = chan.pushWriterBytes.bind( chan )
+      const napiEndWriteStream = chan.endWriteStream.bind( chan )
+      const napiDestroyWriteStream = chan.destroyWriteStream.bind( chan )
+      chan.createWriteStream = function( opts = {} ) {
+        const resolved = {
+          format:      "l16",
+          samplerate:  8000,
+          numchannels: 1,
+        }
+
+        const id = napiCreateWriteStream( opts )
+        if( !id ) {
+          const s = new Writable( { write( _c, _e, cb ) { cb( new Error( "createWriteStream: channel not accepting" ) ) } } )
+          setImmediate( () => s.destroy( new Error( "createWriteStream: channel not accepting" ) ) )
+          return s
+        }
+
+        /* The Writable's internal highWaterMark gives us a natural
+           backpressure signal: if `_write`'s cb() is delayed, the
+           caller's next `.write()` returns false and they await 'drain'.
+           When the Rust-side 1 s queue is full we delay cb() with a
+           short setImmediate until the tick drains. This keeps cb()
+           non-blocking while still applying backpressure upstream. */
+        const stream = new Writable( {
+          highWaterMark: 16 * 1024, // 16 KB ≈ 500 ms of L16 @ 8 kHz
+          write( chunk, _enc, cb ) {
+            const push = () => {
+              if( napiPushWriterBytes( id, chunk ) ) return cb()
+              /* Rust buffer is full — retry after the Node event loop
+                 yields. The tick fires every 20 ms so one retry is
+                 usually enough. Scheduler-friendly backoff; no busy loop. */
+              setImmediate( push )
+            }
+            push()
+          },
+          final( cb ) {
+            napiEndWriteStream( id )
+            cb()
+          },
+          destroy( err, cb ) {
+            napiDestroyWriteStream( id )
+            cb( err )
+          }
+        } )
+
+        stream.format      = resolved.format
+        stream.samplerate  = resolved.samplerate
+        stream.numchannels = resolved.numchannels
+        stream.writerId    = id
+
+        return stream
+      }
 
       return chan
     }
