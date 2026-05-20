@@ -7,7 +7,7 @@ Also see:
 
 [![Build](https://github.com/babblevoice/projectrtp/actions/workflows/buildimage.yaml/badge.svg)](https://github.com/babblevoice/projectrtp/actions/workflows/buildimage.yaml)
 
-An RTP node addon which offers functionality to process RTP data streams and mix it. All performance tasks are implemented in C++ and use boost::asio for IO completion ports for high concurrency.
+An RTP node addon which offers functionality to process RTP data streams and mix it. All performance tasks are implemented in Rust (a napi-rs native module) with a per-channel tokio actor model for high concurrency.
 
 ProjectRTP is designed to scale to multiple servers serving other signalling servers. RTP and signalling should be kept separate, and this architecture allows that. It is provided with a proxy server and client to allow for remote nodes.
 
@@ -48,30 +48,33 @@ Public docker images for amd64 and arm64 available on [Docker Hub](https://hub.d
 
 ## Tests
 
-Tests require a native build environment (C++ toolchain, libilbc, etc.) so they run inside Docker using the builder stage.
+Tests need the native module built (libilbc + libspandsp), so the simplest path is the Docker `test` stage. Locally, `npm run build` produces `build/Release/projectrtp.node` from the Rust crate and `npm test` runs the suite against it (requires `libilbc` and `libspandsp` on the host).
 
 ### Build the test image
 
 ```bash
-docker build --target builder -t projectrtp-test .
+docker build --target test -t projectrtp-test .
 ```
 
 ### Run all tests
 
 ```bash
-docker run --rm projectrtp-test sh -c \
-  "cd /usr/src/projectrtp && npm install mocha chai && npx mocha 'test/interface/*.js' 'test/unit/*.js' --check-leaks --exit"
+docker run --rm projectrtp-test
 ```
 
-Note: use `test/interface/*.js` and `test/unit/*.js` — not `test/**/*.js` — because `test/basictests.js` and `test/codectests.js` are standalone scripts (not mocha tests) that will hang if loaded by mocha.
+The image's default command runs `mocha test/interface/*.js test/unit/*.js --exit`.
+
+Note: the suite uses `test/interface/*.js` and `test/unit/*.js` — not `test/**/*.js` — because `test/basictests.js` and `test/codectests.js` are standalone scripts (not mocha tests) that will hang if loaded by mocha.
 
 ### Run a specific test
 
 Most test files rely on the server test (`projectrtpserver.js`) to initialise the native module first, so include it when running individual files:
 
 ```bash
-docker run --rm projectrtp-test sh -c \
-  "cd /usr/src/projectrtp && npm install mocha chai && npx mocha test/interface/projectrtpserver.js test/interface/projectrtpplayrecord.js --exit --timeout 20000"
+docker run --rm projectrtp-test \
+  ./node_modules/mocha/bin/_mocha \
+  test/interface/projectrtpserver.js test/interface/projectrtpplayrecord.js \
+  --exit --timeout 20000
 ```
 
 ### Test with local edits
@@ -82,11 +85,21 @@ Mount `test/` and `lib/` so you can edit and re-run without rebuilding the nativ
 docker run --rm \
   -v ./test:/usr/src/projectrtp/test \
   -v ./lib:/usr/src/projectrtp/lib \
-  projectrtp-test sh -c \
-  "cd /usr/src/projectrtp && npm install mocha chai && npx mocha test/interface/projectrtpserver.js test/interface/projectrtpplayrecord.js --exit --timeout 20000"
+  projectrtp-test \
+  ./node_modules/mocha/bin/_mocha \
+  test/interface/projectrtpserver.js test/interface/projectrtpplayrecord.js \
+  --exit --timeout 20000
 ```
 
-If you change C++ source files, rebuild the image.
+If you change Rust source files, rebuild the image.
+
+### Rust unit tests
+
+The crate's own unit tests run via cargo:
+
+```bash
+npm run rust:test          # or: cd rust && cargo test --lib
+```
 
 ### Stress tests
 
@@ -99,7 +112,7 @@ docker run --rm projectrtp-test sh -c \
 
 ### Mic test tool
 
-`test/tools/mictest.js` is a CLI tool for manually testing playrecord with a real microphone and speakers. It requires a native build of projectrtp and `sox` on the host — see the Dockerfile for the full list of build dependencies.
+`test/tools/mictest.js` is a CLI tool for manually testing playrecord with a real microphone and speakers. It requires a local native build (`npm run build`) and `sox` on the host — see the Dockerfile for the full list of build dependencies.
 
 ```bash
 node test/tools/mictest.js [--prompt <file>] [--output <file>] [--duration <ms>] [--interrupt] [--bargeinpower <n>]
@@ -520,10 +533,10 @@ prtp.tone.generate( "697+1209*0.5/0/697+1336*0.5/0/697+1477*0.5/0:400/100", "dtm
 ### TODO
 
 * Format conversion between wav file types (l16, rate pcmu, pcma etc).
-* Add support for cppcheck on commit and tidy up current warnings (see below).
+* Keep clippy clean on commit (enforced in CI):
 
 ```
-cppcheck --enable=warning,performance,portability,style --error-exitcode=1 src/
+cd rust && cargo clippy --all-targets -- -D warnings
 ```
 
 # Ref

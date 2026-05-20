@@ -4,7 +4,7 @@ This is a map of the Rust code under `rust/src/`. Start with the diagram,
 then the "how a packet flows" section, then the per-module index when you
 need a specific file.
 
-For the port-from-C++ history and status, see [MIGRATE.md](./MIGRATE.md).
+For the history of the C++ → Rust port, see [MIGRATE.md](./MIGRATE.md).
 
 ## Layout at a glance
 
@@ -91,7 +91,7 @@ Two shapes in the diagram:
    - In either case: read `summed_minus(own_idx)`, encode to `state.remote_pt`, send to `state.remote_addr`.
 2. **DTMF** takes priority over mix audio when active: `dtmf_send` (JS-initiated) and `dtmf_relay` (regenerated from peer mix) both emit as RFC 2833 bursts.
 3. **Echo** — if `state.echo == true` and there's an inbound packet, mirror it back to remote.
-4. **Silence** — no fallback. The C++ default is "silent until someone asks for media"; earlier fallback-silence caused stray PCMA packets to bleed into tests.
+4. **Silence** — no fallback. The behaviour is "silent until someone asks for media" (inherited from the original C++ implementation); earlier fallback-silence caused stray PCMA packets to bleed into tests.
 
 ## Control plane: JS → Rust → JS
 

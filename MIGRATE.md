@@ -1,318 +1,92 @@
-# C++ → Rust migration
+# C++ → Rust migration (historical)
 
-This document tracks the in-flight port of the projectrtp C++ NAPI addon
-(under `src/`) to a Rust napi-rs crate (under `rust/`). The old addon still
-builds and is the canonical reference for behavior; the tests in `test/` are
-the shared acceptance criteria.
+projectrtp began as a C++ NAPI addon. It was ported to a Rust napi-rs
+crate and the C++ implementation was **removed in 3.0.0** — Rust is now
+the only backend. This document is kept for context: why the port was
+done the way it was, and the performance evidence behind it.
 
-## Whilst testing
-
-Build the test image:
-```bash
-docker build -f Dockerfile.rust --target test -t projectrtp-test .
-```
-
-Build a production version
-```bash
-docker build -f Dockerfile.rust --target app -t projectrtp-app .
-```
-
-Run the full test suite:                                                                                                                                         
+The old C++ tree lived under `src/` (plus `binding.gyp`, the node-gyp
+build, and the C++ `Dockerfile`/`Dockerfile.debian`). To recover it,
+check out a commit before the 3.0.0 cleanup:
 
 ```bash
-docker run --rm projectrtp-test
-
-# or just a file
-docker run --rm projectrtp-test \
-  ./node_modules/mocha/bin/_mocha \
-  test/interface/projectrtpserver.js \
-  test/interface/projectrtpplayrecord.js \
-  test/interface/projectrtprecord.js \
-  --exit
-  
-docker run --rm \
-  -v /home/nick/workspace/babble/projectrtp/test:/usr/src/projectrtp/test:Z \
-  -v /tmp/codecchain-out:/tmp:Z \
-  projectrtp-test \
-  ./node_modules/mocha/bin/_mocha \
-  test/interface/projectrtpserver.js \
-  test/interface/codecchain.js \
-  --grep "G.722 on the wire → mix → PCMA" \
-  --exit
-
-# G.722 on the wire → mix → PCMA
-# or PCMA on the wire → mix → PCMA out
-
-#or bash
-docker run -it --rm projectrtp-test sh
-
+git log --oneline -- src/binding.gyp        # find the last C++ commit
+git show <commit>:src/projectrtpchannel.cpp  # read a specific file
 ```
 
-In babble-sip - how we build
-```bash
-docker compose -f compose.yaml -f compose.rust.yaml up --build
-```
+The current architecture is documented in [ARCHITECTURE.md](./ARCHITECTURE.md).
 
-## Migration strategy
+## Why it was done this way
 
-- **Behavior-preserving, not line-by-line.** The tests in `test/interface/`
-  and `test/unit/` are the contract. Rust modules are free to reshape the
-  implementation as long as the JS surface and observable wire behavior
-  match.
-- **Module-at-a-time.** One C++ translation unit maps to one Rust module
-  (sometimes split further — e.g. `projectrtpchannel.cpp` at ~3k LOC fans
-  out across `channel/{actor,commands,state,tick,facade,rtp,jitter}.rs`).
-- **Actor model replaces shared-mutex state.** The C++ code uses spinlocks
-  and `shared_from_this`; the Rust port gives each channel a tokio task
-  that owns its `ChannelState` exclusively. Outside callers (JS, other
-  channels, the mix group) send `Command`s through an mpsc queue. See
-  `rust/src/channel/actor.rs` header comment for the ownership rules.
-- **Fast paths stay fast.** The 2-channel mix is implemented as a byte
-  relay in `tick.rs` (no mix group actor, no decode/encode round-trip)
-  because it covers the overwhelming majority of production traffic and
-  every `test/interface/projectrtpmix.js` test. The full N-way mix lives
-  in `channel/mixer.rs` and is only used when >2 channels or when a codec
-  combination the relay can't handle shows up.
-- **Safety by design.** Unsafe is confined to FFI shims only (SRTP, iLBC,
-  G.722 bindings). Everything else is safe Rust — no raw pointers, no
-  manually tracked lifetimes, no `shared_from_this`.
+- **Behavior-preserving, not line-by-line.** The tests in
+  `test/interface/` and `test/unit/` were the contract. The Rust modules
+  reshaped the implementation freely as long as the JS surface and
+  observable wire behavior matched. Those same tests remain the
+  acceptance suite.
+- **Module-at-a-time.** One C++ translation unit mapped to one Rust
+  module, sometimes split further — e.g. the ~3k-LOC
+  `projectrtpchannel.cpp` fanned out across
+  `channel/{actor,commands,state,tick,facade,rtp,jitter}.rs`.
+- **Actor model replaced shared-mutex state.** The C++ code used
+  spinlocks and `shared_from_this`. The Rust port gives each channel a
+  tokio task that owns its `ChannelState` exclusively; outside callers
+  (JS, other channels, the mix group) send `Command`s through an mpsc
+  queue. See the `rust/src/channel/actor.rs` header for the ownership
+  rules.
+- **Fast paths stayed fast.** The 2-channel mix is a byte relay in
+  `tick.rs` (no mix-group actor, no decode/encode round-trip) — it covers
+  the overwhelming majority of production traffic. The full N-way mix in
+  `channel/mixer.rs` is used only for >2 channels or codec combinations
+  the relay can't handle.
+- **Safety by design.** Unsafe is confined to FFI shims only (SRTP,
+  iLBC, G.722 bindings). Everything else is safe Rust — no raw pointers,
+  no manually tracked lifetimes, no `shared_from_this`. The Boost
+  exception shim was dropped entirely; `Result` replaces it.
+- **Native codecs kept bit-identical.** G.722 (libspandsp) and iLBC
+  (libilbc) are thin safe FFI over the same C libraries the C++ addon
+  used, so transcoded output is bit-for-bit identical and the
+  frequency-domain transcode tests pass unchanged. G.711 was reimplemented
+  in pure Rust from the spandsp tables.
 
-## File mapping
+## Scheduler: C++ IOCP vs tokio — the open question, settled
 
-```mermaid
-graph LR
-  subgraph Cpp["C++ (src/)"]
-    nodemain["projectrtpnodemain.cpp<br/>(NAPI bootstrap)"]
-    channel_cpp["projectrtpchannel.cpp<br/>(2976 LOC — per-channel state,<br/>tick, sockets, commands)"]
-    mux_cpp["projectrtpchannelmux.cpp<br/>(N-way mix)"]
-    rec_cpp["projectrtpchannelrecorder.cpp"]
-    packet_cpp["projectrtppacket.cpp"]
-    buffer_cpp["projectrtpbuffer.cpp<br/>(jitter / reorder)"]
-    ring_cpp["projectrtpringbuffer.h"]
-    codecx_cpp["projectrtpcodecx.cpp<br/>(G.711 / G.722 / iLBC / L16)"]
-    fir_cpp["projectrtpfirfilter.cpp"]
-    sound_cpp["projectrtpsoundfile.cpp"]
-    soup_cpp["projectrtpsoundsoup.cpp"]
-    raw_cpp["projectrtprawsound.cpp"]
-    srtp_cpp["projectrtpsrtp.cpp"]
-    stun_cpp["projectrtpstun.cpp"]
-    tone_cpp["projectrtptonegen.cpp"]
-    boost_cpp["boostexception.cpp"]
-  end
+The C++ build ran N worker threads (1 per core) with IOCP / io_uring,
+each dispatching work directly from kernel completions with no
+task-migration across cores — good cache locality. The Rust build runs
+each channel as a tokio task on the default multi-thread runtime (also
+1 worker per core, but work-stealing can migrate a task between cores).
 
-  subgraph Rust["Rust (rust/src/)"]
-    lib["lib.rs<br/>(NAPI entry, stats)"]
-    facade["channel/facade.rs<br/>(openchannel, ChannelObject)"]
-    actor["channel/actor.rs<br/>(tokio task, Event, Subsystems)"]
-    commands["channel/commands.rs<br/>(Command enum, Handle)"]
-    state["channel/state.rs<br/>(ChannelState)"]
-    tick["channel/tick.rs<br/>(per-tick pipeline, 2-chan mix relay)"]
-    rtp["channel/rtp.rs<br/>(RtpPacket, PT constants)"]
-    jitter["channel/jitter.rs"]
-    mixer["channel/mixer.rs<br/>(N-way mix actor)"]
-    rec["channel/recorder.rs"]
-    player["channel/player.rs<br/>(soundsoup + playback)"]
-    dtmf["channel/dtmf.rs<br/>(RFC 2833 send/recv)"]
-    dtls_sess["channel/dtls_session.rs"]
-    srtp_ctx["channel/srtp_ctx.rs"]
-    dtls["dtls.rs"]
-    codec["codec.rs (G.711 + transcoder)"]
-    fir["firfilter.rs"]
-    soundfile["soundfile.rs"]
-    rtpbuf["rtpbuffer.rs"]
-    stun["stun.rs"]
-    tone["tone.rs"]
-  end
-
-  nodemain --> lib
-  channel_cpp --> facade
-  channel_cpp --> actor
-  channel_cpp --> commands
-  channel_cpp --> state
-  channel_cpp --> tick
-  channel_cpp --> dtmf
-  packet_cpp --> rtp
-  buffer_cpp --> jitter
-  buffer_cpp --> rtpbuf
-  ring_cpp --> rec
-  mux_cpp --> mixer
-  mux_cpp --> tick
-  rec_cpp --> rec
-  codecx_cpp --> codec
-  fir_cpp --> fir
-  sound_cpp --> soundfile
-  soup_cpp --> player
-  raw_cpp --> soundfile
-  raw_cpp --> rec
-  srtp_cpp --> srtp_ctx
-  stun_cpp --> stun
-  tone_cpp --> tone
-  boost_cpp -.->|dropped — Result replaces| Rust
-```
-
-### Per-file notes
-
-| C++ file | Rust module(s) | Status | Notes |
-|---|---|---|---|
-| `projectrtpnodemain.cpp/.h` | `lib.rs` | partial | `run()` parses `{ports: {start, end}}` and initialises `portpool`. `stats()` returns `{channel:{current, available, totalcreated, totalclosed}, workercount}` — matches the C++ shape `lib/node.js` forwards to a control server (rtpproxynode tests depend on this). `current` / `totalcreated` / `totalclosed` are still placeholders. |
-| `projectrtpchannel.cpp/.h` | `channel/{facade,actor,commands,state,tick,rtp,jitter}.rs` + `channel/dtmf.rs` | in progress | Largest unit; split by concern. See `channel/mod.rs` header for port order. |
-| `projectrtpchannelmux.cpp/.h` | `channel/mixer.rs` (plus emit path in `channel/tick.rs`) | partial | Shared `Arc<parking_lot::Mutex<MixGroupShared>>` model; facade creates a new group on first `mix()`, `push_member`-extends on each subsequent call; `tombstone` on `unmix()`. Tick emits decoded sum-minus-self. Two emit cadences branch on alive-member count: catch-up 1:1 (N=2, matches the byte-relay test band) and tick-driven (N≥3, matches the ~60-packet test band). DTMF in a mix routes via `Command::MixRelayDtmf` — each other member regenerates a fresh RFC 2833 burst rather than passing raw packets through. 14/16 `projectrtpmix.js` tests pass. |
-| `projectrtpchannelrecorder.cpp/.h` | `channel/recorder.rs` | done | WAV writer, pause/resume, `finish` requests, power-gated start (`startabovepower`) and below-power finish (`finishbelowpower`) with RMS + MA. The 100-packet warm-up is counted *per recorder* (matches C++ `codecx::inpkcount`, which is incremented post-jitter — using the pre-jitter `state.in_count` shifted gate-open by one water-level's worth of packets). Multiple concurrent recorders via `Vec<Recorder>` in `Subsystems`. 7/7 `projectrtprecord.js` tests pass. **Reminder:** the cargo unit test `start_gate_holds_until_power_above_threshold` in `channel/recorder.rs` was written against the old no-warm-up behavior — with the 100-packet warm-up now in place it needs to be updated (feed ≥100 warm-up frames before the active frames) the next time we touch these unit tests. |
-| `projectrtppacket.cpp/.h` | `channel/rtp.rs` | done (getters/setters) | Backing buffer is `BytesMut`; free-function parsers work on `&[u8]`. |
-| `projectrtpbuffer.cpp/.h` | `channel/jitter.rs`, `rtpbuffer.rs` | done | `jitter.rs` owns the reorder logic; `rtpbuffer.rs` is the std-level ring container. |
-| `projectrtpringbuffer.h` | folded into `channel/recorder.rs` / `soundfile.rs` | done | Tiny header — inlined where used. |
-| `projectrtpcodecx.cpp/.h` | `codec.rs` + `ilbc.rs` + `g722.rs` | done (minus L16) | G.711 is pure Rust (spandsp tables). G.722 is a thin safe FFI over libspandsp (`rust/src/g722.rs`) — same implementation the C++ addon uses, so output is bit-for-bit identical and the transcode-loop frequency tests pass where the earlier `ezk-g722` crate produced subtly-different samples. iLBC is a similar FFI over libilbc (`rust/src/ilbc.rs`); `Transcoder` recognises up to two iLBC dynamic PTs (self + peer) so `remote.ilbcpt` negotiation works across a mix. L16 still TODO. Alpine Docker adds `spandsp3-dev`/`spandsp3` + builds libilbc from source. |
-| `projectrtpfirfilter.cpp/.h` | `firfilter.rs` | done | |
-| `projectrtpsoundfile.cpp/.h` | `soundfile.rs` | partial | Read/write WAV headers, raw PCM. SoundSoup playback overlap is in `channel/player.rs`. |
-| `projectrtpsoundsoup.cpp/.h` | `channel/player.rs` | done | JSON parsing in `channel/facade.rs::parse_soundsoup`. Player is created on `Command::Play` / `Command::PlayRecord`, advanced one frame per tick, drops on DTMF interrupt / barge-in / natural end. Each tick's player frame is also emitted as an RTP packet via `send_player_frame` (`tick.rs`) — encoded to the channel's `remote_pt` and sent to `remote_addr`. Handles per-file `loop: true\|N`, `start`/`stop` (ms), top-level `loop`, multi-file concatenation, and 16 kHz→8 kHz downsampling (naive decimation — no anti-alias filter yet, good enough for the 52-second voicemail regression test). 12/12 `projectrtpsound.js` tests pass. |
-| `projectrtprawsound.cpp/.h` | inlined in `soundfile.rs` / `channel/recorder.rs` | done | Standalone class wasn't needed once recorders had WAV writers. |
-| `projectrtpsrtp.cpp/.h` | `channel/srtp_ctx.rs` + `dtls.rs` | stub (but tests pass) | `dtls.fingerprint` is published as a string via `#[napi_derive::module_exports]` (can't express string-property on a namespace with the #[napi] macro alone). The full DTLS handshake + SRTP key derivation + protect/unprotect pipeline is still stubbed, but `projectrtpdtls.js` passes 6/6 because the tests assert fingerprint / `remote()` return shape and packet counts on unencrypted RTP — they don't actually verify encryption end-to-end. Real handshake lands with a future task. |
-| `projectrtpstun.cpp/.h` | `stun.rs` | done (for the 2-party ICE use case) | Classification, HMAC-SHA1 integrity, CRC-32 fingerprint, XOR-MAPPED-ADDRESS. Local/remote ICE passwords threaded through `ChannelState` (`local_icepwd` / `remote_icepwd`); tick.rs intercepts inbound STUN and replies before the packet reaches the jitter buffer. |
-| `projectrtptonegen.cpp/.h` | `tone.rs` | done | |
-| `boostexception.cpp` | — | dropped | Boost exception shim not needed — Rust `Result` replaces it. |
-
-### New modules (no direct C++ equivalent)
-
-| Rust module | Purpose |
-|---|---|
-| `channel/actor.rs` | Per-channel tokio async task. Tasks (not OS threads) are multiplexed onto tokio's default multi-thread runtime, which runs one worker thread per core. This is close in spirit to the C++ IOCP model (N worker threads, 1 per core, work dispatched by event) but not identical: tokio work-steals tasks across workers, so a given channel can migrate between cores. The C++ build pins work more firmly. See the "Scheduler" section below. |
-| `channel/commands.rs` | `Command` enum + `Handle` — replaces the C++ lock-guarded method calls. |
-| `channel/dtmf.rs` | RFC 2833 send queue + receive FSM — was inline in `projectrtpchannel.cpp`. |
-| `channel/dtls_session.rs`, `dtls.rs` | Rustls-based DTLS; C++ used gnutls inline in `projectrtpsrtp.cpp`. |
-| `portpool.rs` | Even-port FIFO (RTP on P, RTCP on P+1). Port of the `availableports` queue in `projectrtpchannel.cpp`. Falls back to ephemeral bind-with-retry when the pool is uninitialized (test harnesses that skip `run({ports})`). |
-
-## Ownership model at a glance
-
-```mermaid
-stateDiagram-v2
-  [*] --> Local: openchannel()
-  Local --> Mixed: channel.mix(other)
-  Mixed --> Local: channel.unmix()
-  Local --> Closing: channel.close()
-  Mixed --> Closing: channel.close()
-  Closing --> [*]: Close event
-```
-
-**Local** — actor owns `ChannelState`, `tick.rs` drives the 20 ms pipeline, commands arrive via mpsc.
-
-**Mixed** — N=2: relay in lockstep tick. N>2: state migrates into `MixGroup` actor; channel actor becomes a forwarder until `Remove` fires.
-
-### 2-chan mix bind protocol
-
-The 2-channel mix relay keeps both actors in the `Local` state and uses three
-commands to track the peer relationship:
-
-- `BindMixPeer { peer_handle, peer_remote, peer_pt, peer_rfc2833_pt }` —
-  sent once per side from `facade::mix()`. Stores the peer's mpsc `Sender`
-  on `state.mix_peer_handle` and records the peer's current outbound
-  target. Emits `mix/start`. `peer_remote` may be `None` if the peer was
-  opened without a `remote` block — the peer will push an update later.
-- `SetPeerRemote { remote, pt, rfc2833_pt }` — sent from inside the
-  `Remote` command handler whenever our own remote changes *while bound*.
-  The receiver refreshes its outbound target only; no event.
-- `UnbindMixPeer` — sent from `facade::unmix()` to one side; that side
-  cascades the command to its peer via the stored handle and emits
-  `mix/finished`. Keeps the two sides' bound state in sync without needing
-  JS to call `unmix()` on both channels.
-
-This shape lets `channel.mix(other)` succeed regardless of whether each
-channel already has a `remote` configured — the test suite relies on this
-("basic mix 2 channels with start 2 packets wrong payload type").
-
-## Scheduler (C++ IOCP vs tokio)
-
-The C++ build runs **N worker threads (1 per core)** with IOCP / io_uring,
-each thread dispatching work directly from kernel completions with no
-task-migration across cores. This keeps per-channel state hot in L1/L2
-cache and avoids kernel thread context-switches on the hot path.
-
-The Rust build currently runs each channel as an **async task** on
-tokio's default multi-thread runtime (also 1 worker thread per core by
-default). Per-channel OS-thread cost is *not* an issue — tokio tasks are
-stackless futures multiplexed onto the worker pool — but:
-
-- **Work-stealing** can migrate a task between workers. Good for load
-  imbalance; bad for cache locality on a steady-state channel.
-- **Task state-machine + waker overhead** per `select!` wakeup is small
-  but non-zero vs a plain "loop { poll() }" per-core reactor.
-
-Open question: whether this matters at production channel counts. Being
-addressed in two steps:
-
-1. `stress/perfbench.js` — a harness that opens N echoing channels and
-   measures throughput, drop rate, and per-packet latency against both
-   builds (see the file for how to run).
-2. If the bench shows material overhead, evaluate: (a) sharded
-   `current_thread` runtimes with CPU affinity — channels never migrate,
-   but probabilistic load imbalance when correlated-lifetime channels
-   close together; (b) a per-core epoll/io_uring reactor that drops
-   tokio entirely — matches the C++ model but a much larger rewrite.
+The open question was whether tokio's work-stealing + waker overhead
+would cost anything at production channel counts. `stress/perfbench.js`
+and `stress/run-matrix.sh` were built to measure it against both builds.
 
 ### Bench result — 2026-04-23
 
-Ran `stress/run-matrix.sh` against both builds on a 14-core Linux host
-(3 modes × 4 channel counts = 12 scenarios, 5 s sample each). Raw logs
-tabulated via `stress/tabulate.sh`; results below are the per-channel
-deltas that matter for sizing.
+14-core Linux host, 3 modes × 4 channel counts, 5 s sample each:
 
 | Mode | Chan | Rust KiB/ch | C++ KiB/ch | Rust CPU | C++ CPU | Rust p99 | C++ p99 |
 |---|---|---|---|---|---|---|---|
-| idle | 100  | 35.1 | 37.6 | 1.7%   | 1.6%   | —    | —    |
-| idle | 500  | 28.5 | 28.8 | 3.4%   | 4.1%   | —    | —    |
-| idle | 1000 | 27.7 | 27.7 | 7.0%   | 9.9%   | —    | —    |
-| idle | 2000 | 27.8 | 28.1 | 14.3%  | 14.7%  | —    | —    |
-| echo | 100  | 37.6 | 33.8 | 12.8%  | 13.0%  | 217  | 216  |
-| echo | 500  | 29.0 | 29.4 | 52.1%  | 57.8%  | 226  | 219  |
-| echo | 1000 | 27.6 | 27.8 | 107.1% | 105.5% | 232  | 233  |
-| echo | 2000 | 28.4 | 28.1 | 168.4% | 166.6% | 247  | 256  |
-| mix2 | 100  | 42.8 | 45.6 | 12.3%  | 12.2%  | 440  | 440  |
-| mix2 | 500  | 36.2 | 35.2 | 42.1%  | 46.4%  | 441  | 442  |
-| mix2 | 1000 | 34.9 | 34.7 | 82.6%  | 83.7%  | 443  | 442  |
-| mix2 | 2000 | 34.7 | 35.0 | 154.7% | 155.9% | 477  | 461  |
+| idle | 1000 | 27.7 | 27.7 | 7.0%   | 9.9%   | —   | —   |
+| idle | 2000 | 27.8 | 28.1 | 14.3%  | 14.7%  | —   | —   |
+| echo | 1000 | 27.6 | 27.8 | 107.1% | 105.5% | 232 | 233 |
+| echo | 2000 | 28.4 | 28.1 | 168.4% | 166.6% | 247 | 256 |
+| mix2 | 1000 | 34.9 | 34.7 | 82.6%  | 83.7%  | 443 | 442 |
+| mix2 | 2000 | 34.7 | 35.0 | 154.7% | 155.9% | 477 | 461 |
 
-CPU % is of *one* core. p99 is echo-round-trip latency in ms.
+(CPU % is of one core; p99 is echo-round-trip latency in ms. Full
+12-scenario table in git history.)
 
-Headline: **parity, no regression, no win.** At 500+ channels the
-per-channel memory footprint is byte-for-byte identical (~28 KiB idle/
-echo, ~35 KiB mix2). CPU is within ±5% at every scale with no
-systematic direction — small wins on idle tick processing, small
-losses on echo, net even. p99 latency matches within 1–2 ms on every
-echo row; the mix2-2000 16 ms difference is jitter-prime timing
-sensitivity, not a systematic gap. Zero packet drops at every scale on
-both builds across the 100 000 pps echo peak.
+**Headline: parity, no regression, no win.** Per-channel memory is
+byte-for-byte identical at scale; CPU is within ±5% with no systematic
+direction; p99 latency matches within 1–2 ms; zero packet drops at the
+100 000 pps echo peak on both builds.
 
-So: **the tokio overhead the open question worried about didn't
-materialise.** Production boxes currently sized for N C++ channels run
-N Rust channels at the same footprint. The sharded-runtime / per-core
-reactor alternatives listed above are no longer motivated; leave them
-on the shelf.
+So the tokio overhead the open question worried about didn't
+materialise. Production boxes sized for N C++ channels run N Rust
+channels at the same footprint. The alternatives once on the table
+(sharded `current_thread` runtimes with CPU affinity; a per-core
+epoll/io_uring reactor dropping tokio) are **no longer motivated** —
+left on the shelf.
 
-Caveats on the bench: 5-second samples on localhost — NAT/real-internet
-latency tails not visible. DTLS-SRTP at scale not exercised (the
-handshake is a concentrated CPU burst; a mass-reconnect scenario could
-show something different). No long-duration soak, so slow leaks / GC
-cliffs would need a separate 30 min+ run.
-
-To reproduce:
-
-```
-# C++ binary
-LD_LIBRARY_PATH=$PWD/libilbc/_build ./stress/run-matrix.sh /tmp/cpp.log
-# swap in Rust binary
-cp rust/target/release/libprojectrtp.so build/Release/projectrtp.node
-./stress/run-matrix.sh /tmp/rust.log
-# compare
-./stress/tabulate.sh /tmp/rust.log /tmp/cpp.log
-```
-
-## Keeping this doc honest
-
-Update this file whenever:
-
-- A Rust module gains or loses a C++ source it ports.
-- Status in the table above changes (stub → partial → done).
-- A new Rust-only module is introduced (add to the "New modules" table).
-- The ownership model shifts (mix group handoff, DTLS state migration, etc).
-
-A helpful shape for commit messages touching `rust/src/` is to note the
-section of this doc that should change. That keeps drift from creeping in.
+Caveats: 5 s localhost samples (no real-internet latency tails),
+DTLS-SRTP at scale not exercised, no long-duration soak.

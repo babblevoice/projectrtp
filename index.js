@@ -480,9 +480,9 @@ class projectrtp {
          (fired by the Rust forwarder task when the channel closes or the
          reader is explicitly destroyed).
 
-         Guarded: the C++ build doesn't expose these methods, so the
-         wrapping is a no-op there — keeps the shared index.js shim
-         loadable against either backend. */
+         Guarded: defensively skip the wrapping if the native module
+         doesn't expose these methods (older builds), so this shim stays
+         loadable. */
       if( "function" !== typeof chan.createReadStream ) return chan
       const napiCreateReadStream = chan.createReadStream.bind( chan )
       const napiDestroyReadStream = chan.destroyReadStream.bind( chan )

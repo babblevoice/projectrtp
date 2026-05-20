@@ -1,0 +1,59 @@
+name: Rust CI
+
+on: [push, pull_request]
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (with libilbc submodule)
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      # build.rs links libspandsp (G.722) and libilbc (iLBC). Ubuntu
+      # packages spandsp; libilbc has no package, so build it from the
+      # in-repo submodule and install the .so + dev symlink into
+      # /usr/local where build.rs looks.
+      - name: Install native deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libspandsp-dev
+          cd libilbc
+          cmake . -DCMAKE_INSTALL_LIBDIR=/usr/local/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/local/include
+          cmake --build .
+          sudo cmake --install .
+          sudo ldconfig
+
+      # CI runs glibc, so the musl-only rustls ICE that pins the Docker
+      # image to 1.92 does not apply here — stable is fine.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: rustfmt
+        working-directory: rust
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        working-directory: rust
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: check
+        working-directory: rust
+        run: cargo check --all-targets --locked
+
+      - name: test
+        working-directory: rust
+        run: cargo test --lib --locked
