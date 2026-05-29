@@ -306,9 +306,39 @@ async fn feed_recorders_and_readers(
     // inbound produces no samples, so it doesn't qualify.
     let has_recordable_audio = decoded.is_some() || player_frame.is_some();
     if has_recordable_audio {
-        write_recorder_frames(state, subs, in_s, out_s).await;
+        if state.codecx.is_wideband() {
+            // Native-rate recording on a wideband channel: true wideband
+            // inbound (G.722 decode) + the outbound (player/echo/silence)
+            // upsampled to 16 kHz so the WAV stays coherent. The recorder's
+            // WAV rate is stamped to 16k at open to match.
+            let in_wb = state.codecx.require_wideband_16k()
+                .map(|s| s.to_vec())
+                .unwrap_or_else(|| upsample_2x(in_s));
+            let out_wb = upsample_2x(out_s);
+            write_recorder_frames(state, subs, &in_wb, &out_wb).await;
+        } else {
+            write_recorder_frames(state, subs, in_s, out_s).await;
+        }
     }
+    // Readers manage their own rate (a 16k reader pulls wideband from codecx);
+    // always hand them the 8 kHz narrowband here.
     feed_readers(state, subs, in_s, out_s);
+}
+
+/// Linear 2x upsample (8 kHz -> 16 kHz) used for the recorder's outbound leg
+/// on a wideband channel, where the player/echo source is narrowband. The
+/// inbound leg uses the codec's true wideband decode; this only covers the
+/// out side so a stereo native recording stays sample-aligned.
+fn upsample_2x(input: &[i16]) -> Vec<i16> {
+    if input.is_empty() { return Vec::new(); }
+    let mut out = Vec::with_capacity(input.len() * 2);
+    for i in 0..input.len() {
+        let cur = input[i] as i32;
+        let next = if i + 1 < input.len() { input[i + 1] as i32 } else { cur };
+        out.push(cur as i16);
+        out.push(((cur + next) / 2) as i16);
+    }
+    out
 }
 
 async fn write_recorder_frames(
@@ -762,5 +792,19 @@ mod tests {
             vec!['9','1','9','9','3','3','1','1','1','1','2'],
             "expected full IVR digit sequence; got {:?}", digits
         );
+    }
+
+    #[test]
+    fn upsample_2x_doubles_and_interpolates() {
+        let input = [100i16, 200, 300, 400];
+        let out = upsample_2x(&input);
+        assert_eq!(out.len(), 8);
+        assert_eq!(out[0], 100);
+        assert_eq!(out[1], 150); // (100+200)/2
+        assert_eq!(out[2], 200);
+        assert_eq!(out[3], 250); // (200+300)/2
+        // last sample duplicates (no next to interpolate toward)
+        assert_eq!(out[7], 400);
+        assert!(upsample_2x(&[]).is_empty());
     }
 }

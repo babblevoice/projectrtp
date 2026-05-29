@@ -580,15 +580,31 @@ impl Member {
     async fn write_recordings(&mut self, peer_samples: Option<&[i16]>, peer_wideband: Option<&[i16]>) {
         if !self.inbound_this_tick { return; }
         let Some(samples) = self.state.codecx.require_narrowband_8k().map(|s| s.to_vec()) else { return; };
+        let self_wb = if self.state.codecx.is_wideband() {
+            self.state.codecx.require_wideband_16k().map(|s| s.to_vec())
+        } else {
+            None
+        };
         let ch_count = self.state.in_count.load(Ordering::Relaxed);
+
+        // Recorders capture at the channel's native rate: wideband self + peer
+        // when the codec is wideband (recorder WAV rate is stamped to match),
+        // else 8 kHz narrowband. Power runs on whichever self leg is used
+        // (RMS is amplitude-normalised, so thresholds hold at either rate).
+        let (rec_self, rec_peer): (&[i16], Option<&[i16]>) = match self_wb.as_deref() {
+            Some(wb) => (wb, peer_wideband),
+            None => (&samples, peer_samples),
+        };
         feed_recorders(
-            &mut self.subs.recorders, &samples, peer_samples, ch_count,
+            &mut self.subs.recorders, rec_self, rec_peer, ch_count,
             &mut self.state.pending_events,
         ).await;
-        // AudioReaders share the recorder's L/R convention: L=self inbound,
-        // R=peer inbound (in mix mode that's the "outbound" side — what
-        // we'd send out). Same cache, same timing as the recorder. A 16k
-        // reader's out side needs the peer's wideband, so pass it through.
+
+        // AudioReaders share the recorder's L/R convention (L=self inbound,
+        // R=peer inbound — in mix mode that's the outbound side). Readers
+        // manage their own rate: the in side is fed 8 kHz (16k readers pull
+        // wideband from codecx), and a 16k reader's out side gets the peer's
+        // wideband via feed_with.
         for reader in self.subs.readers.iter_mut() {
             reader.feed_with(&mut self.state.codecx, Some(&samples), peer_samples, peer_wideband);
         }
@@ -1037,6 +1053,9 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
             let _ = ack.send(());
         }
         Command::Record { cfg, ack } => {
+            // Record at the channel's native rate (16k for G.722, else 8k).
+            let mut cfg = cfg;
+            cfg.sample_rate = m.state.codecx.native_samplerate();
             m.subs.pending_recorder = None;
             m.subs.prebuffer.clear();
             let file_str = cfg.file.to_string_lossy().into_owned();
@@ -1167,9 +1186,12 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
             }
             // Queue the recorder — opened on play-end or barge-in via
             // `activate_pending_recorder`. Parity with local-mode handler.
-            let file_str = cfg.recorder.file.to_string_lossy().into_owned();
+            // Record at the channel's native rate (16k for G.722, else 8k).
+            let mut recorder_cfg = cfg.recorder;
+            recorder_cfg.sample_rate = m.state.codecx.native_samplerate();
+            let file_str = recorder_cfg.file.to_string_lossy().into_owned();
             m.subs.pending_recorder = Some(super::actor::PendingRecorder {
-                cfg: cfg.recorder,
+                cfg: recorder_cfg,
                 file_str,
             });
             let _ = ack.send(());

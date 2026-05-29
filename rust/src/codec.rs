@@ -310,6 +310,18 @@ impl CodecBundle {
         self.wideband_16k = Some(samples.to_vec());
     }
 
+    /// True if the current wire codec is wideband (G.722, PT 9). Used to pick
+    /// the channel's native PCM rate for recordings / readers.
+    pub fn is_wideband(&self) -> bool {
+        self.wire_pt == 9
+    }
+
+    /// The channel's native PCM sample rate inferred from the wire codec:
+    /// 16 kHz for G.722, 8 kHz otherwise (incl. before a codec is known).
+    pub fn native_samplerate(&self) -> u32 {
+        if self.is_wideband() { 16000 } else { 8000 }
+    }
+
     // ---- Fast path: raw wire bytes if the PT matches -----------------------
 
     /// Return the wire bytes as-is iff `pt` matches the fed wire PT.
@@ -705,5 +717,21 @@ mod tests {
         for u in 0u8..=255 {
             let _ = ulaw_to_linear(u);
         }
+    }
+
+    #[test]
+    fn native_samplerate_follows_codec() {
+        let mut cx = CodecBundle::new();
+        // Before any codec is known, default to narrowband.
+        assert!(!cx.is_wideband());
+        assert_eq!(cx.native_samplerate(), 8000);
+        // G.722 (PT 9) is wideband -> 16 kHz.
+        cx.feed_wire(9, &[0u8; 80]);
+        assert!(cx.is_wideband());
+        assert_eq!(cx.native_samplerate(), 16000);
+        // PCMA (PT 8) is narrowband -> 8 kHz.
+        cx.feed_wire(8, &[0u8; 160]);
+        assert!(!cx.is_wideband());
+        assert_eq!(cx.native_samplerate(), 8000);
     }
 }
