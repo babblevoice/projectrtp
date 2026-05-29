@@ -577,7 +577,7 @@ impl Member {
     /// R=far leg) — matches C++ mix recording semantics. When `None`
     /// (Local mode, N≥3, or peer had no inbound this tick) stereo
     /// falls back to duplicate-mono.
-    async fn write_recordings(&mut self, peer_samples: Option<&[i16]>) {
+    async fn write_recordings(&mut self, peer_samples: Option<&[i16]>, peer_wideband: Option<&[i16]>) {
         if !self.inbound_this_tick { return; }
         let Some(samples) = self.state.codecx.require_narrowband_8k().map(|s| s.to_vec()) else { return; };
         let ch_count = self.state.in_count.load(Ordering::Relaxed);
@@ -587,9 +587,10 @@ impl Member {
         ).await;
         // AudioReaders share the recorder's L/R convention: L=self inbound,
         // R=peer inbound (in mix mode that's the "outbound" side — what
-        // we'd send out). Same cache, same timing as the recorder.
+        // we'd send out). Same cache, same timing as the recorder. A 16k
+        // reader's out side needs the peer's wideband, so pass it through.
         for reader in self.subs.readers.iter_mut() {
-            reader.feed(&mut self.state.codecx, Some(&samples), peer_samples);
+            reader.feed_with(&mut self.state.codecx, Some(&samples), peer_samples, peer_wideband);
         }
         self.subs.readers.retain(|r| !r.is_closed());
     }
@@ -720,6 +721,7 @@ async fn run_post_mix_phase(
     n_alive: usize,
 ) {
     let peer_samples_by_id = compute_peer_samples_by_id(members, n_alive);
+    let peer_wideband_by_id = compute_peer_wideband_by_id(members, n_alive);
 
     // Clone the id list so we can look up each member's peer samples
     // from the sibling map while holding a `&mut` to the member.
@@ -735,8 +737,16 @@ async fn run_post_mix_phase(
         } else {
             None
         };
+        // 16k wideband counterpart for the reader tap's out side (320 samples).
+        let peer_wideband: Option<Vec<i16>> = if n_alive == 2 {
+            peer_wideband_by_id.iter()
+                .find_map(|(&pid, s)| if pid != id { Some(s.clone()) } else { None })
+                .or_else(|| Some(vec![ 0i16; MIX_FRAME_SAMPLES * 2 ]))
+        } else {
+            None
+        };
         let Some(m) = members.get_mut(&id) else { continue; };
-        m.write_recordings(peer_samples.as_deref()).await;
+        m.write_recordings(peer_samples.as_deref(), peer_wideband.as_deref()).await;
         m.send_dtmf_outbound().await;
         m.drain_pending_events();
     }
@@ -762,6 +772,32 @@ fn compute_peer_samples_by_id(
                     .unwrap_or_else(|| vec![ 0i16; MIX_FRAME_SAMPLES ])
             } else {
                 vec![ 0i16; MIX_FRAME_SAMPLES ]
+            };
+            (id, samples)
+        })
+        .collect()
+}
+
+/// Build the per-member "peer wideband" (16 kHz) map for the N=2 reader tap —
+/// the far party's true wideband (decoded from G.722, or upsampled from
+/// narrowband) so an `out`/`both` reader at 16 kHz isn't fed a downsampled
+/// copy. Mirrors `compute_peer_samples_by_id` but at 16 kHz (320 samples /
+/// 20 ms). Empty for N≠2; only the reader uses this (the recorder stays 8 kHz).
+fn compute_peer_wideband_by_id(
+    members: &mut HashMap<ChannelId, Box<Member>>,
+    n_alive: usize,
+) -> HashMap<ChannelId, Vec<i16>> {
+    if n_alive != 2 {
+        return HashMap::new();
+    }
+    members.iter_mut()
+        .map(|(&id, m)| {
+            let samples = if m.inbound_this_tick {
+                m.state.codecx.require_wideband_16k()
+                    .map(|s| s.to_vec())
+                    .unwrap_or_else(|| vec![ 0i16; MIX_FRAME_SAMPLES * 2 ])
+            } else {
+                vec![ 0i16; MIX_FRAME_SAMPLES * 2 ]
             };
             (id, samples)
         })
