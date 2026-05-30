@@ -119,9 +119,11 @@ impl AudioReader {
     pub fn is_closed(&self) -> bool { self.sender.is_closed() }
 
     /// Feed one 20 ms frame. Called from the recorder's feed point in the
-    /// tick (same cache state, same timing). Samples are already narrowband
-    /// 8 kHz linear — wideband and wire-byte formats are pulled directly
-    /// from `codecx`.
+    /// tick (same cache state, same timing). Samples are narrowband 8 kHz
+    /// linear; wideband (16 kHz) and wire-byte formats are pulled from
+    /// `codecx` for the inbound side. The outbound side has no `codecx`, so a
+    /// caller that holds wideband for the out side (the mixer, where out is
+    /// the peer's inbound) supplies it via `feed_with`.
     ///
     /// Never blocks. On full queue or closed consumer the frame is silently
     /// dropped (bumping `drops`). Returns `true` if the frame was queued.
@@ -131,7 +133,21 @@ impl AudioReader {
         in_samples_8k: Option<&[i16]>,
         out_samples_8k: Option<&[i16]>,
     ) -> bool {
-        let Some(bytes) = self.build_frame(codecx, in_samples_8k, out_samples_8k) else {
+        self.feed_with(codecx, in_samples_8k, out_samples_8k, None)
+    }
+
+    /// As [`feed`](Self::feed), but with the outbound side's wideband (16 kHz)
+    /// samples supplied by the caller. Used by the mixer so an `out`/`both`
+    /// reader at 16 kHz emits the peer's true wideband instead of silence.
+    /// Ignored by 8 kHz readers and wire-byte formats.
+    pub fn feed_with(
+        &mut self,
+        codecx: &mut CodecBundle,
+        in_samples_8k: Option<&[i16]>,
+        out_samples_8k: Option<&[i16]>,
+        out_samples_16k: Option<&[i16]>,
+    ) -> bool {
+        let Some(bytes) = self.build_frame(codecx, in_samples_8k, out_samples_8k, out_samples_16k) else {
             return false;
         };
         match self.sender.try_send(bytes) {
@@ -145,9 +161,10 @@ impl AudioReader {
         codecx: &mut CodecBundle,
         in_samples_8k: Option<&[i16]>,
         out_samples_8k: Option<&[i16]>,
+        out_samples_16k: Option<&[i16]>,
     ) -> Option<Vec<u8>> {
         match self.cfg.format {
-            ReaderFormat::L16 => self.build_l16(codecx, in_samples_8k, out_samples_8k),
+            ReaderFormat::L16 => self.build_l16(codecx, in_samples_8k, out_samples_8k, out_samples_16k),
             ReaderFormat::Pcma => codecx.require_wire_as(8).map(|b| b.to_vec()),
             ReaderFormat::Pcmu => codecx.require_wire_as(0).map(|b| b.to_vec()),
             ReaderFormat::G722 => codecx.require_wire_as(9).map(|b| b.to_vec()),
@@ -162,16 +179,20 @@ impl AudioReader {
         codecx: &mut CodecBundle,
         in_samples_8k: Option<&[i16]>,
         out_samples_8k: Option<&[i16]>,
+        out_samples_16k: Option<&[i16]>,
     ) -> Option<Vec<u8>> {
         // Resolve the two sides at the requested sample rate.
         let (in_samples, out_samples): (Option<Vec<i16>>, Option<Vec<i16>>) = match self.cfg.samplerate {
             16000 => {
-                // Wideband is cached on codecx; upsamples from narrowband if the
-                // wire is a narrowband codec. Only the "in" side lives on codecx
-                // — the "out" side can't sensibly become wideband in v1 (no
-                // upsample cache for player frames). Treat out=None at 16k.
-                let wb = codecx.require_wideband_16k().map(|s| s.to_vec());
-                (wb, None)
+                // Inbound wideband is cached on codecx (decoded from G.722, or
+                // upsampled from narrowband). The outbound side has no codecx
+                // here, so its wideband must be supplied by the caller — the
+                // mixer passes the peer's wideband for a bridged call. When it
+                // isn't supplied (e.g. a non-bridged channel whose out is an
+                // 8 kHz player) the out side is silent at 16k.
+                let wb_in = codecx.require_wideband_16k().map(|s| s.to_vec());
+                let wb_out = out_samples_16k.map(|s| s.to_vec());
+                (wb_in, wb_out)
             }
             _ => (
                 in_samples_8k.map(|s| s.to_vec()),
@@ -256,4 +277,51 @@ pub fn next_reader_id() -> u64 {
 pub struct ForwarderHandle {
     pub id: u64,
     pub cancel: Arc<tokio::sync::Notify>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codec::CodecBundle;
+
+    fn reader(direction: ReaderDirection, samplerate: u32) -> AudioReader {
+        let (tx, _rx) = make_channel();
+        let cfg = ReaderConfig { direction, samplerate, ..Default::default() };
+        AudioReader::new(1, cfg, tx)
+    }
+
+    // The fix: at 16 kHz an `out` reader emits the caller-supplied peer
+    // wideband. Previously the out side was hard-coded to silence at 16 kHz.
+    #[test]
+    fn out_reader_16k_uses_supplied_wideband() {
+        let r = reader(ReaderDirection::Out, 16000);
+        let mut cx = CodecBundle::new();
+        let out_wb: Vec<i16> = vec![ 1234; 320 ]; // 20 ms @ 16 kHz mono
+        let in_8k = vec![ 0i16; 160 ];
+        let out_8k = vec![ 0i16; 160 ];
+
+        let bytes = r
+            .build_frame(&mut cx, Some(&in_8k), Some(&out_8k), Some(&out_wb))
+            .expect("frame produced");
+
+        assert_eq!(bytes.len(), 320 * 2, "16k mono 20ms = 640 bytes");
+        assert_eq!(i16::from_le_bytes([ bytes[0], bytes[1] ]), 1234);
+    }
+
+    // The 8 kHz path is unchanged: the out side uses the 8 kHz samples directly
+    // and ignores any supplied wideband.
+    #[test]
+    fn out_reader_8k_uses_narrowband() {
+        let r = reader(ReaderDirection::Out, 8000);
+        let mut cx = CodecBundle::new();
+        let in_8k = vec![ 0i16; 160 ];
+        let out_8k = vec![ 321i16; 160 ];
+
+        let bytes = r
+            .build_frame(&mut cx, Some(&in_8k), Some(&out_8k), None)
+            .expect("frame produced");
+
+        assert_eq!(bytes.len(), 160 * 2, "8k mono 20ms = 320 bytes");
+        assert_eq!(i16::from_le_bytes([ bytes[0], bytes[1] ]), 321);
+    }
 }

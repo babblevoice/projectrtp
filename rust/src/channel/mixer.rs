@@ -577,19 +577,36 @@ impl Member {
     /// R=far leg) — matches C++ mix recording semantics. When `None`
     /// (Local mode, N≥3, or peer had no inbound this tick) stereo
     /// falls back to duplicate-mono.
-    async fn write_recordings(&mut self, peer_samples: Option<&[i16]>) {
+    async fn write_recordings(&mut self, peer_samples: Option<&[i16]>, peer_wideband: Option<&[i16]>) {
         if !self.inbound_this_tick { return; }
         let Some(samples) = self.state.codecx.require_narrowband_8k().map(|s| s.to_vec()) else { return; };
+        let self_wb = if self.state.codecx.is_wideband() {
+            self.state.codecx.require_wideband_16k().map(|s| s.to_vec())
+        } else {
+            None
+        };
         let ch_count = self.state.in_count.load(Ordering::Relaxed);
+
+        // Recorders capture at the channel's native rate: wideband self + peer
+        // when the codec is wideband (recorder WAV rate is stamped to match),
+        // else 8 kHz narrowband. Power runs on whichever self leg is used
+        // (RMS is amplitude-normalised, so thresholds hold at either rate).
+        let (rec_self, rec_peer): (&[i16], Option<&[i16]>) = match self_wb.as_deref() {
+            Some(wb) => (wb, peer_wideband),
+            None => (&samples, peer_samples),
+        };
         feed_recorders(
-            &mut self.subs.recorders, &samples, peer_samples, ch_count,
+            &mut self.subs.recorders, rec_self, rec_peer, ch_count,
             &mut self.state.pending_events,
         ).await;
-        // AudioReaders share the recorder's L/R convention: L=self inbound,
-        // R=peer inbound (in mix mode that's the "outbound" side — what
-        // we'd send out). Same cache, same timing as the recorder.
+
+        // AudioReaders share the recorder's L/R convention (L=self inbound,
+        // R=peer inbound — in mix mode that's the outbound side). Readers
+        // manage their own rate: the in side is fed 8 kHz (16k readers pull
+        // wideband from codecx), and a 16k reader's out side gets the peer's
+        // wideband via feed_with.
         for reader in self.subs.readers.iter_mut() {
-            reader.feed(&mut self.state.codecx, Some(&samples), peer_samples);
+            reader.feed_with(&mut self.state.codecx, Some(&samples), peer_samples, peer_wideband);
         }
         self.subs.readers.retain(|r| !r.is_closed());
     }
@@ -720,6 +737,7 @@ async fn run_post_mix_phase(
     n_alive: usize,
 ) {
     let peer_samples_by_id = compute_peer_samples_by_id(members, n_alive);
+    let peer_wideband_by_id = compute_peer_wideband_by_id(members, n_alive);
 
     // Clone the id list so we can look up each member's peer samples
     // from the sibling map while holding a `&mut` to the member.
@@ -735,8 +753,16 @@ async fn run_post_mix_phase(
         } else {
             None
         };
+        // 16k wideband counterpart for the reader tap's out side (320 samples).
+        let peer_wideband: Option<Vec<i16>> = if n_alive == 2 {
+            peer_wideband_by_id.iter()
+                .find_map(|(&pid, s)| if pid != id { Some(s.clone()) } else { None })
+                .or_else(|| Some(vec![ 0i16; MIX_FRAME_SAMPLES * 2 ]))
+        } else {
+            None
+        };
         let Some(m) = members.get_mut(&id) else { continue; };
-        m.write_recordings(peer_samples.as_deref()).await;
+        m.write_recordings(peer_samples.as_deref(), peer_wideband.as_deref()).await;
         m.send_dtmf_outbound().await;
         m.drain_pending_events();
     }
@@ -762,6 +788,32 @@ fn compute_peer_samples_by_id(
                     .unwrap_or_else(|| vec![ 0i16; MIX_FRAME_SAMPLES ])
             } else {
                 vec![ 0i16; MIX_FRAME_SAMPLES ]
+            };
+            (id, samples)
+        })
+        .collect()
+}
+
+/// Build the per-member "peer wideband" (16 kHz) map for the N=2 reader tap —
+/// the far party's true wideband (decoded from G.722, or upsampled from
+/// narrowband) so an `out`/`both` reader at 16 kHz isn't fed a downsampled
+/// copy. Mirrors `compute_peer_samples_by_id` but at 16 kHz (320 samples /
+/// 20 ms). Empty for N≠2; only the reader uses this (the recorder stays 8 kHz).
+fn compute_peer_wideband_by_id(
+    members: &mut HashMap<ChannelId, Box<Member>>,
+    n_alive: usize,
+) -> HashMap<ChannelId, Vec<i16>> {
+    if n_alive != 2 {
+        return HashMap::new();
+    }
+    members.iter_mut()
+        .map(|(&id, m)| {
+            let samples = if m.inbound_this_tick {
+                m.state.codecx.require_wideband_16k()
+                    .map(|s| s.to_vec())
+                    .unwrap_or_else(|| vec![ 0i16; MIX_FRAME_SAMPLES * 2 ])
+            } else {
+                vec![ 0i16; MIX_FRAME_SAMPLES * 2 ]
             };
             (id, samples)
         })
@@ -1001,6 +1053,9 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
             let _ = ack.send(());
         }
         Command::Record { cfg, ack } => {
+            // Record at the channel's native rate (16k for G.722, else 8k).
+            let mut cfg = cfg;
+            cfg.sample_rate = m.state.codecx.native_samplerate();
             m.subs.pending_recorder = None;
             m.subs.prebuffer.clear();
             let file_str = cfg.file.to_string_lossy().into_owned();
@@ -1131,9 +1186,12 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
             }
             // Queue the recorder — opened on play-end or barge-in via
             // `activate_pending_recorder`. Parity with local-mode handler.
-            let file_str = cfg.recorder.file.to_string_lossy().into_owned();
+            // Record at the channel's native rate (16k for G.722, else 8k).
+            let mut recorder_cfg = cfg.recorder;
+            recorder_cfg.sample_rate = m.state.codecx.native_samplerate();
+            let file_str = recorder_cfg.file.to_string_lossy().into_owned();
             m.subs.pending_recorder = Some(super::actor::PendingRecorder {
-                cfg: cfg.recorder,
+                cfg: recorder_cfg,
                 file_str,
             });
             let _ = ack.send(());

@@ -628,6 +628,9 @@ async fn handle_command_local(
         }
 
         Command::Record { cfg, ack } => {
+            // Record at the channel's native rate (16k for G.722, else 8k).
+            let mut cfg = cfg;
+            cfg.sample_rate = state.codecx.native_samplerate();
             // A bare `record` at a different path leaves a pending recorder
             // dangling — clear it so the play-end activation doesn't later
             // open it alongside this fresh one.
@@ -773,9 +776,12 @@ async fn handle_command_local(
             // play-end (or barge-in). The pre-buffer accumulates inbound
             // samples while the player runs; on activation it is flushed
             // via `write_raw`. C++ `pendingrecorder` equivalent.
-            let file_str = cfg.recorder.file.to_string_lossy().into_owned();
+            // Record at the channel's native rate (16k for G.722, else 8k).
+            let mut recorder_cfg = cfg.recorder;
+            recorder_cfg.sample_rate = state.codecx.native_samplerate();
+            let file_str = recorder_cfg.file.to_string_lossy().into_owned();
             subs.pending_recorder = Some(PendingRecorder {
-                cfg: cfg.recorder,
+                cfg: recorder_cfg,
                 file_str,
             });
 
