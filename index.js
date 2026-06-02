@@ -471,6 +471,16 @@ class projectrtp {
       /* ensure we are identicle to the node version of this object */
       chan.openchannel = this.openchannel.bind( this )
 
+      /* The remote (server.js) channel close() takes an options object
+         ({ timeout }); the local Rust napi close() takes an optional reason
+         string and returns a bool. Normalise so callers can hand the same
+         options object to either transport - callmanager calls
+         close( { timeout } ) regardless of whether the channel is local or
+         remote, and the bare object would otherwise fail napi's
+         String conversion. */
+      const napiclose = chan.close.bind( chan )
+      chan.close = ( options ) => napiclose( "string" === typeof options ? options : undefined )
+
       /* Wrap the Rust `createReadStream(opts, cb)` napi method so JS gets a
          standard Node `Readable` — pipeable into fs.createWriteStream,
          WebSocket, fetch bodies, any transform stream, etc.
