@@ -385,7 +385,15 @@ async fn run(
     let (state, subs) = match &mut mode {
         Mode::Local { state, subs } => (state, subs),
         Mode::Mixed { .. } => {
-            // Last-resort: emit a minimal Close event without stats.
+            // Last-resort: the defensive `mix.remove(id)` above timed out or
+            // returned None, so we never transitioned back to Local. Emit a
+            // minimal Close event without stats — but unregister from the
+            // registry FIRST (same ordering rule as the Local path below).
+            // Without this, a mixed channel whose mixer was contended at
+            // teardown stays in CHANNEL_REGISTRY forever and leaks
+            // `stats.channel.current` (rtp_open_count) even though the client
+            // saw a clean Close.
+            super::facade::unregister_channel(id);
             events.post(Event::Close { reason, stats: ChannelStats::default() });
             drop(self_cmd);
             return;
