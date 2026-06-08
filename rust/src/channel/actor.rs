@@ -578,6 +578,7 @@ async fn handle_command_local(
             state.set_remote_addr(cfg.addr);
             state.ticks_without_rtp = 0;
             state.remote_pt = cfg.payload_type;
+            state.codecx.set_negotiated_pt(cfg.payload_type);
             if let Some(pt) = cfg.rfc2833_payload_type {
                 state.rfc2833_pt = pt;
             }

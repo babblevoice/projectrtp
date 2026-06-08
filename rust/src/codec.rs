@@ -213,6 +213,12 @@ pub struct CodecBundle {
     /// Slot 0 is the local side's configured iLBC wire PT; slot 1 is the
     /// mix peer's. Static PT 97 is always accepted.
     ilbc_pts: [u8; 2],
+    /// Negotiated (SDP) RTP payload type for this channel, set at remote
+    /// config — known before the first inbound packet decodes. Lets
+    /// `is_wideband()` / `native_samplerate()` report wideband for a G.722
+    /// channel even when no packet has set `wire_pt` yet (e.g. a `record`
+    /// issued before media starts). 255 = not yet negotiated.
+    negotiated_pt: u8,
 
     // ---- Input (one of these is set by a `feed_*` call) ----
     /// PT of the wire bytes currently held, or 255 if no wire input.
@@ -244,6 +250,7 @@ impl CodecBundle {
             ilbc_encoder: None,
             ilbc_decoder: None,
             ilbc_pts: [97, 97],
+            negotiated_pt: 255,
             wire_pt: 255,
             wire_bytes: Vec::with_capacity(320),
             narrowband_8k: None,
@@ -257,6 +264,10 @@ impl CodecBundle {
 
     pub fn set_local_ilbc_pt(&mut self, pt: u8) { self.ilbc_pts[0] = pt; }
     pub fn set_peer_ilbc_pt(&mut self, pt: u8) { self.ilbc_pts[1] = pt; }
+
+    /// Record the negotiated (SDP) RTP payload type. Drives the wideband
+    /// classification before any packet has been decoded.
+    pub fn set_negotiated_pt(&mut self, pt: u8) { self.negotiated_pt = pt; }
 
     fn is_ilbc_pt(&self, pt: u8) -> bool {
         pt == 97 || pt == self.ilbc_pts[0] || pt == self.ilbc_pts[1]
@@ -310,10 +321,15 @@ impl CodecBundle {
         self.wideband_16k = Some(samples.to_vec());
     }
 
-    /// True if the current wire codec is wideband (G.722, PT 9). Used to pick
-    /// the channel's native PCM rate for recordings / readers.
+    /// True if this channel is wideband (G.722, PT 9). Used to pick the
+    /// channel's native PCM rate for recordings / readers. Considers both
+    /// the live wire codec and the negotiated SDP codec, so a recorder
+    /// opened before the first inbound G.722 packet is still stamped at
+    /// 16 kHz — matching the wideband frames the feed path writes once
+    /// media flows. Without the negotiated fallback the WAV header (8 kHz)
+    /// and the 16 kHz audio disagreed and playback ran at half speed.
     pub fn is_wideband(&self) -> bool {
-        self.wire_pt == 9
+        self.wire_pt == 9 || self.negotiated_pt == 9
     }
 
     /// The channel's native PCM sample rate inferred from the wire codec:

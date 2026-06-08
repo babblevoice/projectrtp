@@ -1019,6 +1019,7 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
         Command::Remote { cfg, ack } => {
             m.state.set_remote_addr(cfg.addr);
             m.state.remote_pt = cfg.payload_type;
+            m.state.codecx.set_negotiated_pt(cfg.payload_type);
             if let Some(pt) = cfg.rfc2833_payload_type {
                 m.state.rfc2833_pt = pt;
             }
