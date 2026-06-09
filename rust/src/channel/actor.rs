@@ -75,7 +75,7 @@ pub enum Event {
         file: Option<String>,
         filesize: Option<u64>,
     },
-    TelephoneEvent {
+    Telephone {
         digit: char,
     },
     Mix {
@@ -292,6 +292,12 @@ pub(super) async fn activate_pending_recorder(
 
 /// Top-level actor ownership. `Local` runs the per-channel ticker; `Mixed`
 /// delegates ticks + most commands to the mix actor.
+//
+// `Local` is the common (non-mixed) case and carries the full `Subsystems`
+// inline; `Mixed` is small. Boxing `Local` to equalize the variants would
+// add a heap indirection on the hot per-channel path and ripple through the
+// mix-migration `Member` type, so we keep it inline deliberately.
+#[allow(clippy::large_enum_variant)]
 enum Mode {
     Local {
         state: Box<ChannelState>,
@@ -1056,11 +1062,13 @@ mod tests {
         let file_str = path.to_string_lossy().into_owned();
 
         let mut events: Vec<Event> = Vec::new();
-        let mut subs = Subsystems::default();
-        subs.pending_recorder = Some(PendingRecorder {
-            cfg,
-            file_str: file_str.clone(),
-        });
+        let mut subs = Subsystems {
+            pending_recorder: Some(PendingRecorder {
+                cfg,
+                file_str: file_str.clone(),
+            }),
+            ..Default::default()
+        };
         subs.prebuffer.extend(vec![500i16; 800]);
 
         let activated = activate_pending_recorder(&mut subs, &mut events).await;
@@ -1094,11 +1102,13 @@ mod tests {
         let file_str = path.to_string_lossy().into_owned();
 
         let mut events: Vec<Event> = Vec::new();
-        let mut subs = Subsystems::default();
-        subs.pending_recorder = Some(PendingRecorder {
-            cfg,
-            file_str: file_str.clone(),
-        });
+        let mut subs = Subsystems {
+            pending_recorder: Some(PendingRecorder {
+                cfg,
+                file_str: file_str.clone(),
+            }),
+            ..Default::default()
+        };
         subs.prebuffer.extend(vec![100i16; 400]);
 
         assert!(activate_pending_recorder(&mut subs, &mut events).await);
@@ -1119,11 +1129,13 @@ mod tests {
         let file_str = path.to_string_lossy().into_owned();
 
         let mut events: Vec<Event> = Vec::new();
-        let mut subs = Subsystems::default();
-        subs.pending_recorder = Some(PendingRecorder {
-            cfg,
-            file_str: file_str.clone(),
-        });
+        let mut subs = Subsystems {
+            pending_recorder: Some(PendingRecorder {
+                cfg,
+                file_str: file_str.clone(),
+            }),
+            ..Default::default()
+        };
 
         assert!(activate_pending_recorder(&mut subs, &mut events).await);
         // Gated recorders don't emit Recording until the gate opens; the

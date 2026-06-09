@@ -120,7 +120,7 @@ fn gen_block(out: &mut [i16], freq_spec: &str) {
     };
 
     // Detect operator: `+` sum, `~` sweep. `x` modulation not implemented (matches C++).
-    let op_pos = freq_part.find(|c: char| c == '+' || c == '~' || c == 'x');
+    let op_pos = freq_part.find(['+', '~', 'x']);
     match op_pos {
         None => {
             let f: f64 = freq_part.parse().unwrap_or(0.0);
@@ -130,13 +130,13 @@ fn gen_block(out: &mut [i16], freq_spec: &str) {
             let op = freq_part.as_bytes()[p] as char;
             match op {
                 '+' => {
-                    for part in freq_part.split(|c: char| c == '+' || c == 'x' || c == '~') {
+                    for part in freq_part.split(['+', 'x', '~']) {
                         let f: f64 = part.parse().unwrap_or(0.0);
                         gentone(out, f, f, amp.start, amp.end, SAMPLE_RATE);
                     }
                 }
                 '~' => {
-                    let mut parts = freq_part.split(|c: char| c == '+' || c == 'x' || c == '~');
+                    let mut parts = freq_part.split(['+', 'x', '~']);
                     let f1: f64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
                     let f2: f64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(f1);
                     gentone(out, f1, f2, amp.start, amp.end, SAMPLE_RATE);
@@ -193,6 +193,7 @@ fn append_to_wav(filename: &Path, new_data: &[u8]) -> Result<()> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(filename)
         .map_err(|e| Error::from_reason(format!("open {filename:?}: {e}")))?;
 

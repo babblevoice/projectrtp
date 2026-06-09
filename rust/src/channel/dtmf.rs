@@ -495,7 +495,8 @@ mod tests {
         // in the pcap so the second "1" must be reported via end-bit
         // clearing, not the timestamp fallback.
         let mut r = DtmfReceiver::new();
-        let bursts: &[(u32, u8, &[(u16, bool)])] = &[
+        type Burst<'a> = (u32, u8, &'a [(u16, bool)]);
+        let bursts: &[Burst<'_>] = &[
             (
                 36160,
                 9,

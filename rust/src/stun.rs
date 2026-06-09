@@ -130,12 +130,11 @@ fn walk_attributes(pk: &mut [u8], remote_key: &[u8]) -> bool {
                     return false;
                 }
             }
-            0x8028 => {
+            0x8028
                 // FINGERPRINT
-                if !verify_fingerprint(pk, off) {
+                if !verify_fingerprint(pk, off) => {
                     return false;
                 }
-            }
             // USERNAME / PRIORITY / USE-CANDIDATE / ICE-CONTROLLING /
             // GOOG-NETWORK-INFO — accept without validation.
             _ => {}

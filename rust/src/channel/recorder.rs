@@ -82,7 +82,7 @@ impl Recorder {
     pub async fn open(cfg: RecorderConfig) -> std::io::Result<Self> {
         let writer = WavWriter::create(&cfg.file, cfg.num_channels, cfg.sample_rate)
             .await
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         let mut power_ma = MaFilter::new();
         if let Some(n) = cfg.power_averaging_packets {
             power_ma.reset(n as usize);
@@ -240,7 +240,7 @@ impl Recorder {
         self.writer
             .write_samples(samples)
             .await
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         let n = samples.len() as u64;
         self.samples_written += n;
         self.samples_since_active += n;
@@ -248,11 +248,9 @@ impl Recorder {
         // active_ms = elapsed since gate open. Frame length is samples per
         // channel × channels, so divide by (sr * channels) to get seconds.
         let sr = self.cfg.sample_rate as u64 * self.cfg.num_channels as u64;
-        let active_ms = if sr > 0 {
-            self.samples_since_active * 1000 / sr
-        } else {
-            0
-        };
+        let active_ms = (self.samples_since_active * 1000)
+            .checked_div(sr)
+            .unwrap_or(0);
 
         if let Some(min) = self.cfg.min_duration_ms {
             if active_ms < min {
@@ -298,7 +296,7 @@ impl Recorder {
         self.writer
             .write_samples(samples)
             .await
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         self.samples_written += samples.len() as u64;
         Ok(samples.len())
     }
@@ -430,7 +428,7 @@ mod tests {
         }
         assert!(rec.is_finished());
 
-        let written = rec.write_raw(&vec![0i16; 100]).await.unwrap();
+        let written = rec.write_raw(&[0i16; 100]).await.unwrap();
         assert_eq!(written, 0);
 
         rec.close(FinishReason::Completed);

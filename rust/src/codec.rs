@@ -56,7 +56,7 @@ const fn compute_linear_to_alaw(linear: i32) -> u8 {
 
 const fn compute_alaw_to_linear(alaw: u8) -> i16 {
     let a = alaw ^ 0x55;
-    let mut i = ((a as i32 & 0x0F) << 4) as i32;
+    let mut i = (a as i32 & 0x0F) << 4;
     let seg = (a as i32 & 0x70) >> 4;
     if seg != 0 {
         i = (i + 0x108) << (seg - 1);
@@ -281,7 +281,9 @@ impl CodecBundle {
 
     /// Record the negotiated (SDP) RTP payload type. Drives the wideband
     /// classification before any packet has been decoded.
-    pub fn set_negotiated_pt(&mut self, pt: u8) { self.negotiated_pt = pt; }
+    pub fn set_negotiated_pt(&mut self, pt: u8) {
+        self.negotiated_pt = pt;
+    }
 
     fn is_ilbc_pt(&self, pt: u8) -> bool {
         pt == 97 || pt == self.ilbc_pts[0] || pt == self.ilbc_pts[1]
@@ -433,8 +435,7 @@ impl CodecBundle {
         }
 
         // Path 2: downsample from cached wideband.
-        if self.wideband_16k.is_some() {
-            let wb = self.wideband_16k.as_ref().unwrap();
+        if let Some(wb) = self.wideband_16k.as_ref() {
             let mut nb = Vec::with_capacity(wb.len() / 2);
             g722_down_into(wb, &mut self.g722_down_filter, &mut nb);
             self.narrowband_8k = Some(nb);

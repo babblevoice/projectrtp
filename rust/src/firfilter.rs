@@ -148,7 +148,7 @@ impl DcFilter {
 #[cfg_attr(not(test), napi(namespace = "rtpfilter", js_name = "filterlowfir"))]
 pub fn js_filter_lowfir(mut buf: Buffer) -> Result<bool> {
     let bytes: &mut [u8] = buf.as_mut();
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(Error::from_reason("buffer length must be even (BE int16)"));
     }
     let mut filter = Lowpass3_4k16k::new();
