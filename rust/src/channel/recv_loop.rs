@@ -55,13 +55,17 @@ async fn run(cfg: RecvLoopConfig) {
 }
 
 async fn handle_packet(cfg: &RecvLoopConfig, pkt: &[u8], peer: SocketAddr) {
-    if pkt.is_empty() { return; }
+    if pkt.is_empty() {
+        return;
+    }
     let first = pkt[0];
 
     // STUN — respond immediately.
     if stun::is_stun(pkt) {
         let icepwd = cfg.local_icepwd.lock().clone();
-        if icepwd.is_empty() { return; }
+        if icepwd.is_empty() {
+            return;
+        }
         let key = icepwd.as_bytes().to_vec();
         let mut req = pkt.to_vec();
         let mut resp = [0u8; rtp::RTP_MAX_LENGTH];

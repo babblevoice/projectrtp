@@ -15,8 +15,8 @@
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
@@ -50,7 +50,9 @@ impl ChannelStats {
     /// from the C++ codebase (originally borrowed from FreeSWITCH).
     /// Returns 0.0 when no packets were received.
     pub fn mos(&self) -> f64 {
-        if self.in_count == 0 { return 0.0; }
+        if self.in_count == 0 {
+            return 0.0;
+        }
         let r = ((self.in_count - self.in_skip) as f64 / self.in_count as f64) * 100.0;
         let r = r.clamp(0.0, 100.0);
         1.0 + (0.035 * r) + (0.000007 * r * (r - 60.0) * (100.0 - r))
@@ -59,18 +61,39 @@ impl ChannelStats {
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    Close { reason: String, stats: ChannelStats },
-    Play { state: PlayState, reason: Option<String> },
-    Record { state: RecordState, reason: Option<String>, file: Option<String>, filesize: Option<u64> },
-    TelephoneEvent { digit: char },
-    Mix { state: String },
+    Close {
+        reason: String,
+        stats: ChannelStats,
+    },
+    Play {
+        state: PlayState,
+        reason: Option<String>,
+    },
+    Record {
+        state: RecordState,
+        reason: Option<String>,
+        file: Option<String>,
+        filesize: Option<u64>,
+    },
+    TelephoneEvent {
+        digit: char,
+    },
+    Mix {
+        state: String,
+    },
 }
 
 #[derive(Debug, Clone)]
-pub enum PlayState { Start, End }
+pub enum PlayState {
+    Start,
+    End,
+}
 
 #[derive(Debug, Clone)]
-pub enum RecordState { Recording, Finished }
+pub enum RecordState {
+    Recording,
+    Finished,
+}
 
 /// Abstract sink for events — a trait so tests can capture events into a
 /// channel and the napi facade can forward into a ThreadsafeFunction.
@@ -95,7 +118,10 @@ pub struct SpawnConfig {
 pub async fn spawn(cfg: SpawnConfig) -> std::io::Result<Handle> {
     let rtp_sock = UdpSocket::bind(cfg.bind_addr).await?;
     let local_addr = rtp_sock.local_addr()?;
-    let rtcp_port = local_addr.port().checked_add(1).unwrap_or(local_addr.port());
+    let rtcp_port = local_addr
+        .port()
+        .checked_add(1)
+        .unwrap_or(local_addr.port());
     let rtcp_sock = UdpSocket::bind(SocketAddr::new(local_addr.ip(), rtcp_port)).await?;
     spawn_with_sockets(cfg, rtp_sock, rtcp_sock, local_addr)
 }
@@ -131,7 +157,10 @@ pub fn spawn_with_sockets(
     let events = cfg.events;
     let handle_cmd = tx.clone();
     tokio::spawn(async move { run(Box::new(state), rx, events, handle_cmd).await });
-    Ok(Handle { id: cfg.id, cmd: tx })
+    Ok(Handle {
+        id: cfg.id,
+        cmd: tx,
+    })
 }
 
 /// Upper bound on the pre-buffer queue — cap is drop-oldest. Sized to hold
@@ -223,7 +252,10 @@ pub(super) async fn activate_pending_recorder(
             if !drained.is_empty() {
                 let frame = if rec.num_channels() == 2 {
                     let mut inter = Vec::with_capacity(drained.len() * 2);
-                    for s in &drained { inter.push(*s); inter.push(*s); }
+                    for s in &drained {
+                        inter.push(*s);
+                        inter.push(*s);
+                    }
                     inter
                 } else {
                     drained
@@ -277,7 +309,10 @@ async fn run(
     self_cmd: mpsc::Sender<Command>,
 ) {
     let id = initial_state.id;
-    let mut mode = Mode::Local { state: initial_state, subs: Subsystems::default() };
+    let mut mode = Mode::Local {
+        state: initial_state,
+        subs: Subsystems::default(),
+    };
     let mut ticker = interval(Duration::from_millis(TICK_MS));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
@@ -314,9 +349,14 @@ async fn run(
                         // emitted yet, so nothing to finish — just drop.
                         subs_out.pending_recorder = None;
                         subs_out.prebuffer.clear();
-                        match mix.add(Box::new(Member::new(state_out, subs_out, events.clone()))).await {
+                        match mix
+                            .add(Box::new(Member::new(state_out, subs_out, events.clone())))
+                            .await
+                        {
                             Ok(()) => {
-                                events.post(Event::Mix { state: "start".to_string() });
+                                events.post(Event::Mix {
+                                    state: "start".to_string(),
+                                });
                                 mode = Mode::Mixed { mix };
                                 let _ = ack.send(());
                             }
@@ -338,14 +378,18 @@ async fn run(
                     Some(Command::Close { reason }) => {
                         if let Some(member) = mix.remove(id).await {
                             restore_local(&mut mode, member);
-                            events.post(Event::Mix { state: "finished".to_string() });
+                            events.post(Event::Mix {
+                                state: "finished".to_string(),
+                            });
                         }
                         closing = Some(reason);
                     }
                     Some(Command::LeaveMix { ack }) => {
                         if let Some(member) = mix.remove(id).await {
                             restore_local(&mut mode, member);
-                            events.post(Event::Mix { state: "finished".to_string() });
+                            events.post(Event::Mix {
+                                state: "finished".to_string(),
+                            });
                         }
                         let _ = ack.send(());
                     }
@@ -355,7 +399,9 @@ async fn run(
                         // `mix/start` event so JS sees one per mix() call.
                         // Different-group migration isn't supported yet.
                         if new_mix.id == mix.id {
-                            events.post(Event::Mix { state: "start".to_string() });
+                            events.post(Event::Mix {
+                                state: "start".to_string(),
+                            });
                         }
                         let _ = ack.send(());
                     }
@@ -376,9 +422,13 @@ async fn run(
     // try to reclaim state for the stats payload. Use a timeout so a dead
     // mixer doesn't strand the actor.
     if let Mode::Mixed { mix } = &mode {
-        if let Ok(Some(member)) = tokio::time::timeout(Duration::from_millis(100), mix.remove(id)).await {
+        if let Ok(Some(member)) =
+            tokio::time::timeout(Duration::from_millis(100), mix.remove(id)).await
+        {
             restore_local(&mut mode, member);
-            events.post(Event::Mix { state: "finished".to_string() });
+            events.post(Event::Mix {
+                state: "finished".to_string(),
+            });
         }
     }
 
@@ -394,7 +444,10 @@ async fn run(
             // `stats.channel.current` (rtp_open_count) even though the client
             // saw a clean Close.
             super::facade::unregister_channel(id);
-            events.post(Event::Close { reason, stats: ChannelStats::default() });
+            events.post(Event::Close {
+                reason,
+                stats: ChannelStats::default(),
+            });
             drop(self_cmd);
             return;
         }
@@ -462,7 +515,9 @@ async fn run(
         in_skip: state.in_skip,
         out_count: state.out_count,
     };
-    state.close_info = Some(CloseInfo { reason: reason.clone() });
+    state.close_info = Some(CloseInfo {
+        reason: reason.clone(),
+    });
     // Order matters: `unregister_channel` decrements the registry BEFORE
     // the Close event is posted. Otherwise a JS `afterEach` that asserts
     // `stats.channel.current === 0` races the TSFN queue — the callback
@@ -480,7 +535,12 @@ fn take_local(mode: &mut Mode) -> (Box<ChannelState>, Subsystems) {
     // Swap out with a temporary Mixed placeholder — we'll overwrite mode
     // right after. The placeholder MixHandle is never used because the
     // caller transitions mode before any further command handling runs.
-    let placeholder = Mode::Mixed { mix: MixHandle { id: 0, cmd: mpsc::channel(1).0 } };
+    let placeholder = Mode::Mixed {
+        mix: MixHandle {
+            id: 0,
+            cmd: mpsc::channel(1).0,
+        },
+    };
     let taken = std::mem::replace(mode, placeholder);
     match taken {
         Mode::Local { state, subs } => (state, subs),
@@ -622,7 +682,10 @@ async fn handle_command_local(
             if subs.player.is_some() {
                 subs.player = None;
                 subs.bargein = None;
-                events.post(Event::Play { state: PlayState::End, reason: Some("replaced".into()) });
+                events.post(Event::Play {
+                    state: PlayState::End,
+                    reason: Some("replaced".into()),
+                });
             }
             // A bare `play` supersedes any `playrecord` pending recorder.
             // No Recording event was emitted for it yet (activation hasn't
@@ -630,7 +693,10 @@ async fn handle_command_local(
             subs.pending_recorder = None;
             subs.prebuffer.clear();
             subs.player = Some(Player::new(cfg));
-            events.post(Event::Play { state: PlayState::Start, reason: Some("new".into()) });
+            events.post(Event::Play {
+                state: PlayState::Start,
+                reason: Some("new".into()),
+            });
             let _ = ack.send(());
             LocalOutcome::Continue
         }
@@ -649,7 +715,11 @@ async fn handle_command_local(
             // If an existing recorder at the same path is paused, resume it
             // instead of replacing it — preserves the WAV so both segments
             // end up in one file.
-            if let Some(rec) = subs.recorders.iter_mut().find(|r| r.file() == cfg.file && r.state() == RecorderState::Paused) {
+            if let Some(rec) = subs
+                .recorders
+                .iter_mut()
+                .find(|r| r.file() == cfg.file && r.state() == RecorderState::Paused)
+            {
                 rec.resume();
                 events.post(Event::Record {
                     state: RecordState::Recording,
@@ -658,45 +728,48 @@ async fn handle_command_local(
                     filesize: None,
                 });
             } else {
-            match Recorder::open(cfg.clone()).await {
-                Ok(rec) => {
-                    if let Some(idx) = subs.recorders.iter().position(|r| r.file() == rec.file()) {
-                        let mut old = subs.recorders.remove(idx);
-                        let size = old.file_size();
-                        old.close(FinishReason::ChannelClosed);
+                match Recorder::open(cfg.clone()).await {
+                    Ok(rec) => {
+                        if let Some(idx) =
+                            subs.recorders.iter().position(|r| r.file() == rec.file())
+                        {
+                            let mut old = subs.recorders.remove(idx);
+                            let size = old.file_size();
+                            old.close(FinishReason::ChannelClosed);
+                            events.post(Event::Record {
+                                state: RecordState::Finished,
+                                reason: Some("channelclosed".into()),
+                                file: Some(file_str.clone()),
+                                filesize: Some(size),
+                            });
+                        }
+                        subs.recorders.push(rec);
+                        if !is_gated {
+                            events.post(Event::Record {
+                                state: RecordState::Recording,
+                                reason: None,
+                                file: Some(file_str),
+                                filesize: None,
+                            });
+                        }
+                    }
+                    Err(e) => {
                         events.post(Event::Record {
                             state: RecordState::Finished,
-                            reason: Some("channelclosed".into()),
-                            file: Some(file_str.clone()),
-                            filesize: Some(size),
-                        });
-                    }
-                    subs.recorders.push(rec);
-                    if !is_gated {
-                        events.post(Event::Record {
-                            state: RecordState::Recording,
-                            reason: None,
+                            reason: Some(format!("open-failed: {e}")),
                             file: Some(file_str),
                             filesize: None,
                         });
                     }
                 }
-                Err(e) => {
-                    events.post(Event::Record {
-                        state: RecordState::Finished,
-                        reason: Some(format!("open-failed: {e}")),
-                        file: Some(file_str),
-                        filesize: None,
-                    });
-                }
-            }
             }
             let _ = ack.send(());
             LocalOutcome::Continue
         }
 
         Command::CreateReadStream { id, cfg, sender } => {
-            subs.readers.push(super::audio_reader::AudioReader::new(id, cfg, sender));
+            subs.readers
+                .push(super::audio_reader::AudioReader::new(id, cfg, sender));
             LocalOutcome::Continue
         }
 
@@ -713,7 +786,10 @@ async fn handle_command_local(
             if subs.player.is_some() {
                 subs.player = None;
                 subs.bargein = None;
-                events.post(Event::Play { state: PlayState::End, reason: Some("replaced".into()) });
+                events.post(Event::Play {
+                    state: PlayState::End,
+                    reason: Some("replaced".into()),
+                });
             }
             subs.pending_recorder = None;
             subs.prebuffer.clear();
@@ -723,7 +799,9 @@ async fn handle_command_local(
 
         Command::DestroyWriteStream { id } => {
             if let Some(w) = subs.writer.as_ref() {
-                if w.id() == id { subs.writer = None; }
+                if w.id() == id {
+                    subs.writer = None;
+                }
             }
             LocalOutcome::Continue
         }
@@ -746,7 +824,11 @@ async fn handle_command_local(
 
         Command::RecordSetPaused { file, paused } => {
             if let Some(rec) = subs.recorders.iter_mut().find(|r| r.file() == file) {
-                if paused { rec.pause(); } else { rec.resume(); }
+                if paused {
+                    rec.pause();
+                } else {
+                    rec.resume();
+                }
             }
             LocalOutcome::Continue
         }
@@ -755,7 +837,10 @@ async fn handle_command_local(
             if subs.player.is_some() {
                 subs.player = None;
                 subs.bargein = None;
-                events.post(Event::Play { state: PlayState::End, reason: Some("replaced".into()) });
+                events.post(Event::Play {
+                    state: PlayState::End,
+                    reason: Some("replaced".into()),
+                });
             }
             // Supersede any previously-queued pending recorder — its file was
             // never opened, so no Record event is owed (matches C++: no file
@@ -765,7 +850,10 @@ async fn handle_command_local(
             subs.prebuffer.clear();
 
             subs.player = Some(Player::new(cfg.player));
-            events.post(Event::Play { state: PlayState::Start, reason: Some("new".into()) });
+            events.post(Event::Play {
+                state: PlayState::Start,
+                reason: Some("new".into()),
+            });
 
             if cfg.interrupt {
                 if let Some(threshold) = cfg.bargein_power {
@@ -806,19 +894,27 @@ async fn handle_command_local(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::commands::Direction;
+    use super::*;
     use std::sync::Mutex;
     use tokio::sync::mpsc as tmpsc;
 
-    struct TestSink { tx: tmpsc::UnboundedSender<Event> }
+    struct TestSink {
+        tx: tmpsc::UnboundedSender<Event>,
+    }
     impl EventSink for TestSink {
-        fn post(&self, ev: Event) { let _ = self.tx.send(ev); }
+        fn post(&self, ev: Event) {
+            let _ = self.tx.send(ev);
+        }
     }
 
-    struct CountingSink { count: Mutex<Vec<Event>> }
+    struct CountingSink {
+        count: Mutex<Vec<Event>>,
+    }
     impl EventSink for CountingSink {
-        fn post(&self, ev: Event) { self.count.lock().unwrap().push(ev); }
+        fn post(&self, ev: Event) {
+            self.count.lock().unwrap().push(ev);
+        }
     }
 
     #[tokio::test]
@@ -833,12 +929,16 @@ mod tests {
             events: sink,
             port_reservation: None,
             local_icepwd: String::new(),
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
 
         handle.close("test").await;
 
         let ev = tokio::time::timeout(Duration::from_millis(500), rx.recv())
-            .await.expect("no close event").expect("stream ended");
+            .await
+            .expect("no close event")
+            .expect("stream ended");
         match ev {
             Event::Close { reason, .. } => assert_eq!(reason, "test"),
             other => panic!("unexpected event: {:?}", other),
@@ -847,7 +947,9 @@ mod tests {
 
     #[tokio::test]
     async fn direction_command_mutates_state_via_tick_observable() {
-        let sink = Arc::new(CountingSink { count: Mutex::new(Vec::new()) });
+        let sink = Arc::new(CountingSink {
+            count: Mutex::new(Vec::new()),
+        });
         let handle = spawn(SpawnConfig {
             id: 1,
             bind_addr: "127.0.0.1:0".parse().unwrap(),
@@ -855,9 +957,16 @@ mod tests {
             events: sink.clone(),
             port_reservation: None,
             local_icepwd: String::new(),
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
 
-        handle.direction(Direction { send: false, recv: false }).await;
+        handle
+            .direction(Direction {
+                send: false,
+                recv: false,
+            })
+            .await;
         handle.echo(true).await;
         handle.dtmf("1#").await;
 
@@ -882,17 +991,28 @@ mod tests {
             events: sink,
             port_reservation: None,
             local_icepwd: String::new(),
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
 
-        handle.play(crate::channel::player::SoundSoupSpec {
-            files: vec![],
-            overall_loops: None,
-            interrupt: false,
-        }).await.unwrap();
+        handle
+            .play(crate::channel::player::SoundSoupSpec {
+                files: vec![],
+                overall_loops: None,
+                interrupt: false,
+            })
+            .await
+            .unwrap();
 
         let mut saw_play = false;
         while let Ok(Some(ev)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
-            if matches!(ev, Event::Play { state: PlayState::Start, .. }) {
+            if matches!(
+                ev,
+                Event::Play {
+                    state: PlayState::Start,
+                    ..
+                }
+            ) {
                 saw_play = true;
                 break;
             }
@@ -936,7 +1056,10 @@ mod tests {
 
         let mut events: Vec<Event> = Vec::new();
         let mut subs = Subsystems::default();
-        subs.pending_recorder = Some(PendingRecorder { cfg, file_str: file_str.clone() });
+        subs.pending_recorder = Some(PendingRecorder {
+            cfg,
+            file_str: file_str.clone(),
+        });
         subs.prebuffer.extend(vec![500i16; 800]);
 
         let activated = activate_pending_recorder(&mut subs, &mut events).await;
@@ -946,9 +1069,13 @@ mod tests {
         assert_eq!(subs.recorders.len(), 1);
 
         // Recording event fires (recorder is not gated).
-        assert!(events.iter().any(|e| matches!(e,
-            Event::Record { state: RecordState::Recording, file: Some(f), .. } if f == &file_str
-        )), "expected Record::Recording event, got {:?}", events);
+        assert!(
+            events.iter().any(|e| matches!(e,
+                Event::Record { state: RecordState::Recording, file: Some(f), .. } if f == &file_str
+            )),
+            "expected Record::Recording event, got {:?}",
+            events
+        );
 
         // Close and verify the file has the 800 pre-buffer samples.
         let mut rec = subs.recorders.pop().unwrap();
@@ -967,7 +1094,10 @@ mod tests {
 
         let mut events: Vec<Event> = Vec::new();
         let mut subs = Subsystems::default();
-        subs.pending_recorder = Some(PendingRecorder { cfg, file_str: file_str.clone() });
+        subs.pending_recorder = Some(PendingRecorder {
+            cfg,
+            file_str: file_str.clone(),
+        });
         subs.prebuffer.extend(vec![100i16; 400]);
 
         assert!(activate_pending_recorder(&mut subs, &mut events).await);
@@ -989,13 +1119,20 @@ mod tests {
 
         let mut events: Vec<Event> = Vec::new();
         let mut subs = Subsystems::default();
-        subs.pending_recorder = Some(PendingRecorder { cfg, file_str: file_str.clone() });
+        subs.pending_recorder = Some(PendingRecorder {
+            cfg,
+            file_str: file_str.clone(),
+        });
 
         assert!(activate_pending_recorder(&mut subs, &mut events).await);
         // Gated recorders don't emit Recording until the gate opens; the
         // helper itself should not queue one at activation time.
-        assert!(!events.iter().any(|e| matches!(e,
-            Event::Record { state: RecordState::Recording, .. }
+        assert!(!events.iter().any(|e| matches!(
+            e,
+            Event::Record {
+                state: RecordState::Recording,
+                ..
+            }
         )));
         let mut rec = subs.recorders.pop().unwrap();
         rec.close(FinishReason::Completed);
@@ -1026,7 +1163,9 @@ mod tests {
             events: sink,
             port_reservation: None,
             local_icepwd: String::new(),
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
 
         let rec_cfg = test_recorder_cfg("actor_playrecord_defer.wav");
         let rec_path = rec_cfg.file.clone();
@@ -1056,31 +1195,66 @@ mod tests {
             observed.push(ev);
         }
 
-        let play_start_idx = observed.iter().position(|e|
-            matches!(e, Event::Play { state: PlayState::Start, .. })
-        ).expect("expected Play::Start");
-        let play_end_idx = observed.iter().position(|e|
-            matches!(e, Event::Play { state: PlayState::End, .. })
-        ).expect("expected Play::End after empty soup");
-        let rec_rec_idx = observed.iter().position(|e|
-            matches!(e, Event::Record { state: RecordState::Recording, file: Some(f), .. }
+        let play_start_idx = observed
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    Event::Play {
+                        state: PlayState::Start,
+                        ..
+                    }
+                )
+            })
+            .expect("expected Play::Start");
+        let play_end_idx = observed
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    Event::Play {
+                        state: PlayState::End,
+                        ..
+                    }
+                )
+            })
+            .expect("expected Play::End after empty soup");
+        let rec_rec_idx = observed
+            .iter()
+            .position(|e| {
+                matches!(e, Event::Record { state: RecordState::Recording, file: Some(f), .. }
                       if f == &rec_path_str)
-        ).expect("expected Record::Recording after play ends");
+            })
+            .expect("expected Record::Recording after play ends");
 
-        assert!(play_start_idx < play_end_idx,
-            "Play::Start must precede Play::End: {:?}", observed);
-        assert!(play_end_idx < rec_rec_idx,
-            "Play::End must precede Record::Recording (activation order): {:?}", observed);
+        assert!(
+            play_start_idx < play_end_idx,
+            "Play::Start must precede Play::End: {:?}",
+            observed
+        );
+        assert!(
+            play_end_idx < rec_rec_idx,
+            "Play::End must precede Record::Recording (activation order): {:?}",
+            observed
+        );
 
         // Crucially: no timeout finish event should appear before the
         // Recording event. (The regression was maxduration firing during
         // the play phase, which would emit Record::Finished first.)
-        let early_finish = observed[..rec_rec_idx].iter().any(|e|
-            matches!(e, Event::Record { state: RecordState::Finished, .. })
-        );
-        assert!(!early_finish,
+        let early_finish = observed[..rec_rec_idx].iter().any(|e| {
+            matches!(
+                e,
+                Event::Record {
+                    state: RecordState::Finished,
+                    ..
+                }
+            )
+        });
+        assert!(
+            !early_finish,
             "no Record::Finished should fire before Record::Recording: {:?}",
-            observed);
+            observed
+        );
 
         handle.close("done").await;
         let _ = std::fs::remove_file(&rec_path);

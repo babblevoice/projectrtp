@@ -52,15 +52,29 @@ fn message_class(pk: &[u8]) -> u8 {
     ((c0 >> 4) as u8) | ((c1 >> 8) as u8)
 }
 
-fn message_length(pk: &[u8]) -> u16 { read_u16(pk, 2) }
-fn set_message_length(pk: &mut [u8], v: u16) { write_u16(pk, 2, v); }
-fn magic_cookie(pk: &[u8]) -> u32 { read_u32(pk, 4) }
+fn message_length(pk: &[u8]) -> u16 {
+    read_u16(pk, 2)
+}
+fn set_message_length(pk: &mut [u8], v: u16) {
+    write_u16(pk, 2, v);
+}
+fn magic_cookie(pk: &[u8]) -> u32 {
+    read_u32(pk, 4)
+}
 
 pub fn is_stun(pk: &[u8]) -> bool {
-    if pk.len() < STUN_HEADER_LEN { return false; }
-    if (pk[0] & 0b1100_0000) != 0 { return false; }
-    if (pk.len() - STUN_HEADER_LEN) != message_length(pk) as usize { return false; }
-    if magic_cookie(pk) != MAGIC_COOKIE { return false; }
+    if pk.len() < STUN_HEADER_LEN {
+        return false;
+    }
+    if (pk[0] & 0b1100_0000) != 0 {
+        return false;
+    }
+    if (pk.len() - STUN_HEADER_LEN) != message_length(pk) as usize {
+        return false;
+    }
+    if magic_cookie(pk) != MAGIC_COOKIE {
+        return false;
+    }
     true
 }
 
@@ -93,22 +107,34 @@ fn verify_fingerprint(pk: &[u8], attr_off: usize) -> bool {
 }
 
 fn walk_attributes(pk: &mut [u8], remote_key: &[u8]) -> bool {
-    if remote_key.is_empty() { return false; }
+    if remote_key.is_empty() {
+        return false;
+    }
     let total = STUN_HEADER_LEN + message_length(pk) as usize;
-    if total > pk.len() { return false; }
+    if total > pk.len() {
+        return false;
+    }
 
     let mut off = STUN_HEADER_LEN;
     while off + 4 <= total {
         let attr_type = read_u16(pk, off);
         let attr_len = read_u16(pk, off + 2) as usize;
-        if off + 4 + attr_len > total { return false; }
+        if off + 4 + attr_len > total {
+            return false;
+        }
 
         match attr_type {
-            0x0008 => { // MESSAGE-INTEGRITY
-                if !verify_integrity(pk, off, remote_key) { return false; }
+            0x0008 => {
+                // MESSAGE-INTEGRITY
+                if !verify_integrity(pk, off, remote_key) {
+                    return false;
+                }
             }
-            0x8028 => { // FINGERPRINT
-                if !verify_fingerprint(pk, off) { return false; }
+            0x8028 => {
+                // FINGERPRINT
+                if !verify_fingerprint(pk, off) {
+                    return false;
+                }
             }
             // USERNAME / PRIORITY / USE-CANDIDATE / ICE-CONTROLLING /
             // GOOG-NETWORK-INFO — accept without validation.
@@ -185,8 +211,12 @@ fn create_binding_response(
     endpoint: SocketAddr,
     local_key: &[u8],
 ) -> usize {
-    if response.len() < STUN_HEADER_LEN || local_key.is_empty() { return 0; }
-    for b in response.iter_mut().take(STUN_HEADER_LEN) { *b = 0; }
+    if response.len() < STUN_HEADER_LEN || local_key.is_empty() {
+        return 0;
+    }
+    for b in response.iter_mut().take(STUN_HEADER_LEN) {
+        *b = 0;
+    }
 
     write_u16(response, 0, 0x0101); // Binding Response
     write_u32(response, 4, MAGIC_COOKIE);
@@ -209,12 +239,18 @@ pub fn handle(
     local_key: &[u8],
     remote_key: &[u8],
 ) -> usize {
-    if !is_stun(pk) { return 0; }
-    if message_method(pk) != 0x01 { return 0; }
+    if !is_stun(pk) {
+        return 0;
+    }
+    if message_method(pk) != 0x01 {
+        return 0;
+    }
 
     if message_class(pk) == 0 {
         // Binding Request
-        if !walk_attributes(pk, remote_key) { return 0; }
+        if !walk_attributes(pk, remote_key) {
+            return 0;
+        }
         create_binding_response(pk, response, endpoint, local_key)
     } else {
         // Binding Success response from peer — validate but don't reply.
@@ -234,7 +270,9 @@ mod tests {
         write_u16(&mut pk, 0, 0x0001); // Binding Request
         write_u32(&mut pk, 4, MAGIC_COOKIE);
         // transaction id = [1..13) fixed
-        for i in 0..12 { pk[8 + i] = (i as u8) + 1; }
+        for i in 0..12 {
+            pk[8 + i] = (i as u8) + 1;
+        }
 
         // MESSAGE-INTEGRITY attribute at offset 20
         let mi_off = pk.len();

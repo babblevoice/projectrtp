@@ -63,7 +63,11 @@ const fn compute_alaw_to_linear(alaw: u8) -> i16 {
     } else {
         i += 8;
     }
-    if a & 0x80 != 0 { i as i16 } else { -(i as i16) }
+    if a & 0x80 != 0 {
+        i as i16
+    } else {
+        -(i as i16)
+    }
 }
 
 const fn compute_linear_to_ulaw(linear: i32) -> u8 {
@@ -84,7 +88,11 @@ const fn compute_linear_to_ulaw(linear: i32) -> u8 {
 const fn compute_ulaw_to_linear(ulaw: u8) -> i16 {
     let u = !ulaw;
     let t = (((u as i32 & 0x0F) << 3) + 0x84) << ((u as i32 & 0x70) >> 4);
-    if u & 0x80 != 0 { (0x84 - t) as i16 } else { (t - 0x84) as i16 }
+    if u & 0x80 != 0 {
+        (0x84 - t) as i16
+    } else {
+        (t - 0x84) as i16
+    }
 }
 
 // `table[i]` stores the compressed byte for `i as i16` (i.e. the sample
@@ -231,7 +239,9 @@ pub struct CodecBundle {
 }
 
 impl Default for CodecBundle {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CodecBundle {
@@ -255,8 +265,12 @@ impl CodecBundle {
         }
     }
 
-    pub fn set_local_ilbc_pt(&mut self, pt: u8) { self.ilbc_pts[0] = pt; }
-    pub fn set_peer_ilbc_pt(&mut self, pt: u8) { self.ilbc_pts[1] = pt; }
+    pub fn set_local_ilbc_pt(&mut self, pt: u8) {
+        self.ilbc_pts[0] = pt;
+    }
+    pub fn set_peer_ilbc_pt(&mut self, pt: u8) {
+        self.ilbc_pts[1] = pt;
+    }
 
     fn is_ilbc_pt(&self, pt: u8) -> bool {
         pt == 97 || pt == self.ilbc_pts[0] || pt == self.ilbc_pts[1]
@@ -319,7 +333,11 @@ impl CodecBundle {
     /// The channel's native PCM sample rate inferred from the wire codec:
     /// 16 kHz for G.722, 8 kHz otherwise (incl. before a codec is known).
     pub fn native_samplerate(&self) -> u32 {
-        if self.is_wideband() { 16000 } else { 8000 }
+        if self.is_wideband() {
+            16000
+        } else {
+            8000
+        }
     }
 
     // ---- Fast path: raw wire bytes if the PT matches -----------------------
@@ -336,13 +354,19 @@ impl CodecBundle {
     /// audio in that case).
     #[allow(dead_code)]
     pub fn raw_wire_if_pt(&self, pt: u8) -> Option<&[u8]> {
-        if self.wire_pt == 255 || self.wire_bytes.is_empty() { return None; }
+        if self.wire_pt == 255 || self.wire_bytes.is_empty() {
+            return None;
+        }
         let match_ok = match pt {
             0 | 8 | 9 => pt == self.wire_pt,
             _ if self.is_ilbc_pt(pt) => self.is_ilbc_pt(self.wire_pt),
             _ => false,
         };
-        if match_ok { Some(&self.wire_bytes) } else { None }
+        if match_ok {
+            Some(&self.wire_bytes)
+        } else {
+            None
+        }
     }
 
     // ---- Lazy accessors ----------------------------------------------------
@@ -357,9 +381,9 @@ impl CodecBundle {
         // Path 1: decode directly from wire PT.
         if !self.wire_bytes.is_empty() {
             if self.is_ilbc_pt(self.wire_pt) {
-                let dec = self.ilbc_decoder.get_or_insert_with(|| {
-                    crate::ilbc::Decoder::new().expect("ilbc decoder init")
-                });
+                let dec = self
+                    .ilbc_decoder
+                    .get_or_insert_with(|| crate::ilbc::Decoder::new().expect("ilbc decoder init"));
                 if let Some(v) = dec.decode(&self.wire_bytes) {
                     self.narrowband_8k = Some(v);
                     return self.narrowband_8k.as_deref();
@@ -414,9 +438,9 @@ impl CodecBundle {
 
         // Path 1: G.722 wire → wideband (decode only, no resample).
         if self.wire_pt == 9 && !self.wire_bytes.is_empty() {
-            let dec = self.g722_decoder.get_or_insert_with(|| {
-                crate::g722::Decoder::new().expect("g722 decoder init")
-            });
+            let dec = self
+                .g722_decoder
+                .get_or_insert_with(|| crate::g722::Decoder::new().expect("g722 decoder init"));
             let decoded = dec.decode(&self.wire_bytes);
             if !decoded.is_empty() {
                 self.wideband_16k = Some(decoded.to_vec());
@@ -460,9 +484,18 @@ impl CodecBundle {
         if let Some(wire) = src.raw_wire_if_pt(pt) {
             let owned = wire.to_vec();
             match pt {
-                0 => { self.pcmu_out = Some(owned); return self.pcmu_out.as_deref(); }
-                8 => { self.pcma_out = Some(owned); return self.pcma_out.as_deref(); }
-                9 => { self.g722_out = Some(owned); return self.g722_out.as_deref(); }
+                0 => {
+                    self.pcmu_out = Some(owned);
+                    return self.pcmu_out.as_deref();
+                }
+                8 => {
+                    self.pcma_out = Some(owned);
+                    return self.pcma_out.as_deref();
+                }
+                9 => {
+                    self.g722_out = Some(owned);
+                    return self.g722_out.as_deref();
+                }
                 p if self.is_ilbc_pt(p) => {
                     self.ilbc_out = Some(owned);
                     return self.ilbc_out.as_deref();
@@ -477,11 +510,13 @@ impl CodecBundle {
         if pt == 9 {
             let out: Vec<u8> = {
                 let wb = src.require_wideband_16k()?;
-                let enc = self.g722_encoder.get_or_insert_with(|| {
-                    crate::g722::Encoder::new().expect("g722 encoder init")
-                });
+                let enc = self
+                    .g722_encoder
+                    .get_or_insert_with(|| crate::g722::Encoder::new().expect("g722 encoder init"));
                 let wire = enc.encode(wb);
-                if wire.is_empty() { return None; }
+                if wire.is_empty() {
+                    return None;
+                }
                 wire.to_vec()
             };
             self.g722_out = Some(out);
@@ -492,9 +527,9 @@ impl CodecBundle {
         if self.is_ilbc_pt(pt) {
             let out: Option<Vec<u8>> = {
                 let nb = src.require_narrowband_8k()?;
-                let enc = self.ilbc_encoder.get_or_insert_with(|| {
-                    crate::ilbc::Encoder::new().expect("ilbc encoder init")
-                });
+                let enc = self
+                    .ilbc_encoder
+                    .get_or_insert_with(|| crate::ilbc::Encoder::new().expect("ilbc encoder init"));
                 enc.encode_20ms(nb)
             };
             self.ilbc_out = out;
@@ -522,19 +557,23 @@ impl CodecBundle {
     /// with the same `pt` returns the previous result.
     pub fn require_wire_as(&mut self, pt: u8) -> Option<&[u8]> {
         if self.is_ilbc_pt(pt) {
-            if self.ilbc_out.is_some() { return self.ilbc_out.as_deref(); }
+            if self.ilbc_out.is_some() {
+                return self.ilbc_out.as_deref();
+            }
             self.require_narrowband_8k()?;
             let nb = self.narrowband_8k.as_ref().unwrap();
-            let enc = self.ilbc_encoder.get_or_insert_with(|| {
-                crate::ilbc::Encoder::new().expect("ilbc encoder init")
-            });
+            let enc = self
+                .ilbc_encoder
+                .get_or_insert_with(|| crate::ilbc::Encoder::new().expect("ilbc encoder init"));
             let out = enc.encode_20ms(nb)?;
             self.ilbc_out = Some(out);
             return self.ilbc_out.as_deref();
         }
         match pt {
             0 => {
-                if self.pcmu_out.is_some() { return self.pcmu_out.as_deref(); }
+                if self.pcmu_out.is_some() {
+                    return self.pcmu_out.as_deref();
+                }
                 self.require_narrowband_8k()?;
                 let nb = self.narrowband_8k.as_ref().unwrap();
                 let out: Vec<u8> = nb.iter().map(|&s| linear_to_ulaw(s as i32)).collect();
@@ -542,7 +581,9 @@ impl CodecBundle {
                 self.pcmu_out.as_deref()
             }
             8 => {
-                if self.pcma_out.is_some() { return self.pcma_out.as_deref(); }
+                if self.pcma_out.is_some() {
+                    return self.pcma_out.as_deref();
+                }
                 self.require_narrowband_8k()?;
                 let nb = self.narrowband_8k.as_ref().unwrap();
                 let out: Vec<u8> = nb.iter().map(|&s| linear_to_alaw(s as i32)).collect();
@@ -550,14 +591,18 @@ impl CodecBundle {
                 self.pcma_out.as_deref()
             }
             9 => {
-                if self.g722_out.is_some() { return self.g722_out.as_deref(); }
+                if self.g722_out.is_some() {
+                    return self.g722_out.as_deref();
+                }
                 self.require_wideband_16k()?;
                 let wb_samples = self.wideband_16k.as_ref().unwrap();
-                let enc = self.g722_encoder.get_or_insert_with(|| {
-                    crate::g722::Encoder::new().expect("g722 encoder init")
-                });
+                let enc = self
+                    .g722_encoder
+                    .get_or_insert_with(|| crate::g722::Encoder::new().expect("g722 encoder init"));
                 let wire = enc.encode(wb_samples);
-                if wire.is_empty() { return None; }
+                if wire.is_empty() {
+                    return None;
+                }
                 self.g722_out = Some(wire.to_vec());
                 self.g722_out.as_deref()
             }
@@ -565,7 +610,6 @@ impl CodecBundle {
         }
     }
 }
-
 
 /// 16 kHz → 8 kHz downsample: for each pair of input samples, run both
 /// through the shared LP filter (to update its state) and keep only the
@@ -615,7 +659,9 @@ pub fn ulaw_to_linear(ulaw: u8) -> i16 {
 
 fn clamp_linear_index(val: i32) -> Option<i16> {
     let shifted = val + 32768;
-    if !(0..=65535).contains(&shifted) { return None; }
+    if !(0..=65535).contains(&shifted) {
+        return None;
+    }
     Some((shifted - 32768) as i16)
 }
 
@@ -676,7 +722,10 @@ mod tests {
             let a = linear_to_alaw(s);
             let back = alaw_to_linear(a) as i32;
             let err = (back - s).abs();
-            assert!(err <= 1024, "roundtrip err {err} too large for {s} -> {a:02X} -> {back}");
+            assert!(
+                err <= 1024,
+                "roundtrip err {err} too large for {s} -> {a:02X} -> {back}"
+            );
         }
     }
 
@@ -690,7 +739,10 @@ mod tests {
             let a = linear_to_alaw(s);
             let back = alaw_to_linear(a) as i32;
             let err = (back - s).abs();
-            assert!(err <= 16, "near-zero roundtrip err {err} for {s} -> {a:02X} -> {back}");
+            assert!(
+                err <= 16,
+                "near-zero roundtrip err {err} for {s} -> {a:02X} -> {back}"
+            );
         }
     }
 
@@ -700,7 +752,10 @@ mod tests {
             let u = linear_to_ulaw(s);
             let back = ulaw_to_linear(u) as i32;
             let err = (back - s).abs();
-            assert!(err <= 1024, "roundtrip err {err} too large for {s} -> {u:02X} -> {back}");
+            assert!(
+                err <= 1024,
+                "roundtrip err {err} too large for {s} -> {u:02X} -> {back}"
+            );
         }
     }
 

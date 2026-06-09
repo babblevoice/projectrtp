@@ -54,9 +54,13 @@ impl JitterBuffer {
         }
     }
 
-    pub fn size(&self) -> usize { self.buffer_count }
+    pub fn size(&self) -> usize {
+        self.buffer_count
+    }
     #[allow(dead_code)]
-    pub fn out_sn(&self) -> u16 { self.out_sn }
+    pub fn out_sn(&self) -> u16 {
+        self.out_sn
+    }
 
     /// Insert a packet. Caller has populated sequence_number etc.
     pub fn push(&mut self, pk: RtpPacket) {
@@ -100,7 +104,9 @@ impl JitterBuffer {
     /// Peek the next in-order packet without advancing. If the slot is empty
     /// or holds a stale SN, advances out_sn past it and returns None.
     pub fn peek(&mut self) -> Option<&RtpPacket> {
-        if !self.primed { return None; }
+        if !self.primed {
+            return None;
+        }
         let idx = (self.out_sn as usize) % self.buffer_count;
         match &self.slots[idx] {
             None => {
@@ -142,7 +148,9 @@ impl JitterBuffer {
     }
 
     pub fn clear(&mut self) {
-        for slot in self.slots.iter_mut() { *slot = None; }
+        for slot in self.slots.iter_mut() {
+            *slot = None;
+        }
         self.peeked_slot = None;
         self.primed = false;
     }
@@ -178,13 +186,15 @@ mod tests {
     #[test]
     fn out_of_order_reorders() {
         let mut b = JitterBuffer::new(32, 2);
-        b.push(mkpk(500));   // primes out_sn = 498
+        b.push(mkpk(500)); // primes out_sn = 498
         b.push(mkpk(502));
         b.push(mkpk(501));
         b.push(mkpk(503));
         let mut seen = Vec::new();
         for _ in 0..20 {
-            if let Some(p) = b.pop() { seen.push(p.sequence_number()); }
+            if let Some(p) = b.pop() {
+                seen.push(p.sequence_number());
+            }
         }
         assert_eq!(seen, vec![500, 501, 502, 503]);
     }
@@ -193,7 +203,7 @@ mod tests {
     fn over_buffer_range_drops() {
         let mut b = JitterBuffer::new(32, 2);
         b.push(mkpk(100));
-        b.push(mkpk(20_000));   // absurdly ahead → dropped
+        b.push(mkpk(20_000)); // absurdly ahead → dropped
         assert!(b.dropped >= 1);
     }
 
@@ -206,7 +216,9 @@ mod tests {
         b.push(mkpk(103));
         let mut seen = Vec::new();
         for _ in 0..10 {
-            if let Some(p) = b.pop() { seen.push(p.sequence_number()); }
+            if let Some(p) = b.pop() {
+                seen.push(p.sequence_number());
+            }
         }
         assert!(seen.contains(&100));
         assert!(seen.contains(&101));
@@ -219,11 +231,13 @@ mod tests {
         let mut b = JitterBuffer::new(32, 2);
         b.push(mkpk(u16::MAX - 1));
         b.push(mkpk(u16::MAX));
-        b.push(mkpk(0));   // wrapped
+        b.push(mkpk(0)); // wrapped
         b.push(mkpk(1));
         let mut seen = Vec::new();
         for _ in 0..20 {
-            if let Some(p) = b.pop() { seen.push(p.sequence_number()); }
+            if let Some(p) = b.pop() {
+                seen.push(p.sequence_number());
+            }
         }
         assert_eq!(seen, vec![u16::MAX - 1, u16::MAX, 0, 1]);
     }
@@ -232,15 +246,27 @@ mod tests {
     fn restart_at_different_sn_after_drain() {
         let mut b = JitterBuffer::new(32, 10);
         // Push 15, drain all.
-        for sn in 256..271 { b.push(mkpk(sn)); }
+        for sn in 256..271 {
+            b.push(mkpk(sn));
+        }
         let mut seen = Vec::new();
-        for _ in 0..30 { if let Some(p) = b.pop() { seen.push(p.sequence_number()); } }
+        for _ in 0..30 {
+            if let Some(p) = b.pop() {
+                seen.push(p.sequence_number());
+            }
+        }
         assert_eq!(seen.len(), 15);
 
         // Restart from a much higher SN — should re-prime, not drop.
-        for sn in 512..522 { b.push(mkpk(sn)); }
+        for sn in 512..522 {
+            b.push(mkpk(sn));
+        }
         let mut seen2 = Vec::new();
-        for _ in 0..30 { if let Some(p) = b.pop() { seen2.push(p.sequence_number()); } }
+        for _ in 0..30 {
+            if let Some(p) = b.pop() {
+                seen2.push(p.sequence_number());
+            }
+        }
         assert_eq!(seen2, (512..522).collect::<Vec<_>>());
     }
 }

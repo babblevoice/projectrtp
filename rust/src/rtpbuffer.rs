@@ -7,7 +7,9 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
-use crate::channel::jitter::{JitterBuffer, DEFAULT_BUFFER_PACKET_COUNT, DEFAULT_BUFFER_WATER_LEVEL};
+use crate::channel::jitter::{
+    JitterBuffer, DEFAULT_BUFFER_PACKET_COUNT, DEFAULT_BUFFER_WATER_LEVEL,
+};
 use crate::channel::rtp::RtpPacket;
 
 #[cfg_attr(not(test), napi(object))]
@@ -66,7 +68,10 @@ impl RtpJitterBuffer {
 
     #[napi]
     pub fn poppeeked(&mut self) -> Either<Buffer, Undefined> {
-        let copy = self.inner.peek().map(|p| Buffer::from(p.as_slice().to_vec()));
+        let copy = self
+            .inner
+            .peek()
+            .map(|p| Buffer::from(p.as_slice().to_vec()));
         self.inner.discard_peeked();
         match copy {
             Some(b) => Either::A(b),
@@ -84,8 +89,12 @@ impl RtpJitterBuffer {
 pub fn create(opts: Option<BufferOptions>) -> Result<RtpJitterBuffer> {
     let (size, water) = match opts {
         Some(o) => (
-            o.size.map(|n| n as usize).unwrap_or(DEFAULT_BUFFER_PACKET_COUNT),
-            o.waterlevel.map(|n| n as usize).unwrap_or(DEFAULT_BUFFER_WATER_LEVEL),
+            o.size
+                .map(|n| n as usize)
+                .unwrap_or(DEFAULT_BUFFER_PACKET_COUNT),
+            o.waterlevel
+                .map(|n| n as usize)
+                .unwrap_or(DEFAULT_BUFFER_WATER_LEVEL),
         ),
         None => (DEFAULT_BUFFER_PACKET_COUNT, DEFAULT_BUFFER_WATER_LEVEL),
     };

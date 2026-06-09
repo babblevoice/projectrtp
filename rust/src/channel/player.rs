@@ -72,8 +72,12 @@ impl Player {
         }
     }
 
-    pub fn is_finished(&self) -> bool { self.finished }
-    pub fn interrupts(&self) -> bool { self.spec.interrupt }
+    pub fn is_finished(&self) -> bool {
+        self.finished
+    }
+    pub fn interrupts(&self) -> bool {
+        self.spec.interrupt
+    }
 
     /// Read up to `samples_wanted` 16-bit samples, advancing through files
     /// and loops as needed. Returns fewer samples only when the soup finishes.
@@ -133,17 +137,27 @@ impl Player {
             }
         }
 
-        PlayFrame { samples: out, end_of_file, end_of_soup: end_of_soup || self.finished }
+        PlayFrame {
+            samples: out,
+            end_of_file,
+            end_of_soup: end_of_soup || self.finished,
+        }
     }
 
     async fn open_current(&mut self) -> bool {
         let spec = match self.spec.files.get(self.index) {
             Some(s) => s.clone(),
-            None => { self.finished = true; return false; }
+            None => {
+                self.finished = true;
+                return false;
+            }
         };
         let mut reader = match WavReader::open(&spec.path).await {
             Ok(r) => r,
-            Err(_) => { self.finished = true; return false; }
+            Err(_) => {
+                self.finished = true;
+                return false;
+            }
         };
         if let Some(start) = spec.start_ms {
             let _ = reader.seek_ms(start).await;
@@ -170,7 +184,10 @@ impl Player {
     async fn advance(&mut self) {
         let cur = match self.spec.files.get(self.index).cloned() {
             Some(s) => s,
-            None => { self.finished = true; return; }
+            None => {
+                self.finished = true;
+                return;
+            }
         };
         self.file_loop += 1;
 
@@ -194,8 +211,8 @@ impl Player {
         if self.index >= self.spec.files.len() {
             self.overall_loop += 1;
             let done = match self.spec.overall_loops {
-                None => true,           // play-once
-                Some(0) => false,        // infinite
+                None => true,     // play-once
+                Some(0) => false, // infinite
                 Some(n) => self.overall_loop >= n,
             };
             if done {
@@ -225,7 +242,12 @@ mod tests {
     async fn plays_single_file_once() {
         let p = make_wav("player_single.wav", &vec![1i16; 800]).await;
         let spec = SoundSoupSpec {
-            files: vec![SoundSoupFileSpec { path: p.clone(), start_ms: None, stop_ms: None, max_loops: None }],
+            files: vec![SoundSoupFileSpec {
+                path: p.clone(),
+                start_ms: None,
+                stop_ms: None,
+                max_loops: None,
+            }],
             overall_loops: None,
             interrupt: false,
         };
@@ -243,7 +265,12 @@ mod tests {
     async fn loops_overall_count() {
         let p = make_wav("player_loop.wav", &vec![7i16; 100]).await;
         let spec = SoundSoupSpec {
-            files: vec![SoundSoupFileSpec { path: p.clone(), start_ms: None, stop_ms: None, max_loops: None }],
+            files: vec![SoundSoupFileSpec {
+                path: p.clone(),
+                start_ms: None,
+                stop_ms: None,
+                max_loops: None,
+            }],
             overall_loops: Some(3),
             interrupt: false,
         };
@@ -253,7 +280,9 @@ mod tests {
         loop {
             let frame = pl.read(50).await;
             total += frame.samples.len();
-            if frame.end_of_soup && frame.samples.is_empty() { break; }
+            if frame.end_of_soup && frame.samples.is_empty() {
+                break;
+            }
         }
         assert_eq!(total, 300, "3 loops × 100 samples");
         let _ = std::fs::remove_file(&p);
@@ -265,8 +294,18 @@ mod tests {
         let p2 = make_wav("player_multi2.wav", &vec![22i16; 100]).await;
         let spec = SoundSoupSpec {
             files: vec![
-                SoundSoupFileSpec { path: p1.clone(), start_ms: None, stop_ms: None, max_loops: None },
-                SoundSoupFileSpec { path: p2.clone(), start_ms: None, stop_ms: None, max_loops: None },
+                SoundSoupFileSpec {
+                    path: p1.clone(),
+                    start_ms: None,
+                    stop_ms: None,
+                    max_loops: None,
+                },
+                SoundSoupFileSpec {
+                    path: p2.clone(),
+                    start_ms: None,
+                    stop_ms: None,
+                    max_loops: None,
+                },
             ],
             overall_loops: None,
             interrupt: false,

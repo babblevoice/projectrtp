@@ -95,12 +95,16 @@ impl webrtc_util::Conn for DtlsTransport {
 
     async fn send(&self, buf: &[u8]) -> webrtc_util::Result<usize> {
         let remote = (*self.remote_addr.lock()).unwrap_or(self.local_addr);
-        self.sock.send_to(buf, remote).await
+        self.sock
+            .send_to(buf, remote)
+            .await
             .map_err(|e| webrtc_util::Error::Other(e.to_string()))
     }
 
     async fn send_to(&self, buf: &[u8], target: SocketAddr) -> webrtc_util::Result<usize> {
-        self.sock.send_to(buf, target).await
+        self.sock
+            .send_to(buf, target)
+            .await
             .map_err(|e| webrtc_util::Error::Other(e.to_string()))
     }
 
@@ -185,7 +189,8 @@ pub fn spawn_handshake(
         let outcome = tokio::time::timeout(
             HANDSHAKE_TIMEOUT,
             DTLSConn::new(transport, config, is_client, None),
-        ).await;
+        )
+        .await;
 
         let result = match outcome {
             Ok(Ok(conn)) => {
@@ -210,7 +215,10 @@ pub fn spawn_handshake(
         let _ = result_tx.send(result);
     });
 
-    HandshakeHandle { result_rx, abort: join.abort_handle() }
+    HandshakeHandle {
+        result_rx,
+        abort: join.abort_handle(),
+    }
 }
 
 /// Split exported keying material into client/server key + salt pairs.
@@ -224,9 +232,12 @@ pub fn split_keying_material(
     let key_len = profile.key_len();
     let salt_len = profile.salt_len();
     let mut off = 0;
-    let client_write_key = km[off..off + key_len].to_vec(); off += key_len;
-    let server_write_key = km[off..off + key_len].to_vec(); off += key_len;
-    let client_write_salt = km[off..off + salt_len].to_vec(); off += salt_len;
+    let client_write_key = km[off..off + key_len].to_vec();
+    off += key_len;
+    let server_write_key = km[off..off + key_len].to_vec();
+    off += key_len;
+    let client_write_salt = km[off..off + salt_len].to_vec();
+    off += salt_len;
     let server_write_salt = km[off..off + salt_len].to_vec();
     let _ = off;
     SrtpKeyingMaterial {
@@ -292,11 +303,19 @@ mod tests {
         let server_remote = Arc::new(PLMutex::new(Some(client_addr)));
         let client_remote = Arc::new(PLMutex::new(Some(server_addr)));
         let server_h = spawn_handshake(
-            DtlsSetup::Passive, server_addr, server_sock, server_dtls_rx, server_cert,
+            DtlsSetup::Passive,
+            server_addr,
+            server_sock,
+            server_dtls_rx,
+            server_cert,
             server_remote,
         );
         let client_h = spawn_handshake(
-            DtlsSetup::Active, client_addr, client_sock, client_dtls_rx, client_cert,
+            DtlsSetup::Active,
+            client_addr,
+            client_sock,
+            client_dtls_rx,
+            client_cert,
             client_remote,
         );
 
@@ -320,10 +339,14 @@ mod tests {
         assert!(client_km.is_client);
 
         let server_keys = split_keying_material(
-            &server_km.keying_material, server_km.profile, server_km.is_client,
+            &server_km.keying_material,
+            server_km.profile,
+            server_km.is_client,
         );
         let client_keys = split_keying_material(
-            &client_km.keying_material, client_km.profile, client_km.is_client,
+            &client_km.keying_material,
+            client_km.profile,
+            client_km.is_client,
         );
         assert_eq!(server_keys.client_write_key, client_keys.client_write_key);
         assert_eq!(server_keys.server_write_key, client_keys.server_write_key);
@@ -332,20 +355,32 @@ mod tests {
         let mut encrypt_ctx = webrtc_srtp::context::Context::new(
             &client_keys.client_write_key,
             &client_keys.client_write_salt,
-            client_keys.profile, None, None,
-        ).expect("srtp encrypt ctx");
+            client_keys.profile,
+            None,
+            None,
+        )
+        .expect("srtp encrypt ctx");
 
         let mut decrypt_ctx = webrtc_srtp::context::Context::new(
             &server_keys.client_write_key,
             &server_keys.client_write_salt,
-            server_keys.profile, None, None,
-        ).expect("srtp decrypt ctx");
+            server_keys.profile,
+            None,
+            None,
+        )
+        .expect("srtp decrypt ctx");
 
-        let mut rtp_pkt = vec![0x80, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xA0, 0x00, 0x00, 0x00, 0x01];
+        let mut rtp_pkt = vec![
+            0x80, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xA0, 0x00, 0x00, 0x00, 0x01,
+        ];
         rtp_pkt.extend_from_slice(&[0x55u8; 160]);
 
         let encrypted = encrypt_ctx.encrypt_rtp(&rtp_pkt).expect("encrypt");
-        assert_ne!(&encrypted[12..], &rtp_pkt[12..], "payload should be encrypted");
+        assert_ne!(
+            &encrypted[12..],
+            &rtp_pkt[12..],
+            "payload should be encrypted"
+        );
 
         let decrypted = decrypt_ctx.decrypt_rtp(&encrypted).expect("decrypt");
         assert_eq!(&decrypted[..], &rtp_pkt[..], "round-trip should match");

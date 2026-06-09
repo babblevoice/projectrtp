@@ -79,7 +79,9 @@ impl Encoder {
         }
         let init = unsafe { WebRtcIlbcfix_EncoderInit(inst, FRAME_LEN_MS) };
         if init != 0 {
-            unsafe { WebRtcIlbcfix_EncoderFree(inst); }
+            unsafe {
+                WebRtcIlbcfix_EncoderFree(inst);
+            }
             return None;
         }
         Some(Self { inst })
@@ -106,7 +108,9 @@ impl Encoder {
 impl Drop for Encoder {
     fn drop(&mut self) {
         if !self.inst.is_null() {
-            unsafe { WebRtcIlbcfix_EncoderFree(self.inst); }
+            unsafe {
+                WebRtcIlbcfix_EncoderFree(self.inst);
+            }
             self.inst = std::ptr::null_mut();
         }
     }
@@ -128,7 +132,9 @@ impl Decoder {
         }
         let init = unsafe { WebRtcIlbcfix_DecoderInit(inst, FRAME_LEN_MS) };
         if init != 0 {
-            unsafe { WebRtcIlbcfix_DecoderFree(inst); }
+            unsafe {
+                WebRtcIlbcfix_DecoderFree(inst);
+            }
             return None;
         }
         Some(Self { inst })
@@ -163,7 +169,9 @@ impl Decoder {
 impl Drop for Decoder {
     fn drop(&mut self) {
         if !self.inst.is_null() {
-            unsafe { WebRtcIlbcfix_DecoderFree(self.inst); }
+            unsafe {
+                WebRtcIlbcfix_DecoderFree(self.inst);
+            }
             self.inst = std::ptr::null_mut();
         }
     }

@@ -59,9 +59,13 @@ fn gentone(
     end_amp: f64,
     sample_rate: u32,
 ) {
-    if start_freq == 0.0 && end_freq == 0.0 { return; }
+    if start_freq == 0.0 && end_freq == 0.0 {
+        return;
+    }
     let n = out.len();
-    if n == 0 { return; }
+    if n == 0 {
+        return;
+    }
     let amp_per_sample = (end_amp - start_amp) / n as f64;
     let freq_per_sample = (end_freq - start_freq) / n as f64;
     let mut ampatpos = start_amp;
@@ -74,7 +78,8 @@ fn gentone(
     for (i, slot) in out.iter_mut().enumerate() {
         let v = (angle * i as f64).sin() * i16::MAX as f64 * ampatpos;
         // Saturating add to prevent wrap on overlapping `+` tones.
-        let sum = (*slot as i32).saturating_add(v as i32)
+        let sum = (*slot as i32)
+            .saturating_add(v as i32)
             .clamp(i16::MIN as i32, i16::MAX as i32);
         *slot = sum as i16;
         ampatpos += amp_per_sample;
@@ -88,7 +93,10 @@ fn gentone(
 }
 
 #[derive(Debug)]
-struct AmpSpec { start: f64, end: f64 }
+struct AmpSpec {
+    start: f64,
+    end: f64,
+}
 
 fn parse_amp(spec: &str) -> AmpSpec {
     // spec is the part after `*`, may be `a` or `a~b`.
@@ -102,7 +110,13 @@ fn gen_block(out: &mut [i16], freq_spec: &str) {
     // Split off amplitude (`*amp[~amp2]`) first.
     let (freq_part, amp) = match freq_spec.split_once('*') {
         Some((f, a)) => (f, parse_amp(a)),
-        None => (freq_spec, AmpSpec { start: 1.0, end: 1.0 }),
+        None => (
+            freq_spec,
+            AmpSpec {
+                start: 1.0,
+                end: 1.0,
+            },
+        ),
     };
 
     // Detect operator: `+` sum, `~` sweep. `x` modulation not implemented (matches C++).
@@ -158,7 +172,9 @@ pub fn generate(tone: &str, filename: &Path) -> Result<()> {
     for (i, freq_spec) in frequencies.iter().enumerate() {
         let ms = cadences[i % cadences.len()];
         let block_len = (ms * SAMPLE_RATE / 1000) as usize;
-        if pos + block_len > samples.len() { break; }
+        if pos + block_len > samples.len() {
+            break;
+        }
         gen_block(&mut samples[pos..pos + block_len], freq_spec);
         pos += block_len;
     }
@@ -201,7 +217,9 @@ fn append_to_wav(filename: &Path, new_data: &[u8]) -> Result<()> {
     let (format, sr, existing_data) = read_wav_header(&hdr)
         .ok_or_else(|| Error::from_reason("existing file is not a valid WAV"))?;
     if format != WAVE_FORMAT_PCM || sr != SAMPLE_RATE {
-        return Err(Error::from_reason("existing WAV format/samplerate mismatch"));
+        return Err(Error::from_reason(
+            "existing WAV format/samplerate mismatch",
+        ));
     }
 
     let new_total = existing_data + new_data.len() as u32;
@@ -213,7 +231,9 @@ fn append_to_wav(filename: &Path, new_data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn wrap_io(e: std::io::Error) -> Error { Error::from_reason(e.to_string()) }
+fn wrap_io(e: std::io::Error) -> Error {
+    Error::from_reason(e.to_string())
+}
 
 #[cfg_attr(not(test), napi(namespace = "tone", js_name = "generate"))]
 pub fn js_generate(tone: String, filename: String) -> Result<bool> {
@@ -268,7 +288,10 @@ mod tests {
         let pcm = &data[WAV_HEADER_LEN..];
         // Second half should be silent.
         let half = pcm.len() / 2;
-        assert!(pcm[half..].iter().all(|b| *b == 0), "silence block not zero");
+        assert!(
+            pcm[half..].iter().all(|b| *b == 0),
+            "silence block not zero"
+        );
 
         let _ = fs::remove_file(&tmp);
     }

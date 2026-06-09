@@ -28,14 +28,22 @@ static POOL: Mutex<Option<PortPool>> = Mutex::new(None);
 /// pool is replaced wholesale).
 pub fn init(start: u16, end: u16) {
     let mut p = start;
-    if p % 2 != 0 { p = p.saturating_add(1); }
+    if p % 2 != 0 {
+        p = p.saturating_add(1);
+    }
     let mut q = VecDeque::new();
     while p + 1 < end {
         q.push_back(p);
-        p = match p.checked_add(2) { Some(v) => v, None => break };
+        p = match p.checked_add(2) {
+            Some(v) => v,
+            None => break,
+        };
     }
     let total = q.len() as u32;
-    *POOL.lock().unwrap() = Some(PortPool { available: q, total });
+    *POOL.lock().unwrap() = Some(PortPool {
+        available: q,
+        total,
+    });
 }
 
 pub fn is_initialized() -> bool {
@@ -45,16 +53,25 @@ pub fn is_initialized() -> bool {
 /// Take the next even port. Returns None when the pool is uninitialized or
 /// exhausted — the caller distinguishes the two cases via `is_initialized`.
 pub fn acquire() -> Option<u16> {
-    POOL.lock().unwrap().as_mut().and_then(|p| p.available.pop_front())
+    POOL.lock()
+        .unwrap()
+        .as_mut()
+        .and_then(|p| p.available.pop_front())
 }
 
 /// Return a port to the pool — no-op if the pool is uninitialized.
 pub fn release(port: u16) {
-    if let Some(p) = POOL.lock().unwrap().as_mut() { p.available.push_back(port); }
+    if let Some(p) = POOL.lock().unwrap().as_mut() {
+        p.available.push_back(port);
+    }
 }
 
 pub fn available_count() -> u32 {
-    POOL.lock().unwrap().as_ref().map(|p| p.available.len() as u32).unwrap_or(0)
+    POOL.lock()
+        .unwrap()
+        .as_ref()
+        .map(|p| p.available.len() as u32)
+        .unwrap_or(0)
 }
 
 #[allow(dead_code)]
@@ -70,13 +87,19 @@ pub struct PortReservation {
 }
 
 impl PortReservation {
-    pub fn new(port: u16) -> Self { Self { port } }
+    pub fn new(port: u16) -> Self {
+        Self { port }
+    }
     #[allow(dead_code)]
-    pub fn port(&self) -> u16 { self.port }
+    pub fn port(&self) -> u16 {
+        self.port
+    }
 }
 
 impl Drop for PortReservation {
-    fn drop(&mut self) { release(self.port); }
+    fn drop(&mut self) {
+        release(self.port);
+    }
 }
 
 #[cfg(test)]
@@ -87,7 +110,9 @@ mod tests {
     fn init_populates_only_even_ports() {
         init(10_000, 10_010);
         let mut acquired = Vec::new();
-        while let Some(p) = acquire() { acquired.push(p); }
+        while let Some(p) = acquire() {
+            acquired.push(p);
+        }
         assert_eq!(acquired, vec![10_000, 10_002, 10_004, 10_006, 10_008]);
     }
 

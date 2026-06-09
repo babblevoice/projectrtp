@@ -36,9 +36,9 @@ pub enum TickOutcome {
     Stop,
 }
 
-pub const IDLE_TICK_LIMIT: u64 = 50 * 20;          // 20s — soft idle (no RTP with remote confirmed)
-pub const HARD_TIMEOUT_NO_REMOTE: u64 = 50 * 60 * 60;     // 1hr — remote() never called
-pub const HARD_TIMEOUT_NO_RECV: u64 = 50 * 60 * 60 * 2;   // 2hr — on hold (recv=false)
+pub const IDLE_TICK_LIMIT: u64 = 50 * 20; // 20s — soft idle (no RTP with remote confirmed)
+pub const HARD_TIMEOUT_NO_REMOTE: u64 = 50 * 60 * 60; // 1hr — remote() never called
+pub const HARD_TIMEOUT_NO_RECV: u64 = 50 * 60 * 60 * 2; // 2hr — on hold (recv=false)
 
 // 20 ms at 8 kHz — the canonical narrowband frame length used for
 // recorder/reader frames when the inbound side is silent.
@@ -70,7 +70,9 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     let mut inbound_pkt: Option<RtpPacket> = None;
     let mut popped_any = false;
     loop {
-        let Some(pk) = pop_and_decrypt_inbound(state) else { break; };
+        let Some(pk) = pop_and_decrypt_inbound(state) else {
+            break;
+        };
         popped_any = true;
         if pk.payload_type() == state.rfc2833_pt {
             classify_dtmf_inbound(state, subs, &pk).await;
@@ -136,7 +138,9 @@ async fn classify_dtmf_inbound(
     subs: &mut Subsystems,
     pk: &RtpPacket,
 ) -> bool {
-    if pk.payload_type() != state.rfc2833_pt { return false; }
+    if pk.payload_type() != state.rfc2833_pt {
+        return false;
+    }
     let sn = pk.sequence_number();
     let ts = pk.timestamp();
     let payload = &pk.as_slice()[rtp::RTP_FIXED_HEADER_LEN..pk.len()];
@@ -203,7 +207,10 @@ fn tick_writer(state: &mut ChannelState, subs: &mut Subsystems) -> Option<Vec<i1
     };
     // Take-out check: if the writer reports drained+ended, retire it and
     // emit a `play/end` so the JS event sink sees symmetry with `play`.
-    let drained = subs.writer.as_ref().is_some_and(|w| w.is_drained_and_ended());
+    let drained = subs
+        .writer
+        .as_ref()
+        .is_some_and(|w| w.is_drained_and_ended());
     if drained {
         subs.writer = None;
         state.pending_events.push(Event::Play {
@@ -227,22 +234,34 @@ fn decode_inbound(state: &mut ChannelState, pkt: Option<&RtpPacket>) -> Option<V
 /// Smoothed-RMS barge-in check. Only runs when a player is active *and*
 /// we've seen enough inbound packets for the moving average to have
 /// converged (100 packets ≈ 2 s — same constant the recorder uses).
-async fn run_bargein(
-    state: &mut ChannelState,
-    subs: &mut Subsystems,
-    decoded: Option<&[i16]>,
-) {
-    let Some(samples) = decoded else { return; };
-    let Some(bi) = subs.bargein.as_mut() else { return; };
-    if subs.player.is_none() { return; }
-    if state.in_count.load(Ordering::Relaxed) < 100 { return; }
+async fn run_bargein(state: &mut ChannelState, subs: &mut Subsystems, decoded: Option<&[i16]>) {
+    let Some(samples) = decoded else {
+        return;
+    };
+    let Some(bi) = subs.bargein.as_mut() else {
+        return;
+    };
+    if subs.player.is_none() {
+        return;
+    }
+    if state.in_count.load(Ordering::Relaxed) < 100 {
+        return;
+    }
 
     let mut sum_sq: u64 = 0;
-    for s in samples { let v = *s as i64; sum_sq += (v * v) as u64; }
-    let rms = if samples.is_empty() { 0 }
-              else { ((sum_sq / samples.len() as u64) as f64).sqrt() as i32 };
+    for s in samples {
+        let v = *s as i64;
+        sum_sq += (v * v) as u64;
+    }
+    let rms = if samples.is_empty() {
+        0
+    } else {
+        ((sum_sq / samples.len() as u64) as f64).sqrt() as i32
+    };
     let smoothed = bi.power_ma.execute(rms.min(i16::MAX as i32) as i16) as i32;
-    if smoothed <= bi.power_threshold { return; }
+    if smoothed <= bi.power_threshold {
+        return;
+    }
 
     subs.player = None;
     subs.bargein = None;
@@ -258,8 +277,12 @@ async fn run_bargein(
 /// they can be flushed into the recorder on activation — captures the
 /// caller's speech that started before the prompt finished.
 fn accumulate_prebuffer(subs: &mut Subsystems, decoded: Option<&[i16]>) {
-    if subs.player.is_none() || subs.pending_recorder.is_none() { return; }
-    let Some(samples) = decoded else { return; };
+    if subs.player.is_none() || subs.pending_recorder.is_none() {
+        return;
+    }
+    let Some(samples) = decoded else {
+        return;
+    };
 
     let total = subs.prebuffer.len() + samples.len();
     if total > PREBUFFER_CAPACITY_SAMPLES {
@@ -268,7 +291,9 @@ fn accumulate_prebuffer(subs: &mut Subsystems, decoded: Option<&[i16]>) {
             subs.prebuffer.pop_front();
         }
     }
-    for s in samples { subs.prebuffer.push_back(*s); }
+    for s in samples {
+        subs.prebuffer.push_back(*s);
+    }
 }
 
 /// Resolve inbound / outbound sample slices for the tick (same L/R
@@ -311,7 +336,9 @@ async fn feed_recorders_and_readers(
             // inbound (G.722 decode) + the outbound (player/echo/silence)
             // upsampled to 16 kHz so the WAV stays coherent. The recorder's
             // WAV rate is stamped to 16k at open to match.
-            let in_wb = state.codecx.require_wideband_16k()
+            let in_wb = state
+                .codecx
+                .require_wideband_16k()
                 .map(|s| s.to_vec())
                 .unwrap_or_else(|| upsample_2x(in_s));
             let out_wb = upsample_2x(out_s);
@@ -330,11 +357,17 @@ async fn feed_recorders_and_readers(
 /// inbound leg uses the codec's true wideband decode; this only covers the
 /// out side so a stereo native recording stays sample-aligned.
 fn upsample_2x(input: &[i16]) -> Vec<i16> {
-    if input.is_empty() { return Vec::new(); }
+    if input.is_empty() {
+        return Vec::new();
+    }
     let mut out = Vec::with_capacity(input.len() * 2);
     for i in 0..input.len() {
         let cur = input[i] as i32;
-        let next = if i + 1 < input.len() { input[i + 1] as i32 } else { cur };
+        let next = if i + 1 < input.len() {
+            input[i + 1] as i32
+        } else {
+            cur
+        };
         out.push(cur as i16);
         out.push(((cur + next) / 2) as i16);
     }
@@ -405,20 +438,17 @@ fn build_recorder_frame(num_channels: u16, in_s: &[i16], out_s: &[i16], len: usi
         }
         v
     } else {
-        (0..len).map(|j| {
-            let a = in_s.get(j).copied().unwrap_or(0) as i32;
-            let b = out_s.get(j).copied().unwrap_or(0) as i32;
-            (a + b).clamp(i16::MIN as i32, i16::MAX as i32) as i16
-        }).collect()
+        (0..len)
+            .map(|j| {
+                let a = in_s.get(j).copied().unwrap_or(0) as i32;
+                let b = out_s.get(j).copied().unwrap_or(0) as i32;
+                (a + b).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+            })
+            .collect()
     }
 }
 
-fn feed_readers(
-    state: &mut ChannelState,
-    subs: &mut Subsystems,
-    in_s: &[i16],
-    out_s: &[i16],
-) {
+fn feed_readers(state: &mut ChannelState, subs: &mut Subsystems, in_s: &[i16], out_s: &[i16]) {
     for reader in subs.readers.iter_mut() {
         reader.feed(&mut state.codecx, Some(in_s), Some(out_s));
     }
@@ -436,8 +466,12 @@ async fn send_outbound(
     player_frame: Option<&[i16]>,
     inbound_pkt: Option<&RtpPacket>,
 ) {
-    if !state.direction.send { return; }
-    let Some(remote) = state.get_remote_addr() else { return; };
+    if !state.direction.send {
+        return;
+    }
+    let Some(remote) = state.get_remote_addr() else {
+        return;
+    };
 
     if let Some(pkt) = subs.dtmf_send.next_event(state.out_ts) {
         send_dtmf(state, &pkt, remote).await;
@@ -482,7 +516,9 @@ pub(crate) fn poll_dtls_handshake(state: &mut ChannelState) {
         match rx.try_recv() {
             Ok(Some(result)) => {
                 let keys = super::dtls_session::split_keying_material(
-                    &result.keying_material, result.profile, result.is_client,
+                    &result.keying_material,
+                    result.profile,
+                    result.is_client,
                 );
                 let (our_key, our_salt) = if keys.local_is_server {
                     (&keys.server_write_key, &keys.server_write_salt)
@@ -494,12 +530,20 @@ pub(crate) fn poll_dtls_handshake(state: &mut ChannelState) {
                 } else {
                     (&keys.server_write_key, &keys.server_write_salt)
                 };
-                if let Ok(enc) = webrtc_srtp::context::Context::new(
-                    our_key, our_salt, keys.profile, None, None,
-                ) { state.srtp_encrypt = Some(enc); }
+                if let Ok(enc) =
+                    webrtc_srtp::context::Context::new(our_key, our_salt, keys.profile, None, None)
+                {
+                    state.srtp_encrypt = Some(enc);
+                }
                 if let Ok(dec) = webrtc_srtp::context::Context::new(
-                    their_key, their_salt, keys.profile, None, None,
-                ) { state.srtp_decrypt = Some(dec); }
+                    their_key,
+                    their_salt,
+                    keys.profile,
+                    None,
+                    None,
+                ) {
+                    state.srtp_decrypt = Some(dec);
+                }
                 state.srtp_keys = Some(keys);
                 state.dtls_result_rx = None;
                 state.dtls_handshake_abort = None;
@@ -531,7 +575,11 @@ async fn send_rtp(state: &mut ChannelState, pkt: &RtpPacket, remote: SocketAddr)
     }
 }
 
-async fn send_dtmf(state: &mut ChannelState, pkt: &super::dtmf::NextDtmfPacket, remote: SocketAddr) {
+async fn send_dtmf(
+    state: &mut ChannelState,
+    pkt: &super::dtmf::NextDtmfPacket,
+    remote: SocketAddr,
+) {
     let mut out = RtpPacket::new();
     out.init(state.ssrc);
     out.set_payload_type(state.rfc2833_pt);
@@ -553,7 +601,9 @@ async fn send_player_frame(state: &mut ChannelState, samples: &[i16], remote: So
     // persists across ticks for a coherent outbound stream.
     state.codecx.feed_linear_8k(samples);
     let pt = state.remote_pt;
-    let Some(payload) = state.codecx.require_wire_as(pt).map(|b| b.to_vec()) else { return; };
+    let Some(payload) = state.codecx.require_wire_as(pt).map(|b| b.to_vec()) else {
+        return;
+    };
     let mut out = RtpPacket::new();
     out.init(state.ssrc);
     out.set_payload_type(state.remote_pt);
@@ -599,7 +649,10 @@ mod tests {
         let peer_sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let peer_addr = peer_sock.local_addr().unwrap();
         let mut state = ChannelState::new(1, rtp_addr, rtp_sock, rtcp_sock, 0xC0FFEE);
-        state.direction = Direction { send: true, recv: true };
+        state.direction = Direction {
+            send: true,
+            recv: true,
+        };
         (state, peer_sock, peer_addr)
     }
 
@@ -612,7 +665,8 @@ mod tests {
         let r = tokio::time::timeout(
             std::time::Duration::from_millis(30),
             peer_sock.recv_from(&mut [0u8; 2000]),
-        ).await;
+        )
+        .await;
         assert!(r.is_err());
     }
 
@@ -628,7 +682,8 @@ mod tests {
         let r = tokio::time::timeout(
             std::time::Duration::from_millis(30),
             peer_sock.recv_from(&mut [0u8; 2000]),
-        ).await;
+        )
+        .await;
         assert!(r.is_err());
     }
 
@@ -657,39 +712,181 @@ mod tests {
         // audio SNs interleaved between burst body / end packets are
         // synthesised below so the buffer ordering matches the wire.
         let bursts: &[(u32, u8, &[(u16, bool)])] = &[
-            (36160,  9, &[(226,false),(228,false),(230,false),(232,false),
-                          (234,false),(236,false),(238,false),
-                          (239,true),(241,true),(242,true)]),
-            (113280, 1, &[(718,false),(720,false),(722,false),(724,false),
-                          (726,false),(728,false),(730,false),
-                          (731,true),(733,true),(734,true)]),
-            (116640, 9, &[(749,false),(751,false),(753,false),(755,false),
-                          (757,false),(759,false),(761,false),
-                          (762,true),(764,true),(765,true)]),
-            (120000, 9, &[(780,false),(782,false),(784,false),(786,false),
-                          (788,false),(790,false),(792,false),
-                          (793,true),(795,true),(796,true)]),
-            (123200, 3, &[(810,false),(812,false),(814,false),(816,false),
-                          (818,false),(820,false),(822,false),
-                          (823,true),(825,true),(826,true)]),
-            (179840, 3, &[(1174,false),(1176,false),(1178,false),(1180,false),
-                          (1182,false),(1184,false),(1186,false),
-                          (1187,true),(1189,true),(1190,true)]),
-            (232640, 1, &[(1514,false),(1516,false),(1518,false),(1520,false),
-                          (1522,false),(1524,false),(1526,false),
-                          (1527,true),(1529,true),(1530,true)]),
-            (235200, 1, &[(1540,false),(1542,false),(1544,false),(1546,false),
-                          (1548,false),(1550,false),
-                          (1551,true),(1553,true),(1554,true)]),
-            (261440, 1, &[(1713,false),(1715,false),(1717,false),(1719,false),
-                          (1721,false),(1723,false),(1725,false),
-                          (1726,true),(1728,true),(1729,true)]),
-            (324800, 1, &[(2119,false),(2121,false),(2123,false),(2125,false),
-                          (2127,false),(2129,false),(2131,false),
-                          (2132,true),(2134,true),(2135,true)]),
-            (328480, 2, &[(2152,false),(2154,false),(2156,false),(2158,false),
-                          (2160,false),(2162,false),(2164,false),
-                          (2165,true),(2167,true),(2168,true)]),
+            (
+                36160,
+                9,
+                &[
+                    (226, false),
+                    (228, false),
+                    (230, false),
+                    (232, false),
+                    (234, false),
+                    (236, false),
+                    (238, false),
+                    (239, true),
+                    (241, true),
+                    (242, true),
+                ],
+            ),
+            (
+                113280,
+                1,
+                &[
+                    (718, false),
+                    (720, false),
+                    (722, false),
+                    (724, false),
+                    (726, false),
+                    (728, false),
+                    (730, false),
+                    (731, true),
+                    (733, true),
+                    (734, true),
+                ],
+            ),
+            (
+                116640,
+                9,
+                &[
+                    (749, false),
+                    (751, false),
+                    (753, false),
+                    (755, false),
+                    (757, false),
+                    (759, false),
+                    (761, false),
+                    (762, true),
+                    (764, true),
+                    (765, true),
+                ],
+            ),
+            (
+                120000,
+                9,
+                &[
+                    (780, false),
+                    (782, false),
+                    (784, false),
+                    (786, false),
+                    (788, false),
+                    (790, false),
+                    (792, false),
+                    (793, true),
+                    (795, true),
+                    (796, true),
+                ],
+            ),
+            (
+                123200,
+                3,
+                &[
+                    (810, false),
+                    (812, false),
+                    (814, false),
+                    (816, false),
+                    (818, false),
+                    (820, false),
+                    (822, false),
+                    (823, true),
+                    (825, true),
+                    (826, true),
+                ],
+            ),
+            (
+                179840,
+                3,
+                &[
+                    (1174, false),
+                    (1176, false),
+                    (1178, false),
+                    (1180, false),
+                    (1182, false),
+                    (1184, false),
+                    (1186, false),
+                    (1187, true),
+                    (1189, true),
+                    (1190, true),
+                ],
+            ),
+            (
+                232640,
+                1,
+                &[
+                    (1514, false),
+                    (1516, false),
+                    (1518, false),
+                    (1520, false),
+                    (1522, false),
+                    (1524, false),
+                    (1526, false),
+                    (1527, true),
+                    (1529, true),
+                    (1530, true),
+                ],
+            ),
+            (
+                235200,
+                1,
+                &[
+                    (1540, false),
+                    (1542, false),
+                    (1544, false),
+                    (1546, false),
+                    (1548, false),
+                    (1550, false),
+                    (1551, true),
+                    (1553, true),
+                    (1554, true),
+                ],
+            ),
+            (
+                261440,
+                1,
+                &[
+                    (1713, false),
+                    (1715, false),
+                    (1717, false),
+                    (1719, false),
+                    (1721, false),
+                    (1723, false),
+                    (1725, false),
+                    (1726, true),
+                    (1728, true),
+                    (1729, true),
+                ],
+            ),
+            (
+                324800,
+                1,
+                &[
+                    (2119, false),
+                    (2121, false),
+                    (2123, false),
+                    (2125, false),
+                    (2127, false),
+                    (2129, false),
+                    (2131, false),
+                    (2132, true),
+                    (2134, true),
+                    (2135, true),
+                ],
+            ),
+            (
+                328480,
+                2,
+                &[
+                    (2152, false),
+                    (2154, false),
+                    (2156, false),
+                    (2158, false),
+                    (2160, false),
+                    (2162, false),
+                    (2164, false),
+                    (2165, true),
+                    (2167, true),
+                    (2168, true),
+                ],
+            ),
         ];
         let dtmf_pt = state.rfc2833_pt;
 
@@ -711,8 +908,12 @@ mod tests {
         for (ts, ev, packets) in bursts {
             for (sn, end) in *packets {
                 all_dtmf_sns.insert(*sn, (*ts, *ev, *end));
-                if *sn < min_sn { min_sn = *sn; }
-                if *sn > max_sn { max_sn = *sn; }
+                if *sn < min_sn {
+                    min_sn = *sn;
+                }
+                if *sn > max_sn {
+                    max_sn = *sn;
+                }
             }
         }
 
@@ -737,7 +938,7 @@ mod tests {
             // immediately preceded by DTMF at sn-1), wire delta is 10 ms.
             // Otherwise it's 20 ms (steady audio cadence).
             let is_dtmf = all_dtmf_sns.contains_key(&sn);
-            let prev_dtmf = sn > min_sn && all_dtmf_sns.contains_key(&(sn-1));
+            let prev_dtmf = sn > min_sn && all_dtmf_sns.contains_key(&(sn - 1));
             let delta_ms = if is_dtmf && prev_was_audio {
                 // DTMF arrives 10 ms after the paired audio
                 10
@@ -789,8 +990,9 @@ mod tests {
 
         assert_eq!(
             digits,
-            vec!['9','1','9','9','3','3','1','1','1','1','2'],
-            "expected full IVR digit sequence; got {:?}", digits
+            vec!['9', '1', '9', '9', '3', '3', '1', '1', '1', '1', '2'],
+            "expected full IVR digit sequence; got {:?}",
+            digits
         );
     }
 
@@ -803,7 +1005,7 @@ mod tests {
         assert_eq!(out[1], 150); // (100+200)/2
         assert_eq!(out[2], 200);
         assert_eq!(out[3], 250); // (200+300)/2
-        // last sample duplicates (no next to interpolate toward)
+                                 // last sample duplicates (no next to interpolate toward)
         assert_eq!(out[7], 400);
         assert!(upsample_2x(&[]).is_empty());
     }

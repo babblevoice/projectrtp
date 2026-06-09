@@ -12,9 +12,8 @@ pub const LOWPASS_LEN: usize = 17;
 // Coefficients lifted verbatim from the C++ version (Kaiser-Bessel, 16 kHz
 // sampling, 3.4 kHz cutoff — for 16k→8k downsampling anti-alias).
 const LP_COEFFS: [f32; LOWPASS_LEN] = [
-    -0.002102, 0.000519, 0.014189, 0.010317, -0.037919, -0.060378, 0.063665,
-    0.299972, 0.425000, 0.299972, 0.063665, -0.060378, -0.037919, 0.010317,
-    0.014189, 0.000519, -0.002102,
+    -0.002102, 0.000519, 0.014189, 0.010317, -0.037919, -0.060378, 0.063665, 0.299972, 0.425000,
+    0.299972, 0.063665, -0.060378, -0.037919, 0.010317, 0.014189, 0.000519, -0.002102,
 ];
 
 pub struct Lowpass3_4k16k {
@@ -23,11 +22,18 @@ pub struct Lowpass3_4k16k {
 }
 
 impl Default for Lowpass3_4k16k {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Lowpass3_4k16k {
-    pub fn new() -> Self { Self { history: [0.0; LOWPASS_LEN], round: 0 } }
+    pub fn new() -> Self {
+        Self {
+            history: [0.0; LOWPASS_LEN],
+            round: 0,
+        }
+    }
 
     #[allow(dead_code)]
     pub fn reset(&mut self) {
@@ -67,12 +73,19 @@ pub struct MaFilter {
 }
 
 impl Default for MaFilter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MaFilter {
     pub fn new() -> Self {
-        Self { history: [0.0; MA_LENGTH], round: 0, l: MA_LENGTH, rtotal: 0 }
+        Self {
+            history: [0.0; MA_LENGTH],
+            round: 0,
+            l: MA_LENGTH,
+            rtotal: 0,
+        }
     }
 
     pub fn reset(&mut self, packets: usize) {
@@ -91,22 +104,36 @@ impl MaFilter {
     }
 
     #[allow(dead_code)]
-    pub fn get(&self) -> i32 { self.rtotal / self.l as i32 }
+    pub fn get(&self) -> i32 {
+        self.rtotal / self.l as i32
+    }
     #[allow(dead_code)]
-    pub fn length(&self) -> usize { self.l }
+    pub fn length(&self) -> usize {
+        self.l
+    }
 }
 
 // DC blocker. y[n] = x[n] - x[n-1] + 0.995 * y[n-1]
-pub struct DcFilter { xm: i16, ym: i16 }
+pub struct DcFilter {
+    xm: i16,
+    ym: i16,
+}
 
 impl Default for DcFilter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DcFilter {
-    pub fn new() -> Self { Self { xm: 0, ym: 0 } }
+    pub fn new() -> Self {
+        Self { xm: 0, ym: 0 }
+    }
     #[allow(dead_code)]
-    pub fn reset(&mut self) { self.xm = 0; self.ym = 0; }
+    pub fn reset(&mut self) {
+        self.xm = 0;
+        self.ym = 0;
+    }
 
     #[inline]
     pub fn execute(&mut self, x: i16) -> i16 {
@@ -142,7 +169,9 @@ mod tests {
     #[test]
     fn lowpass_zero_input_zero_output() {
         let mut f = Lowpass3_4k16k::new();
-        for _ in 0..100 { assert_eq!(f.execute(0), 0); }
+        for _ in 0..100 {
+            assert_eq!(f.execute(0), 0);
+        }
     }
 
     #[test]
@@ -150,7 +179,9 @@ mod tests {
         // Sum of coefficients is ~1.0 → DC input passes through near-unity.
         let mut f = Lowpass3_4k16k::new();
         let mut last = 0i16;
-        for _ in 0..100 { last = f.execute(1000); }
+        for _ in 0..100 {
+            last = f.execute(1000);
+        }
         assert!((last as i32 - 1000).abs() < 50, "DC gain off: {last}");
     }
 
@@ -158,11 +189,17 @@ mod tests {
     fn ma_reaches_target_for_constant_input() {
         let mut m = MaFilter::new();
         m.reset(MA_LENGTH);
-        for _ in 0..MA_LENGTH { m.execute(1); }
+        for _ in 0..MA_LENGTH {
+            m.execute(1);
+        }
         assert_eq!(m.get(), 1);
-        for _ in 0..(MA_LENGTH / 2) { m.execute(100); }
+        for _ in 0..(MA_LENGTH / 2) {
+            m.execute(100);
+        }
         assert_eq!(m.get(), 50);
-        for _ in 0..(MA_LENGTH / 2) { m.execute(100); }
+        for _ in 0..(MA_LENGTH / 2) {
+            m.execute(100);
+        }
         assert_eq!(m.get(), 100);
     }
 
@@ -170,7 +207,9 @@ mod tests {
     fn dc_filter_removes_dc() {
         let mut f = DcFilter::new();
         let mut last = 0i16;
-        for _ in 0..2000 { last = f.execute(5000); }
+        for _ in 0..2000 {
+            last = f.execute(5000);
+        }
         assert!(last.abs() < 50, "DC not removed: {last}");
     }
 }

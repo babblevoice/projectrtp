@@ -26,10 +26,10 @@ pub const END_REPEATS: u8 = 3;
 // quieter than the C++ sender and was flagged during interop review.
 pub const DEFAULT_VOLUME: u8 = 13;
 pub const EVENT_DURATION_UNIT: u16 = 160; // one G.711 packet worth
-// Minimum gap between consecutive DTMF bursts, in tick units (20 ms). The
-// C++ sender enforces `snout - lastdtmfsn >= 10` before starting the next
-// burst, i.e. 200 ms. Some endpoints coalesce digits sent faster than
-// this into a single event or miss the second press entirely.
+                                          // Minimum gap between consecutive DTMF bursts, in tick units (20 ms). The
+                                          // C++ sender enforces `snout - lastdtmfsn >= 10` before starting the next
+                                          // burst, i.e. 200 ms. Some endpoints coalesce digits sent faster than
+                                          // this into a single event or miss the second press entirely.
 pub const INTER_DIGIT_GAP_TICKS: u8 = 10;
 
 /// Maps a DTMF character to its RFC 2833 event code. Accepted chars match C++
@@ -82,12 +82,19 @@ pub struct DecodedEvent {
 }
 
 pub fn decode_event(payload: &[u8]) -> Option<DecodedEvent> {
-    if payload.len() < 4 { return None; }
+    if payload.len() < 4 {
+        return None;
+    }
     let event = payload[0];
     let end = payload[1] & 0x80 != 0;
     let volume = payload[1] & 0x3F;
     let duration = u16::from_be_bytes([payload[2], payload[3]]);
-    Some(DecodedEvent { event, end, volume, duration })
+    Some(DecodedEvent {
+        event,
+        end,
+        volume,
+        duration,
+    })
 }
 
 /// One packet ready to go on the wire. Callers copy these fields onto the
@@ -135,10 +142,14 @@ pub struct DtmfSender {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct DtmfBurst { event: u8 }
+struct DtmfBurst {
+    event: u8,
+}
 
 impl Default for DtmfSender {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DtmfSender {
@@ -183,8 +194,12 @@ impl DtmfSender {
             if self.idle_ticks_since_burst < INTER_DIGIT_GAP_TICKS {
                 self.idle_ticks_since_burst += 1;
             }
-            if self.queue.is_empty() { return None; }
-            if self.idle_ticks_since_burst < INTER_DIGIT_GAP_TICKS { return None; }
+            if self.queue.is_empty() {
+                return None;
+            }
+            if self.idle_ticks_since_burst < INTER_DIGIT_GAP_TICKS {
+                return None;
+            }
 
             let burst = self.queue.pop_front()?;
             self.current_event = Some(burst.event);
@@ -204,7 +219,12 @@ impl DtmfSender {
             self.ticks_remaining -= 1;
             let payload = encode_event(event, false, DEFAULT_VOLUME, self.duration_ticks);
             self.duration_ticks = self.duration_ticks.saturating_add(EVENT_DURATION_UNIT);
-            return Some(NextDtmfPacket { event, payload, marker, timestamp: ts });
+            return Some(NextDtmfPacket {
+                event,
+                payload,
+                marker,
+                timestamp: ts,
+            });
         }
 
         if self.end_remaining > 0 {
@@ -215,7 +235,12 @@ impl DtmfSender {
                 self.burst_ts = None;
                 self.idle_ticks_since_burst = 0;
             }
-            return Some(NextDtmfPacket { event, payload, marker: false, timestamp: ts });
+            return Some(NextDtmfPacket {
+                event,
+                payload,
+                marker: false,
+                timestamp: ts,
+            });
         }
 
         // Unreachable: the `current_event.is_none()` guard above covers
@@ -253,12 +278,18 @@ pub struct DtmfReceiver {
 const NEW_BURST_TS_DELTA: u32 = 3200;
 
 impl Default for DtmfReceiver {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DtmfReceiver {
     pub fn new() -> Self {
-        Self { last_sn: None, last_event: None, last_event_ts: None }
+        Self {
+            last_sn: None,
+            last_event: None,
+            last_event_ts: None,
+        }
     }
 
     /// Feed an RFC 2833 payload with its RTP sequence number and
@@ -275,7 +306,9 @@ impl DtmfReceiver {
             Some(last) => sn.wrapping_sub(last) < 0x8000 && sn != last,
             None => true,
         };
-        if !advanced { return None; }
+        if !advanced {
+            return None;
+        }
         self.last_sn = Some(sn);
 
         if ev.end {
@@ -297,7 +330,9 @@ impl DtmfReceiver {
             None => false,
         };
         let same_burst = same_event && !big_ts_gap;
-        if same_burst { return None; }
+        if same_burst {
+            return None;
+        }
 
         self.last_event = Some(ev.event);
         self.last_event_ts = Some(ts);
@@ -334,7 +369,11 @@ mod tests {
         let mut body = 0;
         let mut ends = 0;
         while let Some(pkt) = s.next_event(0) {
-            if pkt.payload[1] & 0x80 != 0 { ends += 1; } else { body += 1; }
+            if pkt.payload[1] & 0x80 != 0 {
+                ends += 1;
+            } else {
+                body += 1;
+            }
         }
         assert_eq!(body, EVENT_REPEATS as usize);
         assert_eq!(ends, END_REPEATS as usize);
@@ -407,8 +446,11 @@ mod tests {
             ts_seen.push(s.next_event(caller_ts).unwrap().timestamp);
         }
         // Every packet in the burst must carry the burst-start value.
-        assert!(ts_seen.iter().all(|&ts| ts == 1_000),
-                "burst TS drifted: {:?}", ts_seen);
+        assert!(
+            ts_seen.iter().all(|&ts| ts == 1_000),
+            "burst TS drifted: {:?}",
+            ts_seen
+        );
     }
 
     #[test]
@@ -418,7 +460,10 @@ mod tests {
         // from "the prior burst that never happened".
         let mut s = DtmfSender::new();
         s.enqueue("0");
-        assert!(s.next_event(0).is_some(), "first digit must fire immediately");
+        assert!(
+            s.next_event(0).is_some(),
+            "first digit must fire immediately"
+        );
     }
 
     #[test]
@@ -451,39 +496,181 @@ mod tests {
         // clearing, not the timestamp fallback.
         let mut r = DtmfReceiver::new();
         let bursts: &[(u32, u8, &[(u16, bool)])] = &[
-            (36160,  9, &[(226,false),(228,false),(230,false),(232,false),
-                          (234,false),(236,false),(238,false),
-                          (239,true),(241,true),(242,true)]),
-            (113280, 1, &[(718,false),(720,false),(722,false),(724,false),
-                          (726,false),(728,false),(730,false),
-                          (731,true),(733,true),(734,true)]),
-            (116640, 9, &[(749,false),(751,false),(753,false),(755,false),
-                          (757,false),(759,false),(761,false),
-                          (762,true),(764,true),(765,true)]),
-            (120000, 9, &[(780,false),(782,false),(784,false),(786,false),
-                          (788,false),(790,false),(792,false),
-                          (793,true),(795,true),(796,true)]),
-            (123200, 3, &[(810,false),(812,false),(814,false),(816,false),
-                          (818,false),(820,false),(822,false),
-                          (823,true),(825,true),(826,true)]),
-            (179840, 3, &[(1174,false),(1176,false),(1178,false),(1180,false),
-                          (1182,false),(1184,false),(1186,false),
-                          (1187,true),(1189,true),(1190,true)]),
-            (232640, 1, &[(1514,false),(1516,false),(1518,false),(1520,false),
-                          (1522,false),(1524,false),(1526,false),
-                          (1527,true),(1529,true),(1530,true)]),
-            (235200, 1, &[(1540,false),(1542,false),(1544,false),(1546,false),
-                          (1548,false),(1550,false),
-                          (1551,true),(1553,true),(1554,true)]),
-            (261440, 1, &[(1713,false),(1715,false),(1717,false),(1719,false),
-                          (1721,false),(1723,false),(1725,false),
-                          (1726,true),(1728,true),(1729,true)]),
-            (324800, 1, &[(2119,false),(2121,false),(2123,false),(2125,false),
-                          (2127,false),(2129,false),(2131,false),
-                          (2132,true),(2134,true),(2135,true)]),
-            (328480, 2, &[(2152,false),(2154,false),(2156,false),(2158,false),
-                          (2160,false),(2162,false),(2164,false),
-                          (2165,true),(2167,true),(2168,true)]),
+            (
+                36160,
+                9,
+                &[
+                    (226, false),
+                    (228, false),
+                    (230, false),
+                    (232, false),
+                    (234, false),
+                    (236, false),
+                    (238, false),
+                    (239, true),
+                    (241, true),
+                    (242, true),
+                ],
+            ),
+            (
+                113280,
+                1,
+                &[
+                    (718, false),
+                    (720, false),
+                    (722, false),
+                    (724, false),
+                    (726, false),
+                    (728, false),
+                    (730, false),
+                    (731, true),
+                    (733, true),
+                    (734, true),
+                ],
+            ),
+            (
+                116640,
+                9,
+                &[
+                    (749, false),
+                    (751, false),
+                    (753, false),
+                    (755, false),
+                    (757, false),
+                    (759, false),
+                    (761, false),
+                    (762, true),
+                    (764, true),
+                    (765, true),
+                ],
+            ),
+            (
+                120000,
+                9,
+                &[
+                    (780, false),
+                    (782, false),
+                    (784, false),
+                    (786, false),
+                    (788, false),
+                    (790, false),
+                    (792, false),
+                    (793, true),
+                    (795, true),
+                    (796, true),
+                ],
+            ),
+            (
+                123200,
+                3,
+                &[
+                    (810, false),
+                    (812, false),
+                    (814, false),
+                    (816, false),
+                    (818, false),
+                    (820, false),
+                    (822, false),
+                    (823, true),
+                    (825, true),
+                    (826, true),
+                ],
+            ),
+            (
+                179840,
+                3,
+                &[
+                    (1174, false),
+                    (1176, false),
+                    (1178, false),
+                    (1180, false),
+                    (1182, false),
+                    (1184, false),
+                    (1186, false),
+                    (1187, true),
+                    (1189, true),
+                    (1190, true),
+                ],
+            ),
+            (
+                232640,
+                1,
+                &[
+                    (1514, false),
+                    (1516, false),
+                    (1518, false),
+                    (1520, false),
+                    (1522, false),
+                    (1524, false),
+                    (1526, false),
+                    (1527, true),
+                    (1529, true),
+                    (1530, true),
+                ],
+            ),
+            (
+                235200,
+                1,
+                &[
+                    (1540, false),
+                    (1542, false),
+                    (1544, false),
+                    (1546, false),
+                    (1548, false),
+                    (1550, false),
+                    (1551, true),
+                    (1553, true),
+                    (1554, true),
+                ],
+            ),
+            (
+                261440,
+                1,
+                &[
+                    (1713, false),
+                    (1715, false),
+                    (1717, false),
+                    (1719, false),
+                    (1721, false),
+                    (1723, false),
+                    (1725, false),
+                    (1726, true),
+                    (1728, true),
+                    (1729, true),
+                ],
+            ),
+            (
+                324800,
+                1,
+                &[
+                    (2119, false),
+                    (2121, false),
+                    (2123, false),
+                    (2125, false),
+                    (2127, false),
+                    (2129, false),
+                    (2131, false),
+                    (2132, true),
+                    (2134, true),
+                    (2135, true),
+                ],
+            ),
+            (
+                328480,
+                2,
+                &[
+                    (2152, false),
+                    (2154, false),
+                    (2156, false),
+                    (2158, false),
+                    (2160, false),
+                    (2162, false),
+                    (2164, false),
+                    (2165, true),
+                    (2167, true),
+                    (2168, true),
+                ],
+            ),
         ];
         let mut got: Vec<char> = Vec::new();
         for (ts, event, packets) in bursts {
@@ -494,8 +681,12 @@ mod tests {
                 }
             }
         }
-        assert_eq!(got, vec!['9','1','9','9','3','3','1','1','1','1','2'],
-                   "expected full IVR sequence, got {:?}", got);
+        assert_eq!(
+            got,
+            vec!['9', '1', '9', '9', '3', '3', '1', '1', '1', '1', '2'],
+            "expected full IVR sequence, got {:?}",
+            got
+        );
     }
 
     #[test]

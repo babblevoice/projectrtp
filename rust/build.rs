@@ -13,7 +13,11 @@ fn link_native(name: &str, fallback_versioned_soname: &str) {
     // `/usr/local/*` covers the case where the library was built from
     // source in the Docker image (as libilbc is) and installed there.
     let search_paths = [
-        "/usr/lib64", "/usr/lib", "/lib", "/usr/local/lib", "/usr/local/lib64",
+        "/usr/lib64",
+        "/usr/lib",
+        "/lib",
+        "/usr/local/lib",
+        "/usr/local/lib64",
     ];
     let unversioned = format!("lib{}.so", name);
     let has_unversioned = search_paths
