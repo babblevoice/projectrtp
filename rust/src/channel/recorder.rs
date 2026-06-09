@@ -107,13 +107,25 @@ impl Recorder {
         })
     }
 
-    pub fn state(&self) -> RecorderState { self.state }
-    pub fn is_finished(&self) -> bool { self.state == RecorderState::Finished }
-    pub fn finish_reason(&self) -> Option<&FinishReason> { self.finish_reason.as_ref() }
-    pub fn file(&self) -> &std::path::Path { &self.cfg.file }
-    pub fn num_channels(&self) -> u16 { self.cfg.num_channels }
+    pub fn state(&self) -> RecorderState {
+        self.state
+    }
+    pub fn is_finished(&self) -> bool {
+        self.state == RecorderState::Finished
+    }
+    pub fn finish_reason(&self) -> Option<&FinishReason> {
+        self.finish_reason.as_ref()
+    }
+    pub fn file(&self) -> &std::path::Path {
+        &self.cfg.file
+    }
+    pub fn num_channels(&self) -> u16 {
+        self.cfg.num_channels
+    }
     /// Total file size in bytes (header + PCM data written so far).
-    pub fn file_size(&self) -> u64 { self.writer.bytes_written() + crate::soundfile::WAV_HEADER_LEN as u64 }
+    pub fn file_size(&self) -> u64 {
+        self.writer.bytes_written() + crate::soundfile::WAV_HEADER_LEN as u64
+    }
 
     pub fn pause(&mut self) {
         if matches!(self.state, RecorderState::Active | RecorderState::Pending) {
@@ -159,7 +171,11 @@ impl Recorder {
     /// to offer (e.g. the `write_raw` code path) and we fall back to
     /// using the frame itself — preserves backward compatibility for
     /// callers that don't plumb the narrowband through.
-    pub async fn write_with_count(&mut self, samples: &[i16], channel_in_count: Option<u64>) -> std::io::Result<bool> {
+    pub async fn write_with_count(
+        &mut self,
+        samples: &[i16],
+        channel_in_count: Option<u64>,
+    ) -> std::io::Result<bool> {
         self.write_frame(samples, samples, channel_in_count).await
     }
 
@@ -173,15 +189,23 @@ impl Recorder {
         power_samples: &[i16],
         channel_in_count: Option<u64>,
     ) -> std::io::Result<bool> {
-        if self.state == RecorderState::Finished { return Ok(false); }
-        if self.state == RecorderState::Paused { return Ok(false); }
+        if self.state == RecorderState::Finished {
+            return Ok(false);
+        }
+        if self.state == RecorderState::Paused {
+            return Ok(false);
+        }
         self.packets_observed += 1;
 
         let warmup_count = channel_in_count.unwrap_or(self.packets_observed);
 
         // Power source: prefer the explicit narrowband; if empty, fall
         // back to the frame itself for compatibility.
-        let power_src: &[i16] = if !power_samples.is_empty() { power_samples } else { samples };
+        let power_src: &[i16] = if !power_samples.is_empty() {
+            power_samples
+        } else {
+            samples
+        };
 
         let pkt_power: i32 = if warmup_count < 100 || power_src.is_empty() {
             0
@@ -224,7 +248,11 @@ impl Recorder {
         // active_ms = elapsed since gate open. Frame length is samples per
         // channel × channels, so divide by (sr * channels) to get seconds.
         let sr = self.cfg.sample_rate as u64 * self.cfg.num_channels as u64;
-        let active_ms = if sr > 0 { self.samples_since_active * 1000 / sr } else { 0 };
+        let active_ms = if sr > 0 {
+            self.samples_since_active * 1000 / sr
+        } else {
+            0
+        };
 
         if let Some(min) = self.cfg.min_duration_ms {
             if active_ms < min {
@@ -261,8 +289,12 @@ impl Recorder {
     ///
     /// Returns the number of samples written.
     pub async fn write_raw(&mut self, samples: &[i16]) -> std::io::Result<usize> {
-        if self.state == RecorderState::Finished { return Ok(0); }
-        if samples.is_empty() { return Ok(0); }
+        if self.state == RecorderState::Finished {
+            return Ok(0);
+        }
+        if samples.is_empty() {
+            return Ok(0);
+        }
         self.writer
             .write_samples(samples)
             .await
@@ -307,7 +339,9 @@ mod tests {
         let mut rec = Recorder::open(c).await.unwrap();
         for _ in 0..10 {
             rec.write(&vec![100i16; 160]).await.unwrap();
-            if rec.is_finished() { break; }
+            if rec.is_finished() {
+                break;
+            }
         }
         assert!(rec.is_finished());
         assert_eq!(rec.finish_reason(), Some(&FinishReason::MaxDurationReached));
@@ -331,21 +365,29 @@ mod tests {
         c.start_above_power = Some(50);
         let path = c.file.clone();
 
-        let loud_ac: Vec<i16> = (0..160).map(|i| if i % 2 == 0 { 5000 } else { -5000 }).collect();
+        let loud_ac: Vec<i16> = (0..160)
+            .map(|i| if i % 2 == 0 { 5000 } else { -5000 })
+            .collect();
 
         let mut rec = Recorder::open(c).await.unwrap();
         // Silent frames during warmup — gate stays closed.
-        for _ in 0..5 { rec.write(&vec![0i16; 160]).await.unwrap(); }
+        for _ in 0..5 {
+            rec.write(&vec![0i16; 160]).await.unwrap();
+        }
         assert_eq!(rec.state(), RecorderState::Pending);
 
         // Pre-warmup loud frames — gate still closed because power is
         // clamped to 0 until packets_observed ≥ 100.
-        for _ in 0..50 { rec.write(&loud_ac).await.unwrap(); }
+        for _ in 0..50 {
+            rec.write(&loud_ac).await.unwrap();
+        }
         assert_eq!(rec.state(), RecorderState::Pending);
 
         // Now cross the warmup and keep feeding — MA filter fills,
         // crosses 50, gate opens.
-        for _ in 0..200 { rec.write(&loud_ac).await.unwrap(); }
+        for _ in 0..200 {
+            rec.write(&loud_ac).await.unwrap();
+        }
         assert_eq!(rec.state(), RecorderState::Active);
 
         rec.close(FinishReason::Completed);
@@ -383,7 +425,9 @@ mod tests {
 
         let mut rec = Recorder::open(c).await.unwrap();
         // Push enough frames to hit max_duration.
-        for _ in 0..5 { rec.write(&vec![100i16; 160]).await.unwrap(); }
+        for _ in 0..5 {
+            rec.write(&vec![100i16; 160]).await.unwrap();
+        }
         assert!(rec.is_finished());
 
         let written = rec.write_raw(&vec![0i16; 100]).await.unwrap();

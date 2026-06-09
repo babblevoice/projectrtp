@@ -49,10 +49,18 @@ pub struct WavHeader {
 }
 
 fn parse_header(h: &[u8; WAV_HEADER_LEN]) -> Result<WavHeader> {
-    if &h[0..4] != b"RIFF" { return Err(Error::from_reason("Bad RIFF")); }
-    if &h[8..12] != b"WAVE" { return Err(Error::from_reason("Bad WAVE")); }
-    if &h[12..16] != b"fmt " { return Err(Error::from_reason("Bad fmt")); }
-    if &h[36..40] != b"data" { return Err(Error::from_reason("Bad data")); }
+    if &h[0..4] != b"RIFF" {
+        return Err(Error::from_reason("Bad RIFF"));
+    }
+    if &h[8..12] != b"WAVE" {
+        return Err(Error::from_reason("Bad WAVE"));
+    }
+    if &h[12..16] != b"fmt " {
+        return Err(Error::from_reason("Bad fmt"));
+    }
+    if &h[36..40] != b"data" {
+        return Err(Error::from_reason("Bad data"));
+    }
 
     Ok(WavHeader {
         chunksize: u32::from_le_bytes(h[4..8].try_into().unwrap()),
@@ -174,17 +182,29 @@ impl WavReader {
         }
         let data_start = WAV_HEADER_LEN as u64;
         let data_end = data_start + header.subchunksize as u64;
-        Ok(Self { file, header, data_start, data_end, url })
+        Ok(Self {
+            file,
+            header,
+            data_start,
+            data_end,
+            url,
+        })
     }
 
-    pub fn header(&self) -> &WavHeader { &self.header }
+    pub fn header(&self) -> &WavHeader {
+        &self.header
+    }
     #[allow(dead_code)]
-    pub fn url(&self) -> &Path { &self.url }
+    pub fn url(&self) -> &Path {
+        &self.url
+    }
 
     /// Read up to `samples` int16 samples starting from the current position.
     /// Returns a vec that may be shorter than `samples` if EOF is hit.
     pub async fn read_samples(&mut self, samples: usize) -> Result<Vec<i16>> {
-        let max_bytes = samples.checked_mul(2).ok_or_else(|| Error::from_reason("overflow"))?;
+        let max_bytes = samples
+            .checked_mul(2)
+            .ok_or_else(|| Error::from_reason("overflow"))?;
         let pos = self.file.stream_position().await.map_err(io_err)?;
         let remaining = self.data_end.saturating_sub(pos) as usize;
         let to_read = max_bytes.min(remaining);
@@ -204,7 +224,9 @@ impl WavReader {
         let mut offset = bytes_per_ms * ms;
         // Align to sample boundary.
         let align = self.header.sample_alignment as u64;
-        if align > 0 { offset -= offset % align; }
+        if align > 0 {
+            offset -= offset % align;
+        }
         let abs = self.data_start + offset.min(self.data_end - self.data_start);
         self.file.seek(SeekFrom::Start(abs)).await.map_err(io_err)?;
         Ok(())
@@ -215,14 +237,18 @@ impl WavReader {
         let pos = self.file.stream_position().await.map_err(io_err)?;
         let data_pos = pos.saturating_sub(self.data_start);
         let bytes_per_ms = (self.header.byte_rate as u64) / 1000;
-        if bytes_per_ms == 0 { return Ok(0); }
+        if bytes_per_ms == 0 {
+            return Ok(0);
+        }
         Ok(data_pos / bytes_per_ms)
     }
 
     #[allow(dead_code)]
     pub fn duration_ms(&self) -> u64 {
         let bytes_per_ms = (self.header.byte_rate as u64) / 1000;
-        if bytes_per_ms == 0 { return 0; }
+        if bytes_per_ms == 0 {
+            return 0;
+        }
         (self.header.subchunksize as u64) / bytes_per_ms
     }
 
@@ -267,7 +293,10 @@ impl WavWriter {
             .open(&url)
             .await
             .map_err(|e| Error::from_reason(format!("create {url:?}: {e}")))?;
-        afile.write_all(&build_header(&header)).await.map_err(io_err)?;
+        afile
+            .write_all(&build_header(&header))
+            .await
+            .map_err(io_err)?;
         afile.flush().await.map_err(io_err)?;
         let file = afile.into_std().await;
         Ok(Self {
@@ -280,17 +309,30 @@ impl WavWriter {
     }
 
     #[allow(dead_code)]
-    pub fn header(&self) -> &WavHeader { &self.header }
+    pub fn header(&self) -> &WavHeader {
+        &self.header
+    }
     #[allow(dead_code)]
-    pub fn url(&self) -> &Path { &self.url }
+    pub fn url(&self) -> &Path {
+        &self.url
+    }
     #[allow(dead_code)]
-    pub fn bytes_written(&self) -> u64 { self.bytes_written }
+    pub fn bytes_written(&self) -> u64 {
+        self.bytes_written
+    }
 
     pub async fn write_samples(&mut self, samples: &[i16]) -> Result<()> {
-        if self.closed { return Err(Error::from_reason("writer closed")); }
+        if self.closed {
+            return Err(Error::from_reason("writer closed"));
+        }
         let mut buf = Vec::with_capacity(samples.len() * 2);
-        for s in samples { buf.extend_from_slice(&s.to_le_bytes()); }
-        let _file = self.file.as_mut().ok_or_else(|| Error::from_reason("no file"))?;
+        for s in samples {
+            buf.extend_from_slice(&s.to_le_bytes());
+        }
+        let _file = self
+            .file
+            .as_mut()
+            .ok_or_else(|| Error::from_reason("no file"))?;
         // std::fs::File writes are synchronous — do them via spawn_blocking so
         // we don't stall the tokio worker during long writes on slow disks.
         let to_write = buf;
@@ -313,10 +355,17 @@ impl WavWriter {
 
     #[allow(dead_code)]
     pub fn write_samples_sync(&mut self, samples: &[i16]) -> Result<()> {
-        if self.closed { return Err(Error::from_reason("writer closed")); }
+        if self.closed {
+            return Err(Error::from_reason("writer closed"));
+        }
         use std::io::Write;
-        let file = self.file.as_mut().ok_or_else(|| Error::from_reason("no file"))?;
-        for s in samples { file.write_all(&s.to_le_bytes()).map_err(io_err)?; }
+        let file = self
+            .file
+            .as_mut()
+            .ok_or_else(|| Error::from_reason("no file"))?;
+        for s in samples {
+            file.write_all(&s.to_le_bytes()).map_err(io_err)?;
+        }
         self.bytes_written += (samples.len() as u64) * 2;
         Ok(())
     }
@@ -324,7 +373,9 @@ impl WavWriter {
     /// Finalize the header explicitly. Idempotent; Drop will call this if
     /// not already done.
     pub fn close(&mut self) -> Result<()> {
-        if self.closed { return Ok(()); }
+        if self.closed {
+            return Ok(());
+        }
         self.closed = true;
         let mut file = match self.file.take() {
             Some(f) => f,
@@ -349,7 +400,9 @@ impl Drop for WavWriter {
     }
 }
 
-fn io_err(e: std::io::Error) -> Error { Error::from_reason(e.to_string()) }
+fn io_err(e: std::io::Error) -> Error {
+    Error::from_reason(e.to_string())
+}
 
 #[cfg(test)]
 mod tests {

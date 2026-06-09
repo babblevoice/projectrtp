@@ -35,8 +35,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{interval, MissedTickBehavior};
 
 use super::actor::{
-    activate_pending_recorder, Event, EventSink, PlayState, RecordState, Subsystems, TICK_MS,
-    PREBUFFER_CAPACITY_SAMPLES,
+    activate_pending_recorder, Event, EventSink, PlayState, RecordState, Subsystems,
+    PREBUFFER_CAPACITY_SAMPLES, TICK_MS,
 };
 use super::commands::{ChannelId, Command};
 use super::player::Player;
@@ -60,11 +60,7 @@ pub struct Member {
 }
 
 impl Member {
-    pub fn new(
-        state: Box<ChannelState>,
-        subs: Subsystems,
-        events: Arc<dyn EventSink>,
-    ) -> Self {
+    pub fn new(state: Box<ChannelState>, subs: Subsystems, events: Arc<dyn EventSink>) -> Self {
         Self {
             state,
             subs,
@@ -77,9 +73,18 @@ impl Member {
 }
 
 pub enum MixerCommand {
-    Add { member: Box<Member>, ack: oneshot::Sender<()> },
-    Remove { id: ChannelId, ack: oneshot::Sender<Option<Box<Member>>> },
-    Forward { id: ChannelId, cmd: Command },
+    Add {
+        member: Box<Member>,
+        ack: oneshot::Sender<()>,
+    },
+    Remove {
+        id: ChannelId,
+        ack: oneshot::Sender<Option<Box<Member>>>,
+    },
+    Forward {
+        id: ChannelId,
+        cmd: Command,
+    },
     #[allow(dead_code)]
     Stop,
 }
@@ -95,13 +100,19 @@ pub struct MixHandle {
 impl MixHandle {
     pub async fn add(&self, member: Box<Member>) -> Result<(), ()> {
         let (tx, rx) = oneshot::channel();
-        self.cmd.send(MixerCommand::Add { member, ack: tx }).await.map_err(|_| ())?;
+        self.cmd
+            .send(MixerCommand::Add { member, ack: tx })
+            .await
+            .map_err(|_| ())?;
         rx.await.map_err(|_| ())
     }
 
     pub async fn remove(&self, id: ChannelId) -> Option<Box<Member>> {
         let (tx, rx) = oneshot::channel();
-        self.cmd.send(MixerCommand::Remove { id, ack: tx }).await.ok()?;
+        self.cmd
+            .send(MixerCommand::Remove { id, ack: tx })
+            .await
+            .ok()?;
         rx.await.ok().flatten()
     }
 
@@ -177,8 +188,12 @@ async fn run(mut cmds: mpsc::Receiver<MixerCommand>) {
 /// the wrong key.
 async fn mix2_outbound(members: &mut HashMap<ChannelId, Box<Member>>) {
     let mut iter = members.iter_mut();
-    let Some((_, first)) = iter.next() else { return; };
-    let Some((_, second)) = iter.next() else { return; };
+    let Some((_, first)) = iter.next() else {
+        return;
+    };
+    let Some((_, second)) = iter.next() else {
+        return;
+    };
     // Peel the `Box<Member>` so we work with two `&mut Member`s.
     let (a, b): (&mut Member, &mut Member) = (first, second);
 
@@ -199,12 +214,20 @@ async fn mix2_outbound(members: &mut HashMap<ChannelId, Box<Member>>) {
 /// The encoder state (G.722 predictor, iLBC LP, up-sample filter)
 /// persists on `dst.state.codecx` for a coherent outbound stream.
 async fn send_leg(src: &mut Member, dst: &mut Member) {
-    if !src.state.direction.send { return; }
-    if !src.frame_present { return; }
-    let Some(dest_addr) = dst.state.get_remote_addr() else { return; };
+    if !src.state.direction.send {
+        return;
+    }
+    if !src.frame_present {
+        return;
+    }
+    let Some(dest_addr) = dst.state.get_remote_addr() else {
+        return;
+    };
     let peer_pt = dst.state.remote_pt;
 
-    let Some(wire) = dst.state.codecx.encode_from(peer_pt, &mut src.state.codecx) else { return; };
+    let Some(wire) = dst.state.codecx.encode_from(peer_pt, &mut src.state.codecx) else {
+        return;
+    };
     // Owned copy so the `&mut dst.state.codecx` borrow ends before the
     // `&mut dst.state` borrows later for the RTP send.
     let payload: Vec<u8> = wire.to_vec();
@@ -221,11 +244,20 @@ async fn send_leg(src: &mut Member, dst: &mut Member) {
 
     let send_ok = if let Some(ref mut ctx) = dst.state.srtp_encrypt {
         match ctx.encrypt_rtp(pkt.as_slice()) {
-            Ok(encrypted) => dst.state.rtp_sock.send_to(&encrypted, dest_addr).await.is_ok(),
+            Ok(encrypted) => dst
+                .state
+                .rtp_sock
+                .send_to(&encrypted, dest_addr)
+                .await
+                .is_ok(),
             Err(_) => false,
         }
     } else {
-        dst.state.rtp_sock.send_to(pkt.as_slice(), dest_addr).await.is_ok()
+        dst.state
+            .rtp_sock
+            .send_to(pkt.as_slice(), dest_addr)
+            .await
+            .is_ok()
     };
     if send_ok {
         dst.state.out_count += 1;
@@ -240,16 +272,24 @@ async fn mix_all_outbound(members: &mut HashMap<ChannelId, Box<Member>>) {
     // Sum all members' frames into a single int32 buffer.
     let mut summed = vec![0i32; MIX_FRAME_SAMPLES];
     for m in members.values() {
-        if !m.state.direction.recv { continue; }
-        if !m.frame_present { continue; }
+        if !m.state.direction.recv {
+            continue;
+        }
+        if !m.frame_present {
+            continue;
+        }
         for (slot, &sample) in summed.iter_mut().zip(m.frame.iter()) {
             *slot = slot.saturating_add(sample as i32);
         }
     }
 
     for m in members.values_mut() {
-        if !m.state.direction.send { continue; }
-        let Some(remote) = m.state.get_remote_addr() else { continue; };
+        if !m.state.direction.send {
+            continue;
+        }
+        let Some(remote) = m.state.get_remote_addr() else {
+            continue;
+        };
 
         let mut out_samples = vec![0i16; MIX_FRAME_SAMPLES];
         if m.frame_present {
@@ -289,7 +329,9 @@ impl Member {
     /// zeroed so silent inbound doesn't leak last tick's audio into the
     /// mix output.
     fn reset_for_tick(&mut self) {
-        for s in self.frame.iter_mut() { *s = 0; }
+        for s in self.frame.iter_mut() {
+            *s = 0;
+        }
         self.frame_present = false;
         self.inbound_this_tick = false;
     }
@@ -299,9 +341,7 @@ impl Member {
     /// or if decryption fails.
     fn pop_inbound(&mut self) -> Option<RtpPacket> {
         let mut popped = self.state.jitter.lock().pop();
-        if let (Some(ref mut pk), Some(ref mut ctx)) =
-            (&mut popped, &mut self.state.srtp_decrypt)
-        {
+        if let (Some(ref mut pk), Some(ref mut ctx)) = (&mut popped, &mut self.state.srtp_decrypt) {
             match ctx.decrypt_rtp(pk.as_slice()) {
                 Ok(decrypted) => {
                     let n = decrypted.len().min(pk.buf.len());
@@ -335,11 +375,11 @@ impl Member {
                 activate_recorder = true;
             }
         }
-        self.state.pending_events.push(Event::TelephoneEvent { digit });
+        self.state
+            .pending_events
+            .push(Event::TelephoneEvent { digit });
         if activate_recorder {
-            let _ = activate_pending_recorder(
-                &mut self.subs, &mut self.state.pending_events,
-            ).await;
+            let _ = activate_pending_recorder(&mut self.subs, &mut self.state.pending_events).await;
         }
         Some(digit)
     }
@@ -366,9 +406,7 @@ impl Member {
             }
         }
         if player_just_ended {
-            let _ = activate_pending_recorder(
-                &mut self.subs, &mut self.state.pending_events,
-            ).await;
+            let _ = activate_pending_recorder(&mut self.subs, &mut self.state.pending_events).await;
         }
         player_frame
     }
@@ -377,7 +415,9 @@ impl Member {
     /// (matches C++ relay semantics — the far end's audio is what should
     /// be mixed, not our own playback).
     fn populate_mix_frame(&mut self, inbound: Option<&[i16]>, player: Option<&[i16]>) {
-        if !self.state.direction.recv { return; }
+        if !self.state.direction.recv {
+            return;
+        }
         if let Some(samples) = inbound {
             copy_into_frame(&mut self.frame, samples);
             self.frame_present = true;
@@ -391,20 +431,33 @@ impl Member {
     /// Barge-in on inbound power. Fires a player-end event and activates
     /// a queued recorder when the smoothed RMS crosses the threshold.
     async fn run_bargein(&mut self, inbound: Option<&[i16]>) {
-        let Some(samples) = inbound else { return; };
-        let Some(bi) = self.subs.bargein.as_mut() else { return; };
-        if self.subs.player.is_none() { return; }
-        if self.state.in_count.load(Ordering::Relaxed) < 100 { return; }
+        let Some(samples) = inbound else {
+            return;
+        };
+        let Some(bi) = self.subs.bargein.as_mut() else {
+            return;
+        };
+        if self.subs.player.is_none() {
+            return;
+        }
+        if self.state.in_count.load(Ordering::Relaxed) < 100 {
+            return;
+        }
 
         let mut sum_sq: u64 = 0;
         for s in samples {
             let v = *s as i64;
             sum_sq += (v * v) as u64;
         }
-        let rms = if samples.is_empty() { 0 }
-                  else { ((sum_sq / samples.len() as u64) as f64).sqrt() as i32 };
+        let rms = if samples.is_empty() {
+            0
+        } else {
+            ((sum_sq / samples.len() as u64) as f64).sqrt() as i32
+        };
         let smoothed = bi.power_ma.execute(rms.min(i16::MAX as i32) as i16) as i32;
-        if smoothed <= bi.power_threshold { return; }
+        if smoothed <= bi.power_threshold {
+            return;
+        }
 
         self.subs.player = None;
         self.subs.bargein = None;
@@ -412,17 +465,19 @@ impl Member {
             state: PlayState::End,
             reason: Some("interrupted".into()),
         });
-        let _ = activate_pending_recorder(
-            &mut self.subs, &mut self.state.pending_events,
-        ).await;
+        let _ = activate_pending_recorder(&mut self.subs, &mut self.state.pending_events).await;
     }
 
     /// While `playrecord` is in its play phase (player active AND
     /// recorder queued), accumulate inbound samples into `prebuffer`.
     /// Drops oldest samples when the cap is hit.
     fn accumulate_playrecord_prebuffer(&mut self, inbound: Option<&[i16]>) {
-        if self.subs.player.is_none() || self.subs.pending_recorder.is_none() { return; }
-        let Some(samples) = inbound else { return; };
+        if self.subs.player.is_none() || self.subs.pending_recorder.is_none() {
+            return;
+        }
+        let Some(samples) = inbound else {
+            return;
+        };
 
         if self.subs.prebuffer.len() + samples.len() > PREBUFFER_CAPACITY_SAMPLES {
             let drop_n = self.subs.prebuffer.len() + samples.len() - PREBUFFER_CAPACITY_SAMPLES;
@@ -430,7 +485,9 @@ impl Member {
                 self.subs.prebuffer.pop_front();
             }
         }
-        for s in samples { self.subs.prebuffer.push_back(*s); }
+        for s in samples {
+            self.subs.prebuffer.push_back(*s);
+        }
     }
 
     /// Feed active recorders the inbound 8 kHz linear samples for this
@@ -459,8 +516,7 @@ impl Member {
         // a packet ends up being sent for this leg. send_leg/send_encoded
         // no longer advance it themselves. See tick::run for the same
         // reasoning.
-        self.state.out_ts =
-            self.state.out_ts.wrapping_add(MIX_FRAME_SAMPLES as u32);
+        self.state.out_ts = self.state.out_ts.wrapping_add(MIX_FRAME_SAMPLES as u32);
 
         // Build SRTP contexts as soon as the DTLS handshake completes.
         // In Local mode this runs via `tick::run`; in the mixer the
@@ -479,7 +535,9 @@ impl Member {
         let mut popped_any = false;
         let mut last_dtmf_digit: Option<char> = None;
         loop {
-            let Some(pk) = self.pop_inbound() else { break; };
+            let Some(pk) = self.pop_inbound() else {
+                break;
+            };
             popped_any = true;
             if pk.payload_type() == self.state.rfc2833_pt {
                 if let Some(d) = self.handle_dtmf_in(&pk).await {
@@ -516,10 +574,15 @@ impl Member {
         // calls `require_narrowband_8k` triggers it; subsequent callers
         // share the cached result.
         if let Some(in_pk) = popped.as_ref() {
-            self.state.codecx.feed_wire(in_pk.payload_type(), in_pk.payload());
+            self.state
+                .codecx
+                .feed_wire(in_pk.payload_type(), in_pk.payload());
         }
         let inbound: Option<Vec<i16>> = if popped.is_some() {
-            self.state.codecx.require_narrowband_8k().map(|s| s.to_vec())
+            self.state
+                .codecx
+                .require_narrowband_8k()
+                .map(|s| s.to_vec())
         } else {
             None
         };
@@ -560,7 +623,11 @@ impl Member {
             let w = self.subs.writer.as_mut()?;
             w.next_frame_8k()
         };
-        let drained = self.subs.writer.as_ref().is_some_and(|w| w.is_drained_and_ended());
+        let drained = self
+            .subs
+            .writer
+            .as_ref()
+            .is_some_and(|w| w.is_drained_and_ended());
         if drained {
             self.subs.writer = None;
             self.state.pending_events.push(Event::Play {
@@ -577,9 +644,22 @@ impl Member {
     /// R=far leg) — matches C++ mix recording semantics. When `None`
     /// (Local mode, N≥3, or peer had no inbound this tick) stereo
     /// falls back to duplicate-mono.
-    async fn write_recordings(&mut self, peer_samples: Option<&[i16]>, peer_wideband: Option<&[i16]>) {
-        if !self.inbound_this_tick { return; }
-        let Some(samples) = self.state.codecx.require_narrowband_8k().map(|s| s.to_vec()) else { return; };
+    async fn write_recordings(
+        &mut self,
+        peer_samples: Option<&[i16]>,
+        peer_wideband: Option<&[i16]>,
+    ) {
+        if !self.inbound_this_tick {
+            return;
+        }
+        let Some(samples) = self
+            .state
+            .codecx
+            .require_narrowband_8k()
+            .map(|s| s.to_vec())
+        else {
+            return;
+        };
         let self_wb = if self.state.codecx.is_wideband() {
             self.state.codecx.require_wideband_16k().map(|s| s.to_vec())
         } else {
@@ -596,9 +676,13 @@ impl Member {
             None => (&samples, peer_samples),
         };
         feed_recorders(
-            &mut self.subs.recorders, rec_self, rec_peer, ch_count,
+            &mut self.subs.recorders,
+            rec_self,
+            rec_peer,
+            ch_count,
             &mut self.state.pending_events,
-        ).await;
+        )
+        .await;
 
         // AudioReaders share the recorder's L/R convention (L=self inbound,
         // R=peer inbound — in mix mode that's the outbound side). Readers
@@ -606,7 +690,12 @@ impl Member {
         // wideband from codecx), and a 16k reader's out side gets the peer's
         // wideband via feed_with.
         for reader in self.subs.readers.iter_mut() {
-            reader.feed_with(&mut self.state.codecx, Some(&samples), peer_samples, peer_wideband);
+            reader.feed_with(
+                &mut self.state.codecx,
+                Some(&samples),
+                peer_samples,
+                peer_wideband,
+            );
         }
         self.subs.readers.retain(|r| !r.is_closed());
     }
@@ -622,8 +711,12 @@ impl Member {
     /// `out_ts` on every intervening tick. RFC 2833 requires constant
     /// TS per burst — strict receivers otherwise see 14 ghost events.
     async fn send_dtmf_outbound(&mut self) {
-        if !self.state.direction.send { return; }
-        let Some(remote) = self.state.get_remote_addr() else { return; };
+        if !self.state.direction.send {
+            return;
+        }
+        let Some(remote) = self.state.get_remote_addr() else {
+            return;
+        };
         let pt = self.state.rfc2833_pt;
         if let Some(pkt) = self.subs.dtmf_send.next_event(self.state.out_ts) {
             send_dtmf_to_remote(&mut self.state, remote, pt, &pkt).await;
@@ -644,7 +737,7 @@ impl Member {
 
     /// Multi-tier idle check matching C++ `checkidlerecv`.
     fn is_idle(&self) -> bool {
-        use super::tick::{IDLE_TICK_LIMIT, HARD_TIMEOUT_NO_REMOTE, HARD_TIMEOUT_NO_RECV};
+        use super::tick::{HARD_TIMEOUT_NO_RECV, HARD_TIMEOUT_NO_REMOTE, IDLE_TICK_LIMIT};
         if self.state.direction.recv {
             if self.state.remote_confirmed {
                 self.state.ticks_without_rtp >= IDLE_TICK_LIMIT
@@ -732,10 +825,7 @@ async fn run_inbound_phase(
 /// For N=2, stereo recorders need each member's peer samples — computed
 /// once up-front so every member can read its sibling's narrowband
 /// without reborrowing.
-async fn run_post_mix_phase(
-    members: &mut HashMap<ChannelId, Box<Member>>,
-    n_alive: usize,
-) {
+async fn run_post_mix_phase(members: &mut HashMap<ChannelId, Box<Member>>, n_alive: usize) {
     let peer_samples_by_id = compute_peer_samples_by_id(members, n_alive);
     let peer_wideband_by_id = compute_peer_wideband_by_id(members, n_alive);
 
@@ -747,22 +837,27 @@ async fn run_post_mix_phase(
             // Always Some in N=2 — silence fallback when the peer had
             // no inbound this tick; never None (which would trigger
             // duplicate-mono in the stereo recorder).
-            peer_samples_by_id.iter()
+            peer_samples_by_id
+                .iter()
                 .find_map(|(&pid, s)| if pid != id { Some(s.clone()) } else { None })
-                .or_else(|| Some(vec![ 0i16; MIX_FRAME_SAMPLES ]))
+                .or_else(|| Some(vec![0i16; MIX_FRAME_SAMPLES]))
         } else {
             None
         };
         // 16k wideband counterpart for the reader tap's out side (320 samples).
         let peer_wideband: Option<Vec<i16>> = if n_alive == 2 {
-            peer_wideband_by_id.iter()
+            peer_wideband_by_id
+                .iter()
                 .find_map(|(&pid, s)| if pid != id { Some(s.clone()) } else { None })
-                .or_else(|| Some(vec![ 0i16; MIX_FRAME_SAMPLES * 2 ]))
+                .or_else(|| Some(vec![0i16; MIX_FRAME_SAMPLES * 2]))
         } else {
             None
         };
-        let Some(m) = members.get_mut(&id) else { continue; };
-        m.write_recordings(peer_samples.as_deref(), peer_wideband.as_deref()).await;
+        let Some(m) = members.get_mut(&id) else {
+            continue;
+        };
+        m.write_recordings(peer_samples.as_deref(), peer_wideband.as_deref())
+            .await;
         m.send_dtmf_outbound().await;
         m.drain_pending_events();
     }
@@ -780,14 +875,17 @@ fn compute_peer_samples_by_id(
     if n_alive != 2 {
         return HashMap::new();
     }
-    members.iter_mut()
+    members
+        .iter_mut()
         .map(|(&id, m)| {
             let samples = if m.inbound_this_tick {
-                m.state.codecx.require_narrowband_8k()
+                m.state
+                    .codecx
+                    .require_narrowband_8k()
                     .map(|s| s.to_vec())
-                    .unwrap_or_else(|| vec![ 0i16; MIX_FRAME_SAMPLES ])
+                    .unwrap_or_else(|| vec![0i16; MIX_FRAME_SAMPLES])
             } else {
-                vec![ 0i16; MIX_FRAME_SAMPLES ]
+                vec![0i16; MIX_FRAME_SAMPLES]
             };
             (id, samples)
         })
@@ -806,14 +904,17 @@ fn compute_peer_wideband_by_id(
     if n_alive != 2 {
         return HashMap::new();
     }
-    members.iter_mut()
+    members
+        .iter_mut()
         .map(|(&id, m)| {
             let samples = if m.inbound_this_tick {
-                m.state.codecx.require_wideband_16k()
+                m.state
+                    .codecx
+                    .require_wideband_16k()
                     .map(|s| s.to_vec())
-                    .unwrap_or_else(|| vec![ 0i16; MIX_FRAME_SAMPLES * 2 ])
+                    .unwrap_or_else(|| vec![0i16; MIX_FRAME_SAMPLES * 2])
             } else {
-                vec![ 0i16; MIX_FRAME_SAMPLES * 2 ]
+                vec![0i16; MIX_FRAME_SAMPLES * 2]
             };
             (id, samples)
         })
@@ -824,8 +925,11 @@ fn compute_peer_wideband_by_id(
 /// (when dynamic, i.e. ≥96) so the bridge can decode/encode at the
 /// right PT on both sides of an asymmetric-dynamic pair.
 fn configure_peer_ilbc_pts(members: &mut HashMap<ChannelId, Box<Member>>, n_alive: usize) {
-    if n_alive != 2 { return; }
-    let pts: Vec<(ChannelId, u8)> = members.iter()
+    if n_alive != 2 {
+        return;
+    }
+    let pts: Vec<(ChannelId, u8)> = members
+        .iter()
         .map(|(&id, m)| (id, m.state.remote_pt))
         .collect();
     for (&id, m) in members.iter_mut() {
@@ -846,7 +950,9 @@ fn broadcast_dtmf_to_peer_relays(
     for (origin, digit) in digits {
         let digit_str = digit.to_string();
         for (&id, m) in members.iter_mut() {
-            if id == *origin { continue; }
+            if id == *origin {
+                continue;
+            }
             m.subs.dtmf_relay.enqueue(&digit_str);
         }
     }
@@ -854,7 +960,8 @@ fn broadcast_dtmf_to_peer_relays(
 
 /// Remove idle members from the mix and emit each one's Close event.
 fn close_idle_members(members: &mut HashMap<ChannelId, Box<Member>>) {
-    let idle_ids: Vec<ChannelId> = members.iter()
+    let idle_ids: Vec<ChannelId> = members
+        .iter()
         .filter(|(_, m)| m.is_idle())
         .map(|(&id, _)| id)
         .collect();
@@ -870,7 +977,9 @@ fn close_idle_members(members: &mut HashMap<ChannelId, Box<Member>>) {
 fn copy_into_frame(dst: &mut [i16], src: &[i16]) {
     let n = src.len().min(dst.len());
     dst[..n].copy_from_slice(&src[..n]);
-    for s in &mut dst[n..] { *s = 0; }
+    for s in &mut dst[n..] {
+        *s = 0;
+    }
 }
 
 /// Feed every active recorder on this channel one tick's worth of audio.
@@ -910,7 +1019,10 @@ async fn feed_recorders(
                 }
                 None => {
                     // No peer available — duplicate-mono fallback.
-                    for &s in samples { inter.push(s); inter.push(s); }
+                    for &s in samples {
+                        inter.push(s);
+                        inter.push(s);
+                    }
                 }
             }
             inter
@@ -919,17 +1031,23 @@ async fn feed_recorders(
             // `soundfilewriter::write` where mono advances buf by 1 in
             // both loops so the second leg is `*buf += outval`.
             match peer_samples {
-                Some(peer) => samples.iter().enumerate().map(|(idx, &s)| {
-                    let a = s as i32;
-                    let b = peer.get(idx).copied().unwrap_or(0) as i32;
-                    (a + b).clamp(i16::MIN as i32, i16::MAX as i32) as i16
-                }).collect(),
+                Some(peer) => samples
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, &s)| {
+                        let a = s as i32;
+                        let b = peer.get(idx).copied().unwrap_or(0) as i32;
+                        (a + b).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+                    })
+                    .collect(),
                 None => samples.to_vec(),
             }
         };
         // Power calc on the narrowband `samples` (self's inbound), not
         // the interleaved stereo `frame` — matches C++ `codecx::power()`.
-        let _ = rec.write_frame(&frame, samples, Some(channel_in_count)).await;
+        let _ = rec
+            .write_frame(&frame, samples, Some(channel_in_count))
+            .await;
         let new_state = rec.state();
         let file_str = rec.file().to_string_lossy().into_owned();
         if prev_state == RecorderState::Pending && new_state == RecorderState::Active {
@@ -963,7 +1081,6 @@ async fn feed_recorders(
         i += 1;
     }
 }
-
 
 async fn send_rtp(state: &mut ChannelState, pkt: &RtpPacket, remote: SocketAddr) {
     if let Some(ref mut ctx) = state.srtp_encrypt {
@@ -1013,9 +1130,15 @@ async fn send_dtmf_to_remote(
 
 async fn apply_forwarded(m: &mut Member, cmd: Command) {
     match cmd {
-        Command::Direction(d) => { m.state.direction = d; }
-        Command::Echo { enabled } => { m.state.echo = enabled; }
-        Command::Dtmf { digits } => { m.subs.dtmf_send.enqueue(&digits); }
+        Command::Direction(d) => {
+            m.state.direction = d;
+        }
+        Command::Echo { enabled } => {
+            m.state.echo = enabled;
+        }
+        Command::Dtmf { digits } => {
+            m.subs.dtmf_send.enqueue(&digits);
+        }
         Command::Remote { cfg, ack } => {
             m.state.set_remote_addr(cfg.addr);
             m.state.remote_pt = cfg.payload_type;
@@ -1064,7 +1187,12 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
             // If an existing recorder at the same path is paused, resume it
             // instead of replacing it. This preserves the recording file so
             // both segments end up in one WAV.
-            if let Some(rec) = m.subs.recorders.iter_mut().find(|r| r.file() == cfg.file && r.state() == RecorderState::Paused) {
+            if let Some(rec) = m
+                .subs
+                .recorders
+                .iter_mut()
+                .find(|r| r.file() == cfg.file && r.state() == RecorderState::Paused)
+            {
                 rec.resume();
                 m.events.post(Event::Record {
                     state: RecordState::Recording,
@@ -1073,43 +1201,47 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
                     filesize: None,
                 });
             } else {
-            match Recorder::open(cfg.clone()).await {
-                Ok(rec) => {
-                    if let Some(idx) = m.subs.recorders.iter().position(|r| r.file() == rec.file()) {
-                        let mut old = m.subs.recorders.remove(idx);
-                        let size = old.file_size();
-                        old.close(FinishReason::ChannelClosed);
+                match Recorder::open(cfg.clone()).await {
+                    Ok(rec) => {
+                        if let Some(idx) =
+                            m.subs.recorders.iter().position(|r| r.file() == rec.file())
+                        {
+                            let mut old = m.subs.recorders.remove(idx);
+                            let size = old.file_size();
+                            old.close(FinishReason::ChannelClosed);
+                            m.events.post(Event::Record {
+                                state: RecordState::Finished,
+                                reason: Some("channelclosed".into()),
+                                file: Some(file_str.clone()),
+                                filesize: Some(size),
+                            });
+                        }
+                        m.subs.recorders.push(rec);
+                        if !is_gated {
+                            m.events.post(Event::Record {
+                                state: RecordState::Recording,
+                                reason: None,
+                                file: Some(file_str),
+                                filesize: None,
+                            });
+                        }
+                    }
+                    Err(e) => {
                         m.events.post(Event::Record {
                             state: RecordState::Finished,
-                            reason: Some("channelclosed".into()),
-                            file: Some(file_str.clone()),
-                            filesize: Some(size),
-                        });
-                    }
-                    m.subs.recorders.push(rec);
-                    if !is_gated {
-                        m.events.post(Event::Record {
-                            state: RecordState::Recording,
-                            reason: None,
+                            reason: Some(format!("open-failed: {e}")),
                             file: Some(file_str),
                             filesize: None,
                         });
                     }
                 }
-                Err(e) => {
-                    m.events.post(Event::Record {
-                        state: RecordState::Finished,
-                        reason: Some(format!("open-failed: {e}")),
-                        file: Some(file_str),
-                        filesize: None,
-                    });
-                }
-            }
             }
             let _ = ack.send(());
         }
         Command::CreateReadStream { id, cfg, sender } => {
-            m.subs.readers.push(super::audio_reader::AudioReader::new(id, cfg, sender));
+            m.subs
+                .readers
+                .push(super::audio_reader::AudioReader::new(id, cfg, sender));
         }
         Command::DestroyReadStream { id } => {
             m.subs.readers.retain(|r| r.id() != id);
@@ -1131,7 +1263,9 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
         }
         Command::DestroyWriteStream { id } => {
             if let Some(w) = m.subs.writer.as_ref() {
-                if w.id() == id { m.subs.writer = None; }
+                if w.id() == id {
+                    m.subs.writer = None;
+                }
             }
         }
         Command::RecordFinish { file } => {
@@ -1150,7 +1284,11 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
         }
         Command::RecordSetPaused { file, paused } => {
             if let Some(rec) = m.subs.recorders.iter_mut().find(|r| r.file() == file) {
-                if paused { rec.pause(); } else { rec.resume(); }
+                if paused {
+                    rec.pause();
+                } else {
+                    rec.resume();
+                }
             }
         }
         Command::PlayRecord { cfg, ack } => {

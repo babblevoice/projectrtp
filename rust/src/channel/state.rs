@@ -68,7 +68,8 @@ pub struct ChannelState {
 
     // DTLS
     pub dtls_inbound_tx: Arc<PLMutex<Option<mpsc::Sender<Vec<u8>>>>>,
-    pub dtls_result_rx: Option<tokio::sync::oneshot::Receiver<Option<super::dtls_session::HandshakeResult>>>,
+    pub dtls_result_rx:
+        Option<tokio::sync::oneshot::Receiver<Option<super::dtls_session::HandshakeResult>>>,
     /// AbortHandle for the spawned DTLS handshake task. Aborted on
     /// channel close so an orphan handshake can't keep polling a dead
     /// transport (which would busy-spin a tokio worker).

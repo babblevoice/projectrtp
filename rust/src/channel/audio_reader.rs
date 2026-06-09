@@ -100,23 +100,36 @@ pub struct AudioReader {
 
 impl AudioReader {
     pub fn new(id: u64, cfg: ReaderConfig, sender: mpsc::Sender<Vec<u8>>) -> Self {
-        Self { id, cfg, sender, drops: 0 }
+        Self {
+            id,
+            cfg,
+            sender,
+            drops: 0,
+        }
     }
 
-    pub fn id(&self) -> u64 { self.id }
+    pub fn id(&self) -> u64 {
+        self.id
+    }
     /// Surfaced for diagnostics / future dynamic reconfiguration
     /// (e.g. if a reader's consumer wants to re-query its format
     /// after the fact). Not called from the hot path today.
     #[allow(dead_code)]
-    pub fn config(&self) -> &ReaderConfig { &self.cfg }
+    pub fn config(&self) -> &ReaderConfig {
+        &self.cfg
+    }
     /// Exposes the per-reader drops counter to an eventual `stats()`
     /// summary. Not called yet — the counter is bumped internally.
     #[allow(dead_code)]
-    pub fn drops(&self) -> u64 { self.drops }
+    pub fn drops(&self) -> u64 {
+        self.drops
+    }
 
     /// True once the JS side has dropped its end (forwarder task exited).
     /// Lets the tick garbage-collect finished readers.
-    pub fn is_closed(&self) -> bool { self.sender.is_closed() }
+    pub fn is_closed(&self) -> bool {
+        self.sender.is_closed()
+    }
 
     /// Feed one 20 ms frame. Called from the recorder's feed point in the
     /// tick (same cache state, same timing). Samples are narrowband 8 kHz
@@ -147,12 +160,16 @@ impl AudioReader {
         out_samples_8k: Option<&[i16]>,
         out_samples_16k: Option<&[i16]>,
     ) -> bool {
-        let Some(bytes) = self.build_frame(codecx, in_samples_8k, out_samples_8k, out_samples_16k) else {
+        let Some(bytes) = self.build_frame(codecx, in_samples_8k, out_samples_8k, out_samples_16k)
+        else {
             return false;
         };
         match self.sender.try_send(bytes) {
             Ok(()) => true,
-            Err(_) => { self.drops = self.drops.saturating_add(1); false }
+            Err(_) => {
+                self.drops = self.drops.saturating_add(1);
+                false
+            }
         }
     }
 
@@ -164,7 +181,9 @@ impl AudioReader {
         out_samples_16k: Option<&[i16]>,
     ) -> Option<Vec<u8>> {
         match self.cfg.format {
-            ReaderFormat::L16 => self.build_l16(codecx, in_samples_8k, out_samples_8k, out_samples_16k),
+            ReaderFormat::L16 => {
+                self.build_l16(codecx, in_samples_8k, out_samples_8k, out_samples_16k)
+            }
             ReaderFormat::Pcma => codecx.require_wire_as(8).map(|b| b.to_vec()),
             ReaderFormat::Pcmu => codecx.require_wire_as(0).map(|b| b.to_vec()),
             ReaderFormat::G722 => codecx.require_wire_as(9).map(|b| b.to_vec()),
@@ -182,29 +201,32 @@ impl AudioReader {
         out_samples_16k: Option<&[i16]>,
     ) -> Option<Vec<u8>> {
         // Resolve the two sides at the requested sample rate.
-        let (in_samples, out_samples): (Option<Vec<i16>>, Option<Vec<i16>>) = match self.cfg.samplerate {
-            16000 => {
-                // Inbound wideband is cached on codecx (decoded from G.722, or
-                // upsampled from narrowband). The outbound side has no codecx
-                // here, so its wideband must be supplied by the caller — the
-                // mixer passes the peer's wideband for a bridged call. When it
-                // isn't supplied (e.g. a non-bridged channel whose out is an
-                // 8 kHz player) the out side is silent at 16k.
-                let wb_in = codecx.require_wideband_16k().map(|s| s.to_vec());
-                let wb_out = out_samples_16k.map(|s| s.to_vec());
-                (wb_in, wb_out)
-            }
-            _ => (
-                in_samples_8k.map(|s| s.to_vec()),
-                out_samples_8k.map(|s| s.to_vec()),
-            ),
-        };
+        let (in_samples, out_samples): (Option<Vec<i16>>, Option<Vec<i16>>) =
+            match self.cfg.samplerate {
+                16000 => {
+                    // Inbound wideband is cached on codecx (decoded from G.722, or
+                    // upsampled from narrowband). The outbound side has no codecx
+                    // here, so its wideband must be supplied by the caller — the
+                    // mixer passes the peer's wideband for a bridged call. When it
+                    // isn't supplied (e.g. a non-bridged channel whose out is an
+                    // 8 kHz player) the out side is silent at 16k.
+                    let wb_in = codecx.require_wideband_16k().map(|s| s.to_vec());
+                    let wb_out = out_samples_16k.map(|s| s.to_vec());
+                    (wb_in, wb_out)
+                }
+                _ => (
+                    in_samples_8k.map(|s| s.to_vec()),
+                    out_samples_8k.map(|s| s.to_vec()),
+                ),
+            };
 
         let in_ref: &[i16] = in_samples.as_deref().unwrap_or(&[]);
         let out_ref: &[i16] = out_samples.as_deref().unwrap_or(&[]);
 
         // Nothing to emit (neither side provided samples at this rate).
-        if in_ref.is_empty() && out_ref.is_empty() { return None; }
+        if in_ref.is_empty() && out_ref.is_empty() {
+            return None;
+        }
 
         let n_out = in_ref.len().max(out_ref.len());
         let ch = self.cfg.num_channels as usize;
@@ -213,10 +235,14 @@ impl AudioReader {
         match (self.cfg.direction, ch) {
             (ReaderDirection::In, 1) => push_mono(&mut bytes, in_ref, n_out),
             (ReaderDirection::Out, 1) => push_mono(&mut bytes, out_ref, n_out),
-            (ReaderDirection::Both, 2) => push_stereo_interleaved(&mut bytes, in_ref, out_ref, n_out),
+            (ReaderDirection::Both, 2) => {
+                push_stereo_interleaved(&mut bytes, in_ref, out_ref, n_out)
+            }
             // Mono direction on a stereo reader — duplicate across L/R.
             (ReaderDirection::In, 2) => push_stereo_interleaved(&mut bytes, in_ref, in_ref, n_out),
-            (ReaderDirection::Out, 2) => push_stereo_interleaved(&mut bytes, out_ref, out_ref, n_out),
+            (ReaderDirection::Out, 2) => {
+                push_stereo_interleaved(&mut bytes, out_ref, out_ref, n_out)
+            }
             // direction=Both on a mono reader — sum and return, matches recorder semantics.
             (ReaderDirection::Both, 1) => {
                 for i in 0..n_out {
@@ -286,7 +312,11 @@ mod tests {
 
     fn reader(direction: ReaderDirection, samplerate: u32) -> AudioReader {
         let (tx, _rx) = make_channel();
-        let cfg = ReaderConfig { direction, samplerate, ..Default::default() };
+        let cfg = ReaderConfig {
+            direction,
+            samplerate,
+            ..Default::default()
+        };
         AudioReader::new(1, cfg, tx)
     }
 
@@ -296,16 +326,16 @@ mod tests {
     fn out_reader_16k_uses_supplied_wideband() {
         let r = reader(ReaderDirection::Out, 16000);
         let mut cx = CodecBundle::new();
-        let out_wb: Vec<i16> = vec![ 1234; 320 ]; // 20 ms @ 16 kHz mono
-        let in_8k = vec![ 0i16; 160 ];
-        let out_8k = vec![ 0i16; 160 ];
+        let out_wb: Vec<i16> = vec![1234; 320]; // 20 ms @ 16 kHz mono
+        let in_8k = vec![0i16; 160];
+        let out_8k = vec![0i16; 160];
 
         let bytes = r
             .build_frame(&mut cx, Some(&in_8k), Some(&out_8k), Some(&out_wb))
             .expect("frame produced");
 
         assert_eq!(bytes.len(), 320 * 2, "16k mono 20ms = 640 bytes");
-        assert_eq!(i16::from_le_bytes([ bytes[0], bytes[1] ]), 1234);
+        assert_eq!(i16::from_le_bytes([bytes[0], bytes[1]]), 1234);
     }
 
     // The 8 kHz path is unchanged: the out side uses the 8 kHz samples directly
@@ -314,14 +344,14 @@ mod tests {
     fn out_reader_8k_uses_narrowband() {
         let r = reader(ReaderDirection::Out, 8000);
         let mut cx = CodecBundle::new();
-        let in_8k = vec![ 0i16; 160 ];
-        let out_8k = vec![ 321i16; 160 ];
+        let in_8k = vec![0i16; 160];
+        let out_8k = vec![321i16; 160];
 
         let bytes = r
             .build_frame(&mut cx, Some(&in_8k), Some(&out_8k), None)
             .expect("frame produced");
 
         assert_eq!(bytes.len(), 160 * 2, "8k mono 20ms = 320 bytes");
-        assert_eq!(i16::from_le_bytes([ bytes[0], bytes[1] ]), 321);
+        assert_eq!(i16::from_le_bytes([bytes[0], bytes[1]]), 321);
     }
 }

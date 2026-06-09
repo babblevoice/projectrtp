@@ -81,14 +81,27 @@ pub struct AudioWriter {
 
 impl AudioWriter {
     pub fn new(id: u64, cfg: WriterConfig, receiver: mpsc::Receiver<Vec<u8>>) -> Self {
-        Self { id, cfg, receiver, buffered: Vec::with_capacity(FRAME_SAMPLES * 2), ended: false, drops: 0 }
+        Self {
+            id,
+            cfg,
+            receiver,
+            buffered: Vec::with_capacity(FRAME_SAMPLES * 2),
+            ended: false,
+            drops: 0,
+        }
     }
 
-    pub fn id(&self) -> u64 { self.id }
+    pub fn id(&self) -> u64 {
+        self.id
+    }
     #[allow(dead_code)]
-    pub fn config(&self) -> &WriterConfig { &self.cfg }
+    pub fn config(&self) -> &WriterConfig {
+        &self.cfg
+    }
     #[allow(dead_code)]
-    pub fn drops(&self) -> u64 { self.drops }
+    pub fn drops(&self) -> u64 {
+        self.drops
+    }
 
     /// True when the JS side has finished AND we've flushed every
     /// sample it gave us. Used by the tick orchestrator to pull the
@@ -165,7 +178,9 @@ mod tests {
         let mut w = AudioWriter::new(1, WriterConfig::default(), rx);
         // 320 bytes = 160 i16 samples = 20 ms @ 8 kHz.
         let mut bytes = Vec::with_capacity(320);
-        for i in 0..160i16 { bytes.extend_from_slice(&i.to_le_bytes()); }
+        for i in 0..160i16 {
+            bytes.extend_from_slice(&i.to_le_bytes());
+        }
         tx.try_send(bytes).unwrap();
         let frame = w.next_frame_8k().unwrap();
         assert_eq!(frame.len(), 160);
@@ -195,11 +210,15 @@ mod tests {
         let mut w = AudioWriter::new(1, WriterConfig::default(), rx);
         // 50 samples then drop the sender (simulates JS .end()).
         let mut bytes = Vec::with_capacity(100);
-        for i in 0..50i16 { bytes.extend_from_slice(&i.to_le_bytes()); }
+        for i in 0..50i16 {
+            bytes.extend_from_slice(&i.to_le_bytes());
+        }
         tx.try_send(bytes).unwrap();
         drop(tx);
 
-        let frame = w.next_frame_8k().expect("partial frame padded with silence");
+        let frame = w
+            .next_frame_8k()
+            .expect("partial frame padded with silence");
         assert_eq!(frame.len(), 160);
         assert_eq!(frame[0], 0);
         assert_eq!(frame[49], 49);

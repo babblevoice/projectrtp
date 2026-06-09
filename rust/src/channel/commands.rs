@@ -32,7 +32,10 @@ pub struct RemoteDtls {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
-pub enum DtlsSetup { Active, Passive }
+pub enum DtlsSetup {
+    Active,
+    Passive,
+}
 
 /// The play config carried on `Command::Play`. Alias for the parsed spec in
 /// `channel/player.rs` — commands used to carry a raw JSON string, but the
@@ -59,7 +62,12 @@ pub struct Direction {
 }
 
 impl Default for Direction {
-    fn default() -> Self { Self { send: true, recv: true } }
+    fn default() -> Self {
+        Self {
+            send: true,
+            recv: true,
+        }
+    }
 }
 
 // Ack types —
@@ -71,16 +79,33 @@ pub type Ack<T = ()> = oneshot::Sender<T>;
 pub type ChannelId = u64;
 
 pub enum Command {
-    Remote { cfg: RemoteConfig, ack: Ack },
-    Play { cfg: SoundSoup, ack: Ack },
-    Record { cfg: RecordConfig, ack: Ack },
+    Remote {
+        cfg: RemoteConfig,
+        ack: Ack,
+    },
+    Play {
+        cfg: SoundSoup,
+        ack: Ack,
+    },
+    Record {
+        cfg: RecordConfig,
+        ack: Ack,
+    },
     /// `channel.record({ finish: true, file: "..." })` — finalize the named
     /// recorder (multiple can coexist, keyed by file path).
-    RecordFinish { file: std::path::PathBuf },
+    RecordFinish {
+        file: std::path::PathBuf,
+    },
     /// `channel.record({ pause: true, file: "..." })` — pause/resume toggle.
     /// `resume=true` flips from Paused to Active; `resume=false` pauses.
-    RecordSetPaused { file: std::path::PathBuf, paused: bool },
-    PlayRecord { cfg: PlayRecordConfig, ack: Ack },
+    RecordSetPaused {
+        file: std::path::PathBuf,
+        paused: bool,
+    },
+    PlayRecord {
+        cfg: PlayRecordConfig,
+        ack: Ack,
+    },
     /// `channel.createReadStream({...})` — register a new audio reader.
     /// The id is generated facade-side (via `audio_reader::next_reader_id`)
     /// and passed in so JS can refer to this reader when it needs to
@@ -93,7 +118,9 @@ pub enum Command {
     },
     /// `readable.destroy()` from JS. Removes the reader with the given
     /// id — dropping it closes the mpsc and ends the forwarder task.
-    DestroyReadStream { id: u64 },
+    DestroyReadStream {
+        id: u64,
+    },
     /// `channel.createWriteStream({...})` — register a writer. Id is
     /// generated facade-side so JS can reference this specific writer
     /// for later byte pushes / end / destroy. The Receiver is
@@ -107,18 +134,31 @@ pub enum Command {
     },
     /// `writable.destroy()` from JS. Removes the writer immediately
     /// — any buffered samples are discarded.
-    DestroyWriteStream { id: u64 },
-    Dtmf { digits: String },
-    Echo { enabled: bool },
+    DestroyWriteStream {
+        id: u64,
+    },
+    Dtmf {
+        digits: String,
+    },
+    Echo {
+        enabled: bool,
+    },
     Direction(Direction),
     /// Migrate this channel's state + subs into a mix group actor. The actor
     /// transitions from Local to Mixed mode; subsequent commands are
     /// forwarded into the mixer. `ack` fires once the migration completes.
-    EnterMix { mix: super::mixer::MixHandle, ack: Ack },
+    EnterMix {
+        mix: super::mixer::MixHandle,
+        ack: Ack,
+    },
     /// Migrate state + subs back out of the mix group. The actor returns to
     /// Local mode and resumes its own ticker. Used for `channel.unmix()`.
-    LeaveMix { ack: Ack },
-    Close { reason: String },
+    LeaveMix {
+        ack: Ack,
+    },
+    Close {
+        reason: String,
+    },
 }
 
 // The public handle JS holds (indirectly, via a wrapper in channel/mod.rs).
@@ -132,11 +172,21 @@ pub struct Handle {
 #[allow(dead_code)]
 impl Handle {
     pub async fn close(&self, reason: impl Into<String>) {
-        let _ = self.cmd.send(Command::Close { reason: reason.into() }).await;
+        let _ = self
+            .cmd
+            .send(Command::Close {
+                reason: reason.into(),
+            })
+            .await;
     }
 
     pub async fn dtmf(&self, digits: impl Into<String>) {
-        let _ = self.cmd.send(Command::Dtmf { digits: digits.into() }).await;
+        let _ = self
+            .cmd
+            .send(Command::Dtmf {
+                digits: digits.into(),
+            })
+            .await;
     }
 
     pub async fn echo(&self, on: bool) {
@@ -149,25 +199,37 @@ impl Handle {
 
     pub async fn remote(&self, cfg: RemoteConfig) -> Result<(), ()> {
         let (tx, rx) = oneshot::channel();
-        self.cmd.send(Command::Remote { cfg, ack: tx }).await.map_err(|_| ())?;
+        self.cmd
+            .send(Command::Remote { cfg, ack: tx })
+            .await
+            .map_err(|_| ())?;
         rx.await.map_err(|_| ())
     }
 
     pub async fn play(&self, cfg: SoundSoup) -> Result<(), ()> {
         let (tx, rx) = oneshot::channel();
-        self.cmd.send(Command::Play { cfg, ack: tx }).await.map_err(|_| ())?;
+        self.cmd
+            .send(Command::Play { cfg, ack: tx })
+            .await
+            .map_err(|_| ())?;
         rx.await.map_err(|_| ())
     }
 
     pub async fn record(&self, cfg: RecordConfig) -> Result<(), ()> {
         let (tx, rx) = oneshot::channel();
-        self.cmd.send(Command::Record { cfg, ack: tx }).await.map_err(|_| ())?;
+        self.cmd
+            .send(Command::Record { cfg, ack: tx })
+            .await
+            .map_err(|_| ())?;
         rx.await.map_err(|_| ())
     }
 
     pub async fn play_record(&self, cfg: PlayRecordConfig) -> Result<(), ()> {
         let (tx, rx) = oneshot::channel();
-        self.cmd.send(Command::PlayRecord { cfg, ack: tx }).await.map_err(|_| ())?;
+        self.cmd
+            .send(Command::PlayRecord { cfg, ack: tx })
+            .await
+            .map_err(|_| ())?;
         rx.await.map_err(|_| ())
     }
 }

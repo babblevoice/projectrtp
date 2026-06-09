@@ -20,7 +20,9 @@ use webrtc_dtls::crypto::Certificate;
 fn hex_colon(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 3);
     for (i, b) in bytes.iter().enumerate() {
-        if i > 0 { s.push(':'); }
+        if i > 0 {
+            s.push(':');
+        }
         s.push_str(&format!("{:02X}", b));
     }
     s
@@ -35,7 +37,9 @@ fn init_cert() -> Certificate {
 }
 
 fn compute_fingerprint(cert: &Certificate) -> String {
-    let der = cert.certificate.first()
+    let der = cert
+        .certificate
+        .first()
         .expect("cert has at least one DER entry")
         .as_ref();
     hex_colon(&Sha256::digest(der))

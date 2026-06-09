@@ -17,11 +17,11 @@ use napi_derive::napi;
 mod channel;
 mod codec;
 mod dtls;
+mod firfilter;
 mod g722;
 mod ilbc;
 mod portpool;
 mod rtpbuffer;
-mod firfilter;
 mod soundfile;
 mod stun;
 mod tone;
@@ -29,7 +29,7 @@ mod tone;
 /// Default port range if none is supplied. Matches the C++ defaults in
 /// projectrtpnodemain.cpp.
 const DEFAULT_PORT_START: u16 = 10_000;
-const DEFAULT_PORT_END:   u16 = 20_000;
+const DEFAULT_PORT_END: u16 = 20_000;
 
 #[cfg_attr(not(test), napi)]
 pub fn run(params: Option<Object>) -> napi::Result<()> {
@@ -38,8 +38,14 @@ pub fn run(params: Option<Object>) -> napi::Result<()> {
         .as_ref()
         .and_then(|p| p.get_named_property::<Object>("ports").ok())
         .map(|ports| {
-            let s = ports.get_named_property::<u32>("start").ok().unwrap_or(DEFAULT_PORT_START as u32) as u16;
-            let e = ports.get_named_property::<u32>("end").ok().unwrap_or(DEFAULT_PORT_END as u32) as u16;
+            let s = ports
+                .get_named_property::<u32>("start")
+                .ok()
+                .unwrap_or(DEFAULT_PORT_START as u32) as u16;
+            let e = ports
+                .get_named_property::<u32>("end")
+                .ok()
+                .unwrap_or(DEFAULT_PORT_END as u32) as u16;
             (s, e)
         })
         .unwrap_or((DEFAULT_PORT_START, DEFAULT_PORT_END));
@@ -55,10 +61,14 @@ pub async fn shutdown() -> napi::Result<()> {
     // Timeout after 5 seconds to avoid hanging forever.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        if channel::facade::active_channel_count() == 0 { break; }
+        if channel::facade::active_channel_count() == 0 {
+            break;
+        }
         if std::time::Instant::now() >= deadline {
-            eprintln!("projectrtp shutdown: {} channels still active after timeout",
-                      channel::facade::active_channel_count());
+            eprintln!(
+                "projectrtp shutdown: {} channels still active after timeout",
+                channel::facade::active_channel_count()
+            );
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -110,7 +120,11 @@ pub fn stats() -> napi::Result<Stats> {
     // the C++ `channelscreated` counter but split so dashboards can
     // chart open-rate vs close-rate independently.
     let available = portpool::available_count();
-    let available = if portpool::is_initialized() { available } else { 10_000 };
+    let available = if portpool::is_initialized() {
+        available
+    } else {
+        10_000
+    };
     Ok(Stats {
         channel: ChannelCounts {
             current: channel::facade::active_channel_count() as u32,

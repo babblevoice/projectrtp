@@ -90,17 +90,35 @@ struct EventPayload {
 fn event_to_payload(ev: Event) -> EventPayload {
     match ev {
         Event::Close { reason, stats } => EventPayload {
-            action: "close", reason: Some(reason), event: None, state: None,
-            stats: Some(stats), file: None, filesize: None,
+            action: "close",
+            reason: Some(reason),
+            event: None,
+            state: None,
+            stats: Some(stats),
+            file: None,
+            filesize: None,
         },
         Event::Play { state, reason } => EventPayload {
-            action: "play", reason,
-            event: Some(match state { PlayState::Start => "start", PlayState::End => "end" }.into()),
+            action: "play",
+            reason,
+            event: Some(
+                match state {
+                    PlayState::Start => "start",
+                    PlayState::End => "end",
+                }
+                .into(),
+            ),
             state: None,
             stats: None,
-            file: None, filesize: None,
+            file: None,
+            filesize: None,
         },
-        Event::Record { state, reason, file, filesize } => {
+        Event::Record {
+            state,
+            reason,
+            file,
+            filesize,
+        } => {
             // C++ surfaces both recording and finish transitions with a
             // compound event name — `recording.abovepower` when a
             // power-gated recorder starts writing, `finished.belowpower` /
@@ -115,18 +133,33 @@ fn event_to_payload(ev: Event) -> EventPayload {
                 None => prefix.to_string(),
             };
             EventPayload {
-                action: "record", reason, event: Some(event), state: None,
-                stats: None, file, filesize,
+                action: "record",
+                reason,
+                event: Some(event),
+                state: None,
+                stats: None,
+                file,
+                filesize,
             }
         }
         Event::TelephoneEvent { digit } => EventPayload {
-            action: "telephone-event", reason: None, event: Some(digit.to_string()), state: None,
-            stats: None, file: None, filesize: None,
+            action: "telephone-event",
+            reason: None,
+            event: Some(digit.to_string()),
+            state: None,
+            stats: None,
+            file: None,
+            filesize: None,
         },
         Event::Mix { state } => EventPayload {
             // Tests read `d.event` for "start" / "finished", not `d.state`.
-            action: "mix", reason: None, event: Some(state), state: None,
-            stats: None, file: None, filesize: None,
+            action: "mix",
+            reason: None,
+            event: Some(state),
+            state: None,
+            stats: None,
+            file: None,
+            filesize: None,
         },
     }
 }
@@ -136,7 +169,10 @@ struct JsEventSink {
 }
 impl EventSink for JsEventSink {
     fn post(&self, ev: Event) {
-        self.tsfn.call(event_to_payload(ev), ThreadsafeFunctionCallMode::NonBlocking);
+        self.tsfn.call(
+            event_to_payload(ev),
+            ThreadsafeFunctionCallMode::NonBlocking,
+        );
     }
 }
 
@@ -198,7 +234,8 @@ pub struct ChannelObject {
     /// `end_write_stream` can route to the right one. Guarded by a
     /// `parking_lot::Mutex` so `push` is lock-cheap on the hot path —
     /// we don't want a contended std mutex between every 20 ms frame.
-    write_senders: parking_lot::Mutex<std::collections::HashMap<u64, tokio::sync::mpsc::Sender<Vec<u8>>>>,
+    write_senders:
+        parking_lot::Mutex<std::collections::HashMap<u64, tokio::sync::mpsc::Sender<Vec<u8>>>>,
 }
 
 // The `#[napi]` proc macro on an impl block needs to expand before the
@@ -210,10 +247,14 @@ pub struct ChannelObject {
 #[napi]
 impl ChannelObject {
     #[napi(getter)]
-    pub fn ssrc(&self) -> u32 { self.channel_ssrc }
+    pub fn ssrc(&self) -> u32 {
+        self.channel_ssrc
+    }
 
     #[napi(getter)]
-    pub fn port(&self) -> u32 { self.channel_port as u32 }
+    pub fn port(&self) -> u32 {
+        self.channel_port as u32
+    }
 
     // index.js expects to read chan.local.{port,ssrc} right after openchannel,
     // then assign chan.local.address = ... Defensive JS already handles the
@@ -223,15 +264,22 @@ impl ChannelObject {
     // returns. We only expose the constituent fields; napi-rs class getters
     // would be non-writable and can't be shadowed by the JS wrapper.
     #[napi(getter)]
-    pub fn icepwd(&self) -> String { self.channel_icepwd.clone() }
+    pub fn icepwd(&self) -> String {
+        self.channel_icepwd.clone()
+    }
 
     #[napi(getter)]
-    pub fn dtlsfingerprint(&self) -> String { crate::dtls::fingerprint().to_string() }
+    pub fn dtlsfingerprint(&self) -> String {
+        crate::dtls::fingerprint().to_string()
+    }
 
     #[napi]
     pub fn close(&self, reason: Option<String>) -> bool {
         let r = reason.unwrap_or_else(|| "requested".into());
-        self.handle.cmd.try_send(super::commands::Command::Close { reason: r }).is_ok()
+        self.handle
+            .cmd
+            .try_send(super::commands::Command::Close { reason: r })
+            .is_ok()
     }
 
     #[napi]
@@ -252,10 +300,13 @@ impl ChannelObject {
     /// JS calls `channel.direction({ send, recv })` with a single object.
     #[napi]
     pub fn direction(&self, opts: DirectionOpts) -> bool {
-        self.handle.cmd.try_send(super::commands::Command::Direction(Direction {
-            send: opts.send.unwrap_or(true),
-            recv: opts.recv.unwrap_or(true),
-        })).is_ok()
+        self.handle
+            .cmd
+            .try_send(super::commands::Command::Direction(Direction {
+                send: opts.send.unwrap_or(true),
+                recv: opts.recv.unwrap_or(true),
+            }))
+            .is_ok()
     }
 
     /// Reconfigure the remote end for outbound RTP. JS calls
@@ -272,22 +323,31 @@ impl ChannelObject {
         let codec = params.get_named_property::<u32>("codec").ok().unwrap_or(0);
         let icepwd = params.get_named_property::<String>("icepwd").ok();
         let dtls = parse_remote_dtls(&params);
-        let Some(addr_s) = addr else { return false; };
-        let Some(port_n) = port else { return false; };
-        let Ok(ip) = addr_s.parse::<IpAddr>() else { return false; };
+        let Some(addr_s) = addr else {
+            return false;
+        };
+        let Some(port_n) = port else {
+            return false;
+        };
+        let Ok(ip) = addr_s.parse::<IpAddr>() else {
+            return false;
+        };
         let sa = SocketAddr::new(ip, port_n as u16);
         let (ack, _) = tokio::sync::oneshot::channel();
-        self.handle.cmd.try_send(super::commands::Command::Remote {
-            cfg: super::commands::RemoteConfig {
-                addr: sa,
-                payload_type: codec as u8,
-                ilbc_payload_type: None,
-                rfc2833_payload_type: None,
-                dtls,
-                icepwd,
-            },
-            ack,
-        }).is_ok()
+        self.handle
+            .cmd
+            .try_send(super::commands::Command::Remote {
+                cfg: super::commands::RemoteConfig {
+                    addr: sa,
+                    payload_type: codec as u8,
+                    ilbc_payload_type: None,
+                    rfc2833_payload_type: None,
+                    dtls,
+                    icepwd,
+                },
+                ack,
+            })
+            .is_ok()
     }
 
     /// Start (or replace) a soundsoup playback on this channel. JS shape
@@ -297,9 +357,14 @@ impl ChannelObject {
     /// commands) when the spec is invalid so tests can assert failure.
     #[napi]
     pub fn play(&self, params: Object) -> bool {
-        let Some(spec) = parse_soundsoup(&params) else { return false; };
+        let Some(spec) = parse_soundsoup(&params) else {
+            return false;
+        };
         let (ack, _) = tokio::sync::oneshot::channel();
-        self.handle.cmd.try_send(super::commands::Command::Play { cfg: spec, ack }).is_ok()
+        self.handle
+            .cmd
+            .try_send(super::commands::Command::Play { cfg: spec, ack })
+            .is_ok()
     }
 
     /// Start (or finish / pause) a recording. Shapes:
@@ -310,23 +375,43 @@ impl ChannelObject {
     /// recorders (different `file`s) can coexist on one channel.
     #[napi]
     pub fn record(&self, params: Object) -> bool {
-        let file = params.get_named_property::<String>("file").ok().filter(|s| !s.is_empty());
+        let file = params
+            .get_named_property::<String>("file")
+            .ok()
+            .filter(|s| !s.is_empty());
         if params.get_named_property::<bool>("finish").ok() == Some(true) {
-            let Some(file) = file else { return false; };
-            return self.handle.cmd.try_send(super::commands::Command::RecordFinish {
-                file: std::path::PathBuf::from(file),
-            }).is_ok();
+            let Some(file) = file else {
+                return false;
+            };
+            return self
+                .handle
+                .cmd
+                .try_send(super::commands::Command::RecordFinish {
+                    file: std::path::PathBuf::from(file),
+                })
+                .is_ok();
         }
         if params.get_named_property::<bool>("pause").ok() == Some(true) {
-            let Some(file) = file else { return false; };
-            return self.handle.cmd.try_send(super::commands::Command::RecordSetPaused {
-                file: std::path::PathBuf::from(file),
-                paused: true,
-            }).is_ok();
+            let Some(file) = file else {
+                return false;
+            };
+            return self
+                .handle
+                .cmd
+                .try_send(super::commands::Command::RecordSetPaused {
+                    file: std::path::PathBuf::from(file),
+                    paused: true,
+                })
+                .is_ok();
         }
-        let Some(cfg) = parse_recorder(&params) else { return false; };
+        let Some(cfg) = parse_recorder(&params) else {
+            return false;
+        };
         let (ack, _) = tokio::sync::oneshot::channel();
-        self.handle.cmd.try_send(super::commands::Command::Record { cfg, ack }).is_ok()
+        self.handle
+            .cmd
+            .try_send(super::commands::Command::Record { cfg, ack })
+            .is_ok()
     }
 
     /// Register a live audio reader. `callback` is invoked from a dedicated
@@ -348,10 +433,13 @@ impl ChannelObject {
         // if its own queue is full — the forwarder task must never stall
         // the 20 ms tick pipeline upstream.
         let mut tsfn: ThreadsafeFunction<Vec<u8>, ErrorStrategy::Fatal> = callback
-            .create_threadsafe_function(0, |ctx: napi::threadsafe_function::ThreadSafeCallContext<Vec<u8>>| {
-                let buf = ctx.env.create_buffer_with_data(ctx.value)?;
-                Ok(vec![buf.into_raw()])
-            })?;
+            .create_threadsafe_function(
+                0,
+                |ctx: napi::threadsafe_function::ThreadSafeCallContext<Vec<u8>>| {
+                    let buf = ctx.env.create_buffer_with_data(ctx.value)?;
+                    Ok(vec![buf.into_raw()])
+                },
+            )?;
         tsfn.unref(&env)?;
 
         let (sender, mut receiver) = super::audio_reader::make_channel();
@@ -370,11 +458,12 @@ impl ChannelObject {
             tsfn.call(Vec::new(), ThreadsafeFunctionCallMode::NonBlocking);
         });
 
-        if self.handle.cmd.try_send(super::commands::Command::CreateReadStream {
-            id,
-            cfg,
-            sender,
-        }).is_err() {
+        if self
+            .handle
+            .cmd
+            .try_send(super::commands::Command::CreateReadStream { id, cfg, sender })
+            .is_err()
+        {
             return Ok(0);
         }
         // u32 is plenty — id is monotonic and channels are short-lived. Cast
@@ -387,9 +476,10 @@ impl ChannelObject {
     /// the handler is a no-op if the id isn't found.
     #[napi]
     pub fn destroy_read_stream(&self, id: u32) -> bool {
-        self.handle.cmd.try_send(super::commands::Command::DestroyReadStream {
-            id: id as u64,
-        }).is_ok()
+        self.handle
+            .cmd
+            .try_send(super::commands::Command::DestroyReadStream { id: id as u64 })
+            .is_ok()
     }
 
     /// Register a live audio writer. JS wraps the returned id in a Node
@@ -404,9 +494,12 @@ impl ChannelObject {
         let cfg = parse_writer_config(&params);
         let (sender, receiver) = super::audio_writer::make_channel();
         let id = super::audio_writer::next_writer_id();
-        if self.handle.cmd.try_send(super::commands::Command::CreateWriteStream {
-            id, cfg, receiver,
-        }).is_err() {
+        if self
+            .handle
+            .cmd
+            .try_send(super::commands::Command::CreateWriteStream { id, cfg, receiver })
+            .is_err()
+        {
             return 0;
         }
         self.write_senders.lock().insert(id, sender);
@@ -424,7 +517,9 @@ impl ChannelObject {
             let map = self.write_senders.lock();
             map.get(&(id as u64)).cloned()
         };
-        let Some(sender) = sender else { return false; };
+        let Some(sender) = sender else {
+            return false;
+        };
         sender.try_send(buf.to_vec()).is_ok()
     }
 
@@ -443,9 +538,10 @@ impl ChannelObject {
     #[napi]
     pub fn destroy_write_stream(&self, id: u32) -> bool {
         let _ = self.write_senders.lock().remove(&(id as u64));
-        self.handle.cmd.try_send(super::commands::Command::DestroyWriteStream {
-            id: id as u64,
-        }).is_ok()
+        self.handle
+            .cmd
+            .try_send(super::commands::Command::DestroyWriteStream { id: id as u64 })
+            .is_ok()
     }
 
     /// Play a prompt then record; optionally barge-in on loud inbound audio.
@@ -453,13 +549,26 @@ impl ChannelObject {
     /// bargeinpower, bargeinpoweraveragepackets }`.
     #[napi]
     pub fn playrecord(&self, params: Object) -> bool {
-        let Ok(soup_obj) = params.get_named_property::<Object>("soup") else { return false; };
-        let Some(player) = parse_soundsoup(&soup_obj) else { return false; };
-        let Ok(rec_obj) = params.get_named_property::<Object>("record") else { return false; };
-        let Some(recorder) = parse_recorder(&rec_obj) else { return false; };
-        let interrupt = params.get_named_property::<bool>("interrupt").ok().unwrap_or(false);
+        let Ok(soup_obj) = params.get_named_property::<Object>("soup") else {
+            return false;
+        };
+        let Some(player) = parse_soundsoup(&soup_obj) else {
+            return false;
+        };
+        let Ok(rec_obj) = params.get_named_property::<Object>("record") else {
+            return false;
+        };
+        let Some(recorder) = parse_recorder(&rec_obj) else {
+            return false;
+        };
+        let interrupt = params
+            .get_named_property::<bool>("interrupt")
+            .ok()
+            .unwrap_or(false);
         let bargein_power = params.get_named_property::<i32>("bargeinpower").ok();
-        let bargein_packets = params.get_named_property::<u32>("bargeinpoweraveragepackets").ok();
+        let bargein_packets = params
+            .get_named_property::<u32>("bargeinpoweraveragepackets")
+            .ok();
         let cfg = super::commands::PlayRecordConfig {
             player,
             recorder,
@@ -468,7 +577,10 @@ impl ChannelObject {
             bargein_packets,
         };
         let (ack, _) = tokio::sync::oneshot::channel();
-        self.handle.cmd.try_send(super::commands::Command::PlayRecord { cfg, ack }).is_ok()
+        self.handle
+            .cmd
+            .try_send(super::commands::Command::PlayRecord { cfg, ack })
+            .is_ok()
     }
 
     /// Place both channels in a shared mix group. The channels' state and
@@ -480,7 +592,10 @@ impl ChannelObject {
     pub fn mix(&self, other: &ChannelObject) -> bool {
         // Deadlock-avoidance: always lock in ascending channel-id order.
         let (mut self_guard, mut other_guard) = if self.handle.id < other.handle.id {
-            (self.mix_slot.lock().unwrap(), other.mix_slot.lock().unwrap())
+            (
+                self.mix_slot.lock().unwrap(),
+                other.mix_slot.lock().unwrap(),
+            )
         } else if self.handle.id > other.handle.id {
             let og = other.mix_slot.lock().unwrap();
             let sg = self.mix_slot.lock().unwrap();
@@ -514,15 +629,18 @@ impl ChannelObject {
         *self_slot = Some(mix.clone());
         *other_slot = Some(mix.clone());
         let (ack, _) = tokio::sync::oneshot::channel();
-        let _ = self.handle.cmd.try_send(super::commands::Command::EnterMix {
-            mix: mix.clone(),
-            ack,
-        });
+        let _ = self
+            .handle
+            .cmd
+            .try_send(super::commands::Command::EnterMix {
+                mix: mix.clone(),
+                ack,
+            });
         let (ack, _) = tokio::sync::oneshot::channel();
-        let _ = other.handle.cmd.try_send(super::commands::Command::EnterMix {
-            mix,
-            ack,
-        });
+        let _ = other
+            .handle
+            .cmd
+            .try_send(super::commands::Command::EnterMix { mix, ack });
         true
     }
 
@@ -530,7 +648,10 @@ impl ChannelObject {
     pub fn unmix(&self, _other: Option<&ChannelObject>) -> bool {
         *self.mix_slot.lock().unwrap() = None;
         let (ack, _) = tokio::sync::oneshot::channel();
-        let _ = self.handle.cmd.try_send(super::commands::Command::LeaveMix { ack });
+        let _ = self
+            .handle
+            .cmd
+            .try_send(super::commands::Command::LeaveMix { ack });
         true
     }
 }
@@ -544,7 +665,12 @@ pub struct DirectionOpts {
 /// Synchronous — index.js treats the return as the channel object directly,
 /// not a Promise. Bind sockets via std::net, hand over to the tokio actor.
 /// Events route to JS via ThreadsafeFunction so async tests resolve.
-type BindTuple = (std::net::UdpSocket, std::net::UdpSocket, SocketAddr, Option<crate::portpool::PortReservation>);
+type BindTuple = (
+    std::net::UdpSocket,
+    std::net::UdpSocket,
+    SocketAddr,
+    Option<crate::portpool::PortReservation>,
+);
 
 /// Bind RTP+RTCP from the managed port pool. The pool only hands out even
 /// ports and each is held exclusively, so both binds should always succeed
@@ -563,13 +689,26 @@ fn bind_from_pool() -> Result<BindTuple> {
         let rtcp_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port + 1);
         let rtp = match std::net::UdpSocket::bind(rtp_addr) {
             Ok(s) => s,
-            Err(e) => { last_err = Some(e); crate::portpool::release(port); continue; }
+            Err(e) => {
+                last_err = Some(e);
+                crate::portpool::release(port);
+                continue;
+            }
         };
         let rtcp = match std::net::UdpSocket::bind(rtcp_addr) {
             Ok(s) => s,
-            Err(e) => { last_err = Some(e); crate::portpool::release(port); continue; }
+            Err(e) => {
+                last_err = Some(e);
+                crate::portpool::release(port);
+                continue;
+            }
         };
-        return Ok((rtp, rtcp, rtp_addr, Some(crate::portpool::PortReservation::new(port))));
+        return Ok((
+            rtp,
+            rtcp,
+            rtp_addr,
+            Some(crate::portpool::PortReservation::new(port)),
+        ));
     }
     Err(Error::from_reason(format!(
         "bind rtp/rtcp from pool: exhausted {MAX_POOL_TRIES} tries; last={last_err:?}"
@@ -583,15 +722,29 @@ fn bind_ephemeral() -> Result<BindTuple> {
     for _ in 0..64 {
         let rtp = match std::net::UdpSocket::bind("0.0.0.0:0") {
             Ok(s) => s,
-            Err(e) => { last_err = Some(e); continue; }
+            Err(e) => {
+                last_err = Some(e);
+                continue;
+            }
         };
-        let la = match rtp.local_addr() { Ok(a) => a, Err(e) => { last_err = Some(e); continue; } };
+        let la = match rtp.local_addr() {
+            Ok(a) => a,
+            Err(e) => {
+                last_err = Some(e);
+                continue;
+            }
+        };
         let p = la.port();
-        if p % 2 != 0 { continue; }
+        if p % 2 != 0 {
+            continue;
+        }
         let rtcp_addr = SocketAddr::new(la.ip(), p + 1);
         match std::net::UdpSocket::bind(rtcp_addr) {
             Ok(rtcp) => return Ok((rtp, rtcp, la, None)),
-            Err(e) => { last_err = Some(e); continue; }
+            Err(e) => {
+                last_err = Some(e);
+                continue;
+            }
         }
     }
     Err(Error::from_reason(format!(
@@ -606,50 +759,87 @@ fn bind_ephemeral() -> Result<BindTuple> {
 fn parse_soundsoup(params: &Object) -> Option<super::player::SoundSoupSpec> {
     let files_arr: Array = params.get_named_property::<Array>("files").ok()?;
     let len = files_arr.len();
-    if len == 0 { return None; }
+    if len == 0 {
+        return None;
+    }
     let mut files = Vec::with_capacity(len as usize);
     for i in 0..len {
-        let Ok(entry) = files_arr.get::<Object>(i) else { continue; };
-        let Some(entry) = entry else { continue; };
-        let Ok(wav): Result<String> = entry.get_named_property("wav") else { continue; };
-        if wav.is_empty() { continue; }
+        let Ok(entry) = files_arr.get::<Object>(i) else {
+            continue;
+        };
+        let Some(entry) = entry else {
+            continue;
+        };
+        let Ok(wav): Result<String> = entry.get_named_property("wav") else {
+            continue;
+        };
+        if wav.is_empty() {
+            continue;
+        }
         let path = std::path::PathBuf::from(wav);
         // Skip entries whose file doesn't exist — matches C++
         // `soundsoup::load` which drops missing files silently and
         // (when every entry is missing) causes `channel.play()` to
         // return false. Tests assert the false return explicitly.
-        if !path.exists() { continue; }
+        if !path.exists() {
+            continue;
+        }
         // Per-file loop: JS accepts `true` (infinite — encoded as Some(0)
         // in player.rs) or a positive integer.
         let max_loops = if entry.get_named_property::<bool>("loop").ok() == Some(true) {
             Some(0)
         } else if let Ok(n) = entry.get_named_property::<u32>("loop") {
-            if n == 0 { None } else { Some(n) }
+            if n == 0 {
+                None
+            } else {
+                Some(n)
+            }
         } else {
             None
         };
         files.push(super::player::SoundSoupFileSpec {
             path,
-            start_ms: entry.get_named_property::<u32>("start").ok().filter(|&v| v > 0).map(|v| v as u64),
-            stop_ms: entry.get_named_property::<u32>("stop").ok().filter(|&v| v > 0).map(|v| v as u64),
+            start_ms: entry
+                .get_named_property::<u32>("start")
+                .ok()
+                .filter(|&v| v > 0)
+                .map(|v| v as u64),
+            stop_ms: entry
+                .get_named_property::<u32>("stop")
+                .ok()
+                .filter(|&v| v > 0)
+                .map(|v| v as u64),
             max_loops,
         });
     }
-    if files.is_empty() { return None; }
+    if files.is_empty() {
+        return None;
+    }
     // Top-level `loop`: bool (true → infinite, false/absent → once) or number
     // (explicit loop count). We can't know the JS type here, so try number
     // first then fall back to bool — matches how the C++ parser handles it.
     let overall_loops = if let Ok(n) = params.get_named_property::<u32>("loop") {
         // `loop: 0` means no looping in C++; treat as one-shot for parity.
-        if n == 0 { None } else { Some(n) }
+        if n == 0 {
+            None
+        } else {
+            Some(n)
+        }
     } else if params.get_named_property::<bool>("loop").ok() == Some(true) {
         Some(0) // 0 = infinite in player.rs
     } else {
         None
     };
     // Typo is intentional — C++ API uses "interupt".
-    let interrupt = params.get_named_property::<bool>("interupt").ok().unwrap_or(false);
-    Some(super::player::SoundSoupSpec { files, overall_loops, interrupt })
+    let interrupt = params
+        .get_named_property::<bool>("interupt")
+        .ok()
+        .unwrap_or(false);
+    Some(super::player::SoundSoupSpec {
+        files,
+        overall_loops,
+        interrupt,
+    })
 }
 
 /// Parse a JS `createWriteStream` params object into a `WriterConfig`.
@@ -671,12 +861,20 @@ fn parse_writer_config(params: &Object) -> super::audio_writer::WriterConfig {
 /// PCM at the channel's narrowband rate" case.
 fn parse_reader_config(params: &Object) -> super::audio_reader::ReaderConfig {
     use super::audio_reader::{ReaderConfig, ReaderDirection, ReaderFormat};
-    let direction = match params.get_named_property::<String>("direction").ok().as_deref() {
+    let direction = match params
+        .get_named_property::<String>("direction")
+        .ok()
+        .as_deref()
+    {
         Some("out") => ReaderDirection::Out,
         Some("both") => ReaderDirection::Both,
         _ => ReaderDirection::In,
     };
-    let format = match params.get_named_property::<String>("format").ok().as_deref() {
+    let format = match params
+        .get_named_property::<String>("format")
+        .ok()
+        .as_deref()
+    {
         Some("pcma") => ReaderFormat::Pcma,
         Some("pcmu") => ReaderFormat::Pcmu,
         Some("g722") => ReaderFormat::G722,
@@ -694,7 +892,12 @@ fn parse_reader_config(params: &Object) -> super::audio_reader::ReaderConfig {
         .filter(|&v| v == 1 || v == 2)
         .map(|v| v as u16)
         .unwrap_or(1);
-    ReaderConfig { direction, format, samplerate, num_channels }
+    ReaderConfig {
+        direction,
+        format,
+        samplerate,
+        num_channels,
+    }
 }
 
 /// Parse a JS `record` / `playrecord.record` params object into a
@@ -702,7 +905,9 @@ fn parse_reader_config(params: &Object) -> super::audio_reader::ReaderConfig {
 /// — the facade turns that into `record()`→false which tests assert.
 fn parse_recorder(params: &Object) -> Option<super::recorder::RecorderConfig> {
     let file: String = params.get_named_property::<String>("file").ok()?;
-    if file.is_empty() { return None; }
+    if file.is_empty() {
+        return None;
+    }
     // Default 2 channels matches the C++ recorder default — test/interface/
     // projectrtprecord.js "record to file" asserts channelcount === 2.
     let num_channels = params
@@ -715,12 +920,32 @@ fn parse_recorder(params: &Object) -> Option<super::recorder::RecorderConfig> {
         file: std::path::PathBuf::from(file),
         num_channels,
         sample_rate: 8000,
-        max_duration_ms: params.get_named_property::<u32>("maxduration").ok().filter(|&v| v > 0).map(|v| v as u64),
-        start_above_power: params.get_named_property::<i32>("startabovepower").ok().filter(|&v| v != 0),
-        finish_below_power: params.get_named_property::<i32>("finishbelowpower").ok().filter(|&v| v != 0),
-        max_since_start_power: params.get_named_property::<i32>("maxsincestartpower").ok().filter(|&v| v != 0),
-        min_duration_ms: params.get_named_property::<u32>("minduration").ok().filter(|&v| v > 0).map(|v| v as u64),
-        power_averaging_packets: params.get_named_property::<u32>("poweraveragepackets").ok().filter(|&v| v > 0),
+        max_duration_ms: params
+            .get_named_property::<u32>("maxduration")
+            .ok()
+            .filter(|&v| v > 0)
+            .map(|v| v as u64),
+        start_above_power: params
+            .get_named_property::<i32>("startabovepower")
+            .ok()
+            .filter(|&v| v != 0),
+        finish_below_power: params
+            .get_named_property::<i32>("finishbelowpower")
+            .ok()
+            .filter(|&v| v != 0),
+        max_since_start_power: params
+            .get_named_property::<i32>("maxsincestartpower")
+            .ok()
+            .filter(|&v| v != 0),
+        min_duration_ms: params
+            .get_named_property::<u32>("minduration")
+            .ok()
+            .filter(|&v| v > 0)
+            .map(|v| v as u64),
+        power_averaging_packets: params
+            .get_named_property::<u32>("poweraveragepackets")
+            .ok()
+            .filter(|&v| v > 0),
     })
 }
 
@@ -770,15 +995,23 @@ fn extract_rfc2833_pt(params: &Object) -> Option<u8> {
     {
         return Some(pt as u8);
     }
-    params.get_named_property::<u32>("rfc2833pt").ok().map(|v| v as u8)
+    params
+        .get_named_property::<u32>("rfc2833pt")
+        .ok()
+        .map(|v| v as u8)
 }
 
 /// Parse `params.direction = { send, recv }`. Both fields default to true.
 /// Tests use this to create write-only or read-only channels in a mix.
 fn extract_direction(params: &Object) -> super::commands::Direction {
     let d = params.get_named_property::<Object>("direction").ok();
-    let send = d.as_ref().and_then(|o| o.get_named_property::<bool>("send").ok()).unwrap_or(true);
-    let recv = d.and_then(|o| o.get_named_property::<bool>("recv").ok()).unwrap_or(true);
+    let send = d
+        .as_ref()
+        .and_then(|o| o.get_named_property::<bool>("send").ok())
+        .unwrap_or(true);
+    let recv = d
+        .and_then(|o| o.get_named_property::<bool>("recv").ok())
+        .unwrap_or(true);
     super::commands::Direction { send, recv }
 }
 
@@ -834,58 +1067,61 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
     let initial_remote_dtls = extract_remote_dtls(&params);
     let initial_direction = extract_direction(&params);
     let mut tsfn: ThreadsafeFunction<EventPayload, ErrorStrategy::Fatal> = callback
-        .create_threadsafe_function(0, |ctx: napi::threadsafe_function::ThreadSafeCallContext<EventPayload>| {
-            let ev = ctx.value;
-            let env = ctx.env;
-            let mut obj = env.create_object()?;
-            let action: napi::JsString = env.create_string(ev.action)?;
-            obj.set_named_property("action", action)?;
-            if let Some(r) = ev.reason {
-                let v: napi::JsString = env.create_string(&r)?;
-                obj.set_named_property("reason", v)?;
-            }
-            if let Some(e) = ev.event {
-                let v: napi::JsString = env.create_string(&e)?;
-                obj.set_named_property("event", v)?;
-            }
-            if let Some(s) = ev.state {
-                let v: napi::JsString = env.create_string(&s)?;
-                obj.set_named_property("state", v)?;
-            }
-            if let Some(f) = ev.file {
-                let v: napi::JsString = env.create_string(&f)?;
-                obj.set_named_property("file", v)?;
-            }
-            if let Some(fs) = ev.filesize {
-                obj.set_named_property("filesize", env.create_int64(fs as i64)?)?;
-            }
-            if let Some(stats) = ev.stats {
-                let mut s = env.create_object()?;
-                let mut in_o = env.create_object()?;
-                in_o.set_named_property("count",   env.create_int64(stats.in_count as i64)?)?;
-                in_o.set_named_property("dropped", env.create_int64(stats.in_dropped as i64)?)?;
-                in_o.set_named_property("skip",    env.create_int64(stats.in_skip as i64)?)?;
-                in_o.set_named_property("mos", env.create_double(stats.mos())?)?;
-                let mut out_o = env.create_object()?;
-                out_o.set_named_property("count", env.create_int64(stats.out_count as i64)?)?;
-                // Matches the C++ close-stats shape used by lib/node.js + the
-                // proxy tests that assert `msg.stats.{in,out,tick}` exist.
-                // Values are placeholders — we don't yet measure per-tick
-                // wall time the way the C++ addon does.
-                out_o.set_named_property("skip",  env.create_int64(0)?)?;
-                out_o.set_named_property("drop",  env.create_int64(0)?)?;
-                out_o.set_named_property("write", env.create_int64(stats.out_count as i64)?)?;
-                let mut tick_o = env.create_object()?;
-                tick_o.set_named_property("count",  env.create_int64(0)?)?;
-                tick_o.set_named_property("meanus", env.create_double(0.0)?)?;
-                tick_o.set_named_property("maxus",  env.create_double(0.0)?)?;
-                s.set_named_property("in", in_o)?;
-                s.set_named_property("out", out_o)?;
-                s.set_named_property("tick", tick_o)?;
-                obj.set_named_property("stats", s)?;
-            }
-            Ok(vec![obj])
-        })?;
+        .create_threadsafe_function(
+            0,
+            |ctx: napi::threadsafe_function::ThreadSafeCallContext<EventPayload>| {
+                let ev = ctx.value;
+                let env = ctx.env;
+                let mut obj = env.create_object()?;
+                let action: napi::JsString = env.create_string(ev.action)?;
+                obj.set_named_property("action", action)?;
+                if let Some(r) = ev.reason {
+                    let v: napi::JsString = env.create_string(&r)?;
+                    obj.set_named_property("reason", v)?;
+                }
+                if let Some(e) = ev.event {
+                    let v: napi::JsString = env.create_string(&e)?;
+                    obj.set_named_property("event", v)?;
+                }
+                if let Some(s) = ev.state {
+                    let v: napi::JsString = env.create_string(&s)?;
+                    obj.set_named_property("state", v)?;
+                }
+                if let Some(f) = ev.file {
+                    let v: napi::JsString = env.create_string(&f)?;
+                    obj.set_named_property("file", v)?;
+                }
+                if let Some(fs) = ev.filesize {
+                    obj.set_named_property("filesize", env.create_int64(fs as i64)?)?;
+                }
+                if let Some(stats) = ev.stats {
+                    let mut s = env.create_object()?;
+                    let mut in_o = env.create_object()?;
+                    in_o.set_named_property("count", env.create_int64(stats.in_count as i64)?)?;
+                    in_o.set_named_property("dropped", env.create_int64(stats.in_dropped as i64)?)?;
+                    in_o.set_named_property("skip", env.create_int64(stats.in_skip as i64)?)?;
+                    in_o.set_named_property("mos", env.create_double(stats.mos())?)?;
+                    let mut out_o = env.create_object()?;
+                    out_o.set_named_property("count", env.create_int64(stats.out_count as i64)?)?;
+                    // Matches the C++ close-stats shape used by lib/node.js + the
+                    // proxy tests that assert `msg.stats.{in,out,tick}` exist.
+                    // Values are placeholders — we don't yet measure per-tick
+                    // wall time the way the C++ addon does.
+                    out_o.set_named_property("skip", env.create_int64(0)?)?;
+                    out_o.set_named_property("drop", env.create_int64(0)?)?;
+                    out_o.set_named_property("write", env.create_int64(stats.out_count as i64)?)?;
+                    let mut tick_o = env.create_object()?;
+                    tick_o.set_named_property("count", env.create_int64(0)?)?;
+                    tick_o.set_named_property("meanus", env.create_double(0.0)?)?;
+                    tick_o.set_named_property("maxus", env.create_double(0.0)?)?;
+                    s.set_named_property("in", in_o)?;
+                    s.set_named_property("out", out_o)?;
+                    s.set_named_property("tick", tick_o)?;
+                    obj.set_named_property("stats", s)?;
+                }
+                Ok(vec![obj])
+            },
+        )?;
     // Unref the TSFN so it doesn't keep the Node.js event loop alive.
     // Without this, the process hangs on shutdown because each channel's
     // TSFN holds a libuv handle that prevents the event loop from draining.
@@ -940,7 +1176,9 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
     // else so the channel observes the right send/recv flags on its first
     // tick. Skip the send if the user didn't override the defaults.
     if initial_direction.send != true || initial_direction.recv != true {
-        let _ = handle.cmd.try_send(super::commands::Command::Direction(initial_direction));
+        let _ = handle
+            .cmd
+            .try_send(super::commands::Command::Direction(initial_direction));
     }
 
     // If params.remote was supplied, enqueue a Remote command
@@ -985,7 +1223,10 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
 
 fn rand_ssrc() -> u32 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let t = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     (t as u32) ^ (NEXT_CHANNEL_ID.load(Ordering::Relaxed) as u32).wrapping_mul(0x9E37_79B1)
 }
 
@@ -994,11 +1235,15 @@ fn rand_ssrc() -> u32 {
 /// ICE binding purposes; revisit when DTLS-SRTP wiring lands.
 fn rand_icepwd() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    const ALPHABET: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut s = String::with_capacity(24);
-    let mut seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64
-        ^ NEXT_CHANNEL_ID.load(Ordering::Relaxed).wrapping_mul(0xA5A5_5A5A);
+    let mut seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64
+        ^ NEXT_CHANNEL_ID
+            .load(Ordering::Relaxed)
+            .wrapping_mul(0xA5A5_5A5A);
     for _ in 0..24 {
         // xorshift64
         seed ^= seed << 13;

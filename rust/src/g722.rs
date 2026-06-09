@@ -36,11 +36,19 @@ pub struct G722DecodeState {
 }
 
 extern "C" {
-    fn g722_encode_init(s: *mut G722EncodeState, rate: c_int, options: c_int) -> *mut G722EncodeState;
+    fn g722_encode_init(
+        s: *mut G722EncodeState,
+        rate: c_int,
+        options: c_int,
+    ) -> *mut G722EncodeState;
     fn g722_encode_free(s: *mut G722EncodeState) -> c_int;
     fn g722_encode(s: *mut G722EncodeState, out: *mut u8, amp: *const i16, len: c_int) -> c_int;
 
-    fn g722_decode_init(s: *mut G722DecodeState, rate: c_int, options: c_int) -> *mut G722DecodeState;
+    fn g722_decode_init(
+        s: *mut G722DecodeState,
+        rate: c_int,
+        options: c_int,
+    ) -> *mut G722DecodeState;
     fn g722_decode_free(s: *mut G722DecodeState) -> c_int;
     fn g722_decode(s: *mut G722DecodeState, out: *mut i16, bits: *const u8, len: c_int) -> c_int;
 }
@@ -71,17 +79,14 @@ impl Encoder {
         // True 16 kHz G.722 — matches C++ projectrtpcodecx.cpp:368 which
         // uses `G722_PACKED` only. The `G722_SAMPLE_RATE_8000` flag is a
         // test-vector mode that produces non-standard wire output.
-        let state = unsafe {
-            g722_encode_init(
-                std::ptr::null_mut(),
-                G722_RATE_64000,
-                G722_PACKED,
-            )
-        };
+        let state = unsafe { g722_encode_init(std::ptr::null_mut(), G722_RATE_64000, G722_PACKED) };
         if state.is_null() {
             return None;
         }
-        Some(Self { state, out_buf: vec![0u8; G722_FRAME_BYTES] })
+        Some(Self {
+            state,
+            out_buf: vec![0u8; G722_FRAME_BYTES],
+        })
     }
 
     /// Encode 16 kHz linear PCM to G.722. Input must be exactly 320
@@ -110,7 +115,9 @@ impl Encoder {
 impl Drop for Encoder {
     fn drop(&mut self) {
         if !self.state.is_null() {
-            unsafe { g722_encode_free(self.state); }
+            unsafe {
+                g722_encode_free(self.state);
+            }
             self.state = std::ptr::null_mut();
         }
     }
@@ -127,17 +134,14 @@ unsafe impl Send for Decoder {}
 impl Decoder {
     pub fn new() -> Option<Self> {
         // True 16 kHz G.722 — see Encoder::new for rationale.
-        let state = unsafe {
-            g722_decode_init(
-                std::ptr::null_mut(),
-                G722_RATE_64000,
-                G722_PACKED,
-            )
-        };
+        let state = unsafe { g722_decode_init(std::ptr::null_mut(), G722_RATE_64000, G722_PACKED) };
         if state.is_null() {
             return None;
         }
-        Some(Self { state, out_buf: vec![0i16; G722_FRAME_SAMPLES] })
+        Some(Self {
+            state,
+            out_buf: vec![0i16; G722_FRAME_SAMPLES],
+        })
     }
 
     /// Decode G.722 to 16 kHz linear PCM. Input must be exactly 160
@@ -166,7 +170,9 @@ impl Decoder {
 impl Drop for Decoder {
     fn drop(&mut self) {
         if !self.state.is_null() {
-            unsafe { g722_decode_free(self.state); }
+            unsafe {
+                g722_decode_free(self.state);
+            }
             self.state = std::ptr::null_mut();
         }
     }
