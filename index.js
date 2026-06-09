@@ -436,7 +436,15 @@ class projectrtp {
             if( d.action ) chan.em.emit( d.action, d )
           }
         } catch ( e ) {
-          console.trace( e )
+          /* A listener (e.g. a test assertion) threw. Don't silently swallow
+             it — that hides real failures and makes them surface only as
+             unrelated timeouts. Re-raise asynchronously so it becomes a
+             visible uncaughtException (Node's default for a throwing event
+             listener) instead of being lost. We rethrow rather than emit
+             "error" so a channel without an "error" listener still fails
+             loudly. Deferring to setImmediate keeps the napi callback that
+             delivered this event from unwinding through the throw. */
+          setImmediate( () => { throw e } )
         }
       } )
       /* Build chan.local from the Rust napi-class getters (port/ssrc/icepwd/

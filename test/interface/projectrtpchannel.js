@@ -582,7 +582,7 @@ describe( "rtpchannel", function() {
     } )
   } )
 
-  it( "create channel and check event emitter", async () => {
+  it( "create channel and check event emitter", async function() {
 
     this.timeout( 2000 )
     this.slow( 2000 )

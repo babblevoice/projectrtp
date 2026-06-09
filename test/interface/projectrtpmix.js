@@ -671,6 +671,63 @@ describe( "channel mix", function() {
   } )
 
 
+  it( "mix 2 channels - record on the g722 leg is stamped 16k (not half-rate)", async function() {
+
+    /* Regression: a record requested on a G.722 (wideband) leg before the
+       first inbound packet decoded was stamped 8 kHz in the WAV header while
+       the feed path wrote true 16 kHz frames, so the recording played back at
+       half speed. The recorder rate must follow the negotiated codec. */
+
+    this.timeout( 3000 )
+    this.slow( 2000 )
+
+    const endpointa = dgram.createSocket( "udp4" )   // pcmu (711) leg
+    const endpointb = dgram.createSocket( "udp4" )   // g722 leg
+
+    await new Promise( ( r ) => { endpointa.on( "listening", r ); endpointa.bind() } )
+    await new Promise( ( r ) => { endpointb.on( "listening", r ); endpointb.bind() } )
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) channelb.close()
+    } )
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 9 } }, function( d ) {
+      if( "close" === d.action ) done()
+    } )
+
+    expect( channela.mix( channelb ) ).to.be.true
+
+    const recfile = "/tmp/g722legrecording.wav"
+    try { await fs.unlink( recfile ) } catch( e ) { /* may not exist */ }
+
+    /* Record on the g722 leg, before any media flows (typical SIP ordering). */
+    channelb.record( { "file": recfile } )
+
+    const g722pl = Buffer.alloc( 160 ).fill( 0x40 )
+    for( let i = 0; 50 > i; i++ ) {
+      sendpk( i, i, channela.local.port, endpointa )
+      sendpk( i, i, channelb.local.port, endpointb, g722pl, 9 )
+    }
+
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
+
+    channela.close()
+    endpointa.close()
+    endpointb.close()
+
+    await finished
+
+    /* The WAV header (offset 24, little-endian u32) must read 16000. */
+    const header = await fs.readFile( recfile )
+    const samplerate = header.readUInt32LE( 24 )
+    expect( samplerate ).to.equal( 16000 )
+    await fs.unlink( recfile )
+
+  } )
+
+
   it( "playback prompt then mix 2 channels - pcmu <-> g722 with recording", async function() {
 
     this.timeout( 3000 )
