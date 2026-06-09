@@ -36,10 +36,10 @@ CMD [ "./node_modules/mocha/bin/_mocha", "test/interface/*.js", "test/unit/*.js"
                                                                                                                                                                                               
 FROM alpine:3.22 AS app
 WORKDIR /app
-RUN apk add --no-cache nodejs ca-certificates libstdc++ spandsp3
+RUN apk add --no-cache nodejs npm ca-certificates libstdc++ spandsp3
 COPY --from=rust-builder /usr/local/lib/libilbc.so* /usr/lib/
 COPY --from=rust-builder /src/rust/target/release/libprojectrtp.so /app/build/Release/projectrtp.node
-COPY index.js package.json /app/                                                                                                                                                            
+COPY index.js package.json package-lock.json /app/                                                                                                                                                            
 COPY lib/ /app/lib/                                       
 COPY examples/ /app/examples/                                                                                                                                                               
 RUN npm ci --omit=dev --ignore-scripts                    
