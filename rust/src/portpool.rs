@@ -28,7 +28,7 @@ static POOL: Mutex<Option<PortPool>> = Mutex::new(None);
 /// pool is replaced wholesale).
 pub fn init(start: u16, end: u16) {
     let mut p = start;
-    if p % 2 != 0 {
+    if !p.is_multiple_of(2) {
         p = p.saturating_add(1);
     }
     let mut q = VecDeque::new();

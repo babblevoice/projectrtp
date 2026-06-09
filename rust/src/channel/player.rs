@@ -87,11 +87,9 @@ impl Player {
         let mut end_of_soup = false;
 
         while out.len() < samples_wanted && !self.finished {
-            if self.reader.is_none() {
-                if !self.open_current().await {
-                    end_of_soup = true;
-                    break;
-                }
+            if self.reader.is_none() && !self.open_current().await {
+                end_of_soup = true;
+                break;
             }
 
             // For a 16 kHz (or higher) source we read `ratio` source samples
@@ -109,10 +107,13 @@ impl Player {
                 }
                 need_src = need_src.min(rem as usize);
             }
-            let read = match self.reader.as_mut().unwrap().read_samples(need_src).await {
-                Ok(v) => v,
-                Err(_) => Vec::new(),
-            };
+            let read = self
+                .reader
+                .as_mut()
+                .unwrap()
+                .read_samples(need_src)
+                .await
+                .unwrap_or_default();
 
             if read.is_empty() {
                 // EOF for this file.
@@ -263,7 +264,7 @@ mod tests {
 
     #[tokio::test]
     async fn loops_overall_count() {
-        let p = make_wav("player_loop.wav", &vec![7i16; 100]).await;
+        let p = make_wav("player_loop.wav", &[7i16; 100]).await;
         let spec = SoundSoupSpec {
             files: vec![SoundSoupFileSpec {
                 path: p.clone(),
@@ -290,8 +291,8 @@ mod tests {
 
     #[tokio::test]
     async fn advances_through_multiple_files() {
-        let p1 = make_wav("player_multi1.wav", &vec![11i16; 100]).await;
-        let p2 = make_wav("player_multi2.wav", &vec![22i16; 100]).await;
+        let p1 = make_wav("player_multi1.wav", &[11i16; 100]).await;
+        let p2 = make_wav("player_multi2.wav", &[22i16; 100]).await;
         let spec = SoundSoupSpec {
             files: vec![
                 SoundSoupFileSpec {

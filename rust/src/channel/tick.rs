@@ -157,7 +157,7 @@ async fn classify_dtmf_inbound(
                 activate_recorder = true;
             }
         }
-        state.pending_events.push(Event::TelephoneEvent { digit });
+        state.pending_events.push(Event::Telephone { digit });
         if activate_recorder {
             let _ = activate_pending_recorder(subs, &mut state.pending_events).await;
         }
@@ -711,7 +711,8 @@ mod tests {
         // Each burst: (ts, event_code, [(dtmf_sn, end_bit), ...]). The
         // audio SNs interleaved between burst body / end packets are
         // synthesised below so the buffer ordering matches the wire.
-        let bursts: &[(u32, u8, &[(u16, bool)])] = &[
+        type Burst<'a> = (u32, u8, &'a [(u16, bool)]);
+        let bursts: &[Burst<'_>] = &[
             (
                 36160,
                 9,
@@ -971,7 +972,7 @@ mod tests {
             while wire_ms >= tick_target_ms {
                 run(&mut state, &mut subs).await;
                 for ev in state.pending_events.drain(..) {
-                    if let crate::channel::actor::Event::TelephoneEvent { digit } = ev {
+                    if let crate::channel::actor::Event::Telephone { digit } = ev {
                         digits.push(digit);
                     }
                 }
@@ -982,7 +983,7 @@ mod tests {
         for _ in 0..40 {
             run(&mut state, &mut subs).await;
             for ev in state.pending_events.drain(..) {
-                if let crate::channel::actor::Event::TelephoneEvent { digit } = ev {
+                if let crate::channel::actor::Event::Telephone { digit } = ev {
                     digits.push(digit);
                 }
             }

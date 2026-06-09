@@ -142,7 +142,7 @@ fn event_to_payload(ev: Event) -> EventPayload {
                 filesize,
             }
         }
-        Event::TelephoneEvent { digit } => EventPayload {
+        Event::Telephone { digit } => EventPayload {
             action: "telephone-event",
             reason: None,
             event: Some(digit.to_string()),
@@ -1175,7 +1175,7 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
     // Apply params.direction (if the caller supplied one) before anything
     // else so the channel observes the right send/recv flags on its first
     // tick. Skip the send if the user didn't override the defaults.
-    if initial_direction.send != true || initial_direction.recv != true {
+    if !initial_direction.send || !initial_direction.recv {
         let _ = handle
             .cmd
             .try_send(super::commands::Command::Direction(initial_direction));

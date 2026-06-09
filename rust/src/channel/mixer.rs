@@ -375,9 +375,7 @@ impl Member {
                 activate_recorder = true;
             }
         }
-        self.state
-            .pending_events
-            .push(Event::TelephoneEvent { digit });
+        self.state.pending_events.push(Event::Telephone { digit });
         if activate_recorder {
             let _ = activate_pending_recorder(&mut self.subs, &mut self.state.pending_events).await;
         }

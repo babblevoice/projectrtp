@@ -192,7 +192,7 @@ mod tests {
             .collect();
         let encoded = enc.encode(&samples);
         assert_eq!(encoded.len(), 160, "64 kbit/s → 160 bytes per 20 ms");
-        let decoded = dec.decode(&encoded);
+        let decoded = dec.decode(encoded);
         assert_eq!(decoded.len(), 320, "decoder produces 16 kHz samples");
     }
 }
