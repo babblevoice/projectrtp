@@ -644,24 +644,46 @@ impl Member {
     /// R=far leg) — matches C++ mix recording semantics. When `None`
     /// (Local mode, N≥3, or peer had no inbound this tick) stereo
     /// falls back to duplicate-mono.
+    ///
+    /// `peer_had_inbound` is true when the mix peer received RTP this tick.
+    /// A leg whose SIP peer is silent must still record the far party's audio
+    /// (mono = saturated sum, stereo = R channel) — matching C++
+    /// `writerecordings`, which wrote both legs of a mix regardless of which
+    /// side sent RTP this tick. Bailing on `!inbound_this_tick` alone dropped
+    /// the entire recording for a leg whose peer is the only one talking — e.g.
+    /// a picked-up parked call, where the picker sends no RTP but the far end
+    /// does (SIP-207).
     async fn write_recordings(
         &mut self,
         peer_samples: Option<&[i16]>,
         peer_wideband: Option<&[i16]>,
+        peer_had_inbound: bool,
     ) {
-        if !self.inbound_this_tick {
+        if !self.inbound_this_tick && !peer_had_inbound {
             return;
         }
-        let Some(samples) = self
-            .state
-            .codecx
-            .require_narrowband_8k()
-            .map(|s| s.to_vec())
-        else {
-            return;
+        // Self leg: real inbound this tick, else a silence frame so the mix
+        // peer's audio still lands on disk with a coherent duration (never
+        // reuse the stale narrowband cache from an earlier tick).
+        let samples: Vec<i16> = if self.inbound_this_tick {
+            self.state
+                .codecx
+                .require_narrowband_8k()
+                .map(|s| s.to_vec())
+                .unwrap_or_else(|| vec![0i16; MIX_FRAME_SAMPLES])
+        } else {
+            vec![0i16; MIX_FRAME_SAMPLES]
         };
         let self_wb = if self.state.codecx.is_wideband() {
-            self.state.codecx.require_wideband_16k().map(|s| s.to_vec())
+            if self.inbound_this_tick {
+                self.state
+                    .codecx
+                    .require_wideband_16k()
+                    .map(|s| s.to_vec())
+                    .or_else(|| Some(vec![0i16; MIX_FRAME_SAMPLES * 2]))
+            } else {
+                Some(vec![0i16; MIX_FRAME_SAMPLES * 2])
+            }
         } else {
             None
         };
@@ -829,6 +851,14 @@ async fn run_post_mix_phase(members: &mut HashMap<ChannelId, Box<Member>>, n_ali
     let peer_samples_by_id = compute_peer_samples_by_id(members, n_alive);
     let peer_wideband_by_id = compute_peer_wideband_by_id(members, n_alive);
 
+    // Ids that received RTP this tick — so a leg whose mix peer is the only
+    // one talking still records the far party's audio (see write_recordings).
+    let inbound_ids: Vec<ChannelId> = members
+        .iter()
+        .filter(|(_, m)| m.inbound_this_tick)
+        .map(|(&id, _)| id)
+        .collect();
+
     // Clone the id list so we can look up each member's peer samples
     // from the sibling map while holding a `&mut` to the member.
     let ids: Vec<ChannelId> = members.keys().copied().collect();
@@ -853,11 +883,19 @@ async fn run_post_mix_phase(members: &mut HashMap<ChannelId, Box<Member>>, n_ali
         } else {
             None
         };
+        // In N=2 the peer is any other member that had inbound this tick.
+        // Scoped to N=2: N≥3 recording semantics (self-only, no peer mix in
+        // the recorder) are unchanged, so a silent N≥3 leg still skips.
+        let peer_had_inbound = n_alive == 2 && inbound_ids.iter().any(|&pid| pid != id);
         let Some(m) = members.get_mut(&id) else {
             continue;
         };
-        m.write_recordings(peer_samples.as_deref(), peer_wideband.as_deref())
-            .await;
+        m.write_recordings(
+            peer_samples.as_deref(),
+            peer_wideband.as_deref(),
+            peer_had_inbound,
+        )
+        .await;
         m.send_dtmf_outbound().await;
         m.drain_pending_events();
     }

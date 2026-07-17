@@ -112,6 +112,78 @@ describe( "channel mix", function() {
 
   } )
 
+  /* SIP-207 regression: a recorder on a leg whose own SIP peer sends no RTP
+     must still capture the mix peer's audio. writerecordings used to bail on
+     !inbound_this_tick, dropping the whole recording for a silent leg (e.g. a
+     picked-up parked call: the picker sends nothing but the far end talks).
+     Here only channel A receives RTP; we record silent channel B and assert
+     its file holds the mix peer's audio on the R leg, silence on its own L. */
+  it( "records a silent leg's mix peer audio (SIP-207)", async function() {
+
+    this.timeout( 3000 )
+    this.slow( 2000 )
+
+    const recfile = "/tmp/sip207-silentleg.wav"
+
+    const endpointa = dgram.createSocket( "udp4" )
+    const endpointb = dgram.createSocket( "udp4" )
+
+    endpointa.on( "message", function() {} )
+    endpointb.on( "message", function() {} )
+
+    endpointa.bind()
+    await new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } )
+    endpointb.bind()
+    await new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } )
+
+    let done
+    const finished = new Promise( ( r ) => { done = r } )
+
+    const channela = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) channelb.close()
+    } )
+
+    const channelb = await projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": endpointb.address().port, "codec": 0 } }, function( d ) {
+      if( "close" === d.action ) done()
+    } )
+
+    expect( channela.mix( channelb ) ).to.be.true
+
+    /* record the leg that receives NO inbound RTP of its own */
+    expect( channelb.record( { "file": recfile } ) ).to.be.true
+
+    /* audio arrives on channel A only - channel B's SIP side stays silent */
+    for( let i = 0;  50 > i; i ++ ) {
+      sendpk( i, i, channela.local.port, endpointa )
+    }
+
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
+
+    channela.close()
+    endpointa.close()
+    endpointb.close()
+    await finished
+
+    /* the silent leg recorded a full ~1.3s of audio, not just a WAV header */
+    const wavinfo = projectrtp.soundfile.info( recfile )
+    expect( wavinfo.channelcount ).to.equal( 2 )
+    expect( wavinfo.chunksize, "silent leg recorded no audio" ).to.be.greaterThan( 20000 )
+
+    /* L = own inbound (silent), R = mix peer (channel A's audio). The peer leg
+       must carry real energy while the self leg stays near silent. */
+    const data = ( await fs.readFile( recfile ) ).subarray( 44 )
+    let selfenergy = 0, peerenergy = 0
+    for( let i = 0; i + 4 <= data.length; i += 4 ) {
+      selfenergy += Math.abs( data.readInt16LE( i ) )
+      peerenergy += Math.abs( data.readInt16LE( i + 2 ) )
+    }
+    expect( peerenergy, "mix peer audio missing from recording" ).to.be.greaterThan( 100000 )
+    expect( selfenergy, "silent leg should be silent" ).to.be.below( peerenergy / 10 )
+
+    await fs.unlink( recfile )
+
+  } )
+
   it( "basic mix 2 channels with start 2 packets wrong payload type", async function() {
 
     this.timeout( 3000 )
