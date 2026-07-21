@@ -7,8 +7,10 @@
 // Outbound DTLS frames come back via a second mpsc and are sent on the
 // real socket by the tick.
 //
-// After the handshake completes, keying material is exported and used to
-// create SRTP encrypt/decrypt contexts (see srtp_ctx.rs).
+// After the handshake completes, keying material is exported and split
+// (`split_keying_material` / `local_srtp_params` / `remote_srtp_params`) to
+// build the SRTP/SRTCP encrypt/decrypt contexts — RTP contexts in the tick
+// (`poll_dtls_handshake`), the inbound SRTCP context in `rtcp_loop`.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -247,6 +249,29 @@ pub fn split_keying_material(
         server_write_key,
         server_write_salt,
         local_is_server: !is_client,
+    }
+}
+
+/// Key + salt + profile for the **local** (outbound) SRTP/SRTCP direction.
+/// The local side writes with the server key when we are the DTLS server,
+/// otherwise the client key.
+pub fn local_srtp_params(km: &SrtpKeyingMaterial) -> (&[u8], &[u8], ProtectionProfile) {
+    if km.local_is_server {
+        (&km.server_write_key, &km.server_write_salt, km.profile)
+    } else {
+        (&km.client_write_key, &km.client_write_salt, km.profile)
+    }
+}
+
+/// Key + salt + profile for the **remote** (inbound) SRTP/SRTCP direction —
+/// the peer writes with the opposite key to us. Used to build the SRTCP
+/// decrypt context in `rtcp_loop`, mirroring the RTP decrypt context the tick
+/// builds in `poll_dtls_handshake`.
+pub fn remote_srtp_params(km: &SrtpKeyingMaterial) -> (&[u8], &[u8], ProtectionProfile) {
+    if km.local_is_server {
+        (&km.client_write_key, &km.client_write_salt, km.profile)
+    } else {
+        (&km.server_write_key, &km.server_write_salt, km.profile)
     }
 }
 

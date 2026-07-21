@@ -524,29 +524,23 @@ pub(crate) fn poll_dtls_handshake(state: &mut ChannelState) {
                     result.profile,
                     result.is_client,
                 );
-                let (our_key, our_salt) = if keys.local_is_server {
-                    (&keys.server_write_key, &keys.server_write_salt)
-                } else {
-                    (&keys.client_write_key, &keys.client_write_salt)
-                };
-                let (their_key, their_salt) = if keys.local_is_server {
-                    (&keys.client_write_key, &keys.client_write_salt)
-                } else {
-                    (&keys.server_write_key, &keys.server_write_salt)
-                };
+                let (our_key, our_salt, profile) = super::dtls_session::local_srtp_params(&keys);
                 if let Ok(enc) =
-                    webrtc_srtp::context::Context::new(our_key, our_salt, keys.profile, None, None)
+                    webrtc_srtp::context::Context::new(our_key, our_salt, profile, None, None)
                 {
                     state.srtp_encrypt = Some(enc);
                 }
-                if let Ok(dec) = webrtc_srtp::context::Context::new(
-                    their_key,
-                    their_salt,
-                    keys.profile,
-                    None,
-                    None,
-                ) {
+                let (their_key, their_salt, _) = super::dtls_session::remote_srtp_params(&keys);
+                if let Ok(dec) =
+                    webrtc_srtp::context::Context::new(their_key, their_salt, profile, None, None)
+                {
                     state.srtp_decrypt = Some(dec);
+                }
+                // Hand the keying material to the inbound RTCP loop so it can
+                // build its own SRTCP decrypt context (SRTP/SRTCP replay state
+                // is independent, so a dedicated context is correct here).
+                if let Some(tx) = &state.srtp_key_tx {
+                    let _ = tx.send(Some(keys.clone()));
                 }
                 state.srtp_keys = Some(keys);
                 state.dtls_result_rx = None;

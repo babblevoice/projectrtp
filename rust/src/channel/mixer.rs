@@ -817,7 +817,7 @@ async fn mix_tick(members: &mut HashMap<ChannelId, Box<Member>>) {
     }
 
     run_post_mix_phase(members, n_alive).await;
-    close_idle_members(members);
+    close_idle_members(members).await;
 }
 
 /// Per-member inbound work — delegates to `Member::process_inbound` for
@@ -993,14 +993,16 @@ fn broadcast_dtmf_to_peer_relays(
 }
 
 /// Remove idle members from the mix and emit each one's Close event.
-fn close_idle_members(members: &mut HashMap<ChannelId, Box<Member>>) {
+async fn close_idle_members(members: &mut HashMap<ChannelId, Box<Member>>) {
     let idle_ids: Vec<ChannelId> = members
         .iter()
         .filter(|(_, m)| m.is_idle())
         .map(|(&id, _)| id)
         .collect();
     for id in idle_ids {
-        if let Some(m) = members.remove(&id) {
+        if let Some(mut m) = members.remove(&id) {
+            // RTCP BYE (Tier 2) before the member (and its sockets) drop.
+            super::rtcp_tx::send_bye(&mut m.state).await;
             m.emit_close_event("idle");
         }
     }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex as PLMutex;
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::actor::Event;
@@ -42,6 +42,12 @@ pub struct ChannelState {
     pub remote_report: Arc<PLMutex<RemoteReport>>,
     /// Canonical name emitted in SDES; stable for the channel's lifetime.
     pub cname: String,
+    /// Tick at which the next periodic RTCP report is due. 0 = not yet
+    /// scheduled (the first report is planned on the first `maybe_send_rtcp`).
+    pub rtcp_next_tick: u64,
+    /// Per-channel xorshift state for randomising the report interval
+    /// (RFC 3550 §6.3.1). Seeded non-zero at construction.
+    pub rtcp_rng: u64,
 
     #[allow(dead_code)]
     pub out_pool: Vec<RtpPacket>,
@@ -87,6 +93,9 @@ pub struct ChannelState {
     pub srtp_keys: Option<SrtpKeyingMaterial>,
     pub srtp_encrypt: Option<webrtc_srtp::context::Context>,
     pub srtp_decrypt: Option<webrtc_srtp::context::Context>,
+    /// Publishes DTLS keying material to the inbound RTCP loop once the
+    /// handshake completes, so it can build its SRTCP decrypt context.
+    pub srtp_key_tx: Option<watch::Sender<Option<SrtpKeyingMaterial>>>,
 }
 
 impl ChannelState {
@@ -109,6 +118,15 @@ impl ChannelState {
             rx_stats: Arc::new(PLMutex::new(RxStats::new(DEFAULT_CLOCK_RATE))),
             remote_report: Arc::new(PLMutex::new(RemoteReport::default())),
             cname: format!("{ssrc:08x}@{}", local_addr.ip()),
+            rtcp_next_tick: 0,
+            // Seed from wall-clock nanos XOR ssrc; force non-zero (xorshift
+            // stays stuck at 0). Mirrors facade::rand_ssrc's time source.
+            rtcp_rng: (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0)
+                ^ ((ssrc as u64) << 32))
+                | 1,
             out_pool: Vec::new(),
             out_sn: 0,
             out_ts: 0,
@@ -136,6 +154,7 @@ impl ChannelState {
             srtp_keys: None,
             srtp_encrypt: None,
             srtp_decrypt: None,
+            srtp_key_tx: None,
         }
     }
 

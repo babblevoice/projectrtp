@@ -240,11 +240,16 @@ pub fn spawn_with_sockets(
 
     // Spawn the inbound RTCP reader on the P+1 control socket. It shares the
     // recv_loop cancellation token, so the close path stops both at once.
+    // The watch channel delivers DTLS keying material to the loop once the
+    // handshake completes, so it can decrypt SRTCP (Tier 2).
+    let (srtp_key_tx, srtp_key_rx) = tokio::sync::watch::channel(None);
+    state.srtp_key_tx = Some(srtp_key_tx);
     super::rtcp_loop::spawn(super::rtcp_loop::RtcpLoopConfig {
         sock: state.rtcp_sock.clone(),
         rx_stats: state.rx_stats.clone(),
         remote_report: state.remote_report.clone(),
         local_ssrc: state.ssrc,
+        key_rx: srtp_key_rx,
         cancel: cancel.clone(),
     });
 
@@ -597,6 +602,10 @@ async fn run(
         });
     }
     subs.prebuffer.clear();
+    // RTCP BYE (Tier 2): tell the peer the stream is ending now, before we
+    // cancel the loops and drop the sockets. Best-effort; encrypted as SRTCP
+    // on a secure channel.
+    super::rtcp_tx::send_bye(state).await;
     // Abort any in-flight DTLS handshake task. Without this, a handshake
     // that hasn't completed (peer disappeared, no response, etc.) outlives
     // the channel and busy-spins the runtime: the task's mpsc senders are

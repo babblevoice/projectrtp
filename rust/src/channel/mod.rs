@@ -8,9 +8,8 @@
 //   2. jitter         — reorder buffer
 //   3. state          — ChannelState struct
 //   4. commands       — Command enum + Handle
-//   5. dtls_session   — gnutls wrapper
-//   6. srtp_ctx       — libsrtp2 wrapper
-//   7. tick           — the per-tick pipeline
+//   5. dtls_session   — DTLS handshake + SRTP keying (webrtc-dtls/-srtp)
+//   6. tick           — the per-tick pipeline
 //   8. player / recorder / dtmf — media subsystems
 //   9. actor          — the tokio task
 //  10. mixer          — mix group actor
@@ -33,6 +32,5 @@ pub mod rtcp_loop;
 pub mod rtcp_stats;
 pub mod rtcp_tx;
 pub mod rtp;
-pub mod srtp_ctx;
 pub mod state;
 pub mod tick;

@@ -144,6 +144,47 @@ describe( "rtcp", function() {
     expect( r.rttms ).to.equal( null )
   } )
 
+  it( "sends an RTCP BYE (PT 203) on channel close", async function() {
+
+    this.timeout( 4000 )
+    this.slow( 3000 )
+
+    const rtp = dgram.createSocket( "udp4" )
+    const rtcp = dgram.createSocket( "udp4" )
+    rtp.on( "message", () => {} ) /* drain echoed audio */
+
+    await new Promise( ( res ) => rtp.bind( res ) )
+    const peerport = rtp.address().port
+    await new Promise( ( res, rej ) =>
+      rtcp.bind( peerport + 1, ( e ) => ( e ? rej( e ) : res() ) ) )
+
+    /* Resolve on the first compound that carries a BYE sub-packet. Closing
+       early (before the first periodic report) means the BYE is the only
+       datagram, but the filter is robust either way. */
+    let resolvebye
+    const gotbye = new Promise( ( res ) => { resolvebye = res } )
+    rtcp.on( "message", ( m ) => {
+      if( walkrtcp( m ).some( ( it ) => 203 === it.pt ) ) resolvebye( m )
+    } )
+
+    const channel = await projectrtp.openchannel(
+      { "remote": { "address": "127.0.0.1", "port": peerport, "codec": 0 } },
+      function() {} )
+
+    /* Feed a few packets so the channel latches the remote address, then close
+       — the BYE is emitted on the close path. */
+    expect( channel.echo() ).to.be.true
+    for( let i = 0; 10 > i; i++ ) sendpk( i, channel.local.port, rtp )
+    await new Promise( ( r ) => setTimeout( r, 300 ) )
+    channel.close()
+
+    const bye = await gotbye
+    expect( walkrtcp( bye ).some( ( it ) => 203 === it.pt ) ).to.be.true
+
+    rtp.close()
+    rtcp.close()
+  } )
+
   it( "populates in.skip and lowers MOS when inbound packets are lost", function( done ) {
 
     const peer = dgram.createSocket( "udp4" )

@@ -123,7 +123,7 @@ dist
 .tern-port
 
 # Local working notes (RTCP implementation handover, etc.)
-handover.md
+handover*.md
 
 # Rust
 rust/target/
