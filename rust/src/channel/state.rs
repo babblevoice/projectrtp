@@ -13,6 +13,7 @@ use super::actor::Event;
 use super::commands::{ChannelId, Direction, RemoteConfig};
 use super::dtls_session::SrtpKeyingMaterial;
 use super::jitter::JitterBuffer;
+use super::rtcp_stats::{RemoteReport, RxStats, DEFAULT_CLOCK_RATE};
 use super::rtp::RtpPacket;
 
 /// Close bookkeeping. Set once, observed on task exit.
@@ -30,9 +31,17 @@ pub struct ChannelState {
     pub direction: Direction,
 
     pub rtp_sock: Arc<UdpSocket>,
-    pub _rtcp_sock: UdpSocket,
+    pub rtcp_sock: Arc<UdpSocket>,
 
     pub jitter: Arc<PLMutex<JitterBuffer>>,
+
+    // --- RTCP (RFC 3550) ---
+    /// Receiver accounting for the remote source (loss/jitter, LSR/DLSR).
+    pub rx_stats: Arc<PLMutex<RxStats>>,
+    /// The peer's view of the stream we send, from its SR/RR about us.
+    pub remote_report: Arc<PLMutex<RemoteReport>>,
+    /// Canonical name emitted in SDES; stable for the channel's lifetime.
+    pub cname: String,
 
     #[allow(dead_code)]
     pub out_pool: Vec<RtpPacket>,
@@ -52,8 +61,9 @@ pub struct ChannelState {
 
     pub in_count: Arc<AtomicU64>,
     pub in_dropped: u64,
-    pub in_skip: u64,
     pub out_count: u64,
+    /// Payload octets sent — the RTCP SR sender-info octet count.
+    pub out_octets: u64,
 
     pub rfc2833_pt: u8,
     pub pending_events: Vec<Event>,
@@ -94,8 +104,11 @@ impl ChannelState {
             remote: None,
             direction: Direction::default(),
             rtp_sock: Arc::new(rtp_sock),
-            _rtcp_sock: rtcp_sock,
+            rtcp_sock: Arc::new(rtcp_sock),
             jitter: Arc::new(PLMutex::new(JitterBuffer::new(32, 10))),
+            rx_stats: Arc::new(PLMutex::new(RxStats::new(DEFAULT_CLOCK_RATE))),
+            remote_report: Arc::new(PLMutex::new(RemoteReport::default())),
+            cname: format!("{ssrc:08x}@{}", local_addr.ip()),
             out_pool: Vec::new(),
             out_sn: 0,
             out_ts: 0,
@@ -108,8 +121,8 @@ impl ChannelState {
             ticks_without_rtp: 0,
             in_count: Arc::new(AtomicU64::new(0)),
             in_dropped: 0,
-            in_skip: 0,
             out_count: 0,
+            out_octets: 0,
             rfc2833_pt: 101,
             pending_events: Vec::new(),
             close_info: None,

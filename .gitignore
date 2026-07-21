@@ -122,6 +122,9 @@ dist
 # TernJS port file
 .tern-port
 
+# Local working notes (RTCP implementation handover, etc.)
+handover.md
+
 # Rust
 rust/target/
 **/*.rs.bk

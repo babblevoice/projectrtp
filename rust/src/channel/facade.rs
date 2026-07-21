@@ -1117,6 +1117,50 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
                     s.set_named_property("in", in_o)?;
                     s.set_named_property("out", out_o)?;
                     s.set_named_property("tick", tick_o)?;
+                    // RFC 3550 RTCP summary — present only once the channel has
+                    // seen inbound RTP or a peer report. `in.*` is our reception
+                    // of the peer; `out.*` is the peer's reported reception of
+                    // us; `rttMs` is -1 until the peer echoes one of our SRs.
+                    if let Some(rtcp) = &stats.rtcp {
+                        let mut r = env.create_object()?;
+                        let mut r_in = env.create_object()?;
+                        r_in.set_named_property(
+                            "cumulativeLost",
+                            env.create_int64(rtcp.in_cumulative_lost as i64)?,
+                        )?;
+                        r_in.set_named_property(
+                            "fractionLost",
+                            env.create_int64(rtcp.in_fraction_lost as i64)?,
+                        )?;
+                        r_in.set_named_property(
+                            "jitter",
+                            env.create_int64(rtcp.in_jitter as i64)?,
+                        )?;
+                        let mut r_out = env.create_object()?;
+                        r_out.set_named_property(
+                            "valid",
+                            env.create_int64(rtcp.remote_valid as i64)?,
+                        )?;
+                        r_out.set_named_property(
+                            "fractionLost",
+                            env.create_int64(rtcp.out_fraction_lost as i64)?,
+                        )?;
+                        r_out.set_named_property(
+                            "cumulativeLost",
+                            env.create_int64(rtcp.out_cumulative_lost as i64)?,
+                        )?;
+                        r_out.set_named_property(
+                            "jitter",
+                            env.create_int64(rtcp.out_jitter as i64)?,
+                        )?;
+                        r.set_named_property("in", r_in)?;
+                        r.set_named_property("out", r_out)?;
+                        r.set_named_property(
+                            "rttMs",
+                            env.create_double(rtcp.rtt_ms.unwrap_or(-1.0))?,
+                        )?;
+                        s.set_named_property("rtcp", r)?;
+                    }
                     obj.set_named_property("stats", s)?;
                 }
                 Ok(vec![obj])

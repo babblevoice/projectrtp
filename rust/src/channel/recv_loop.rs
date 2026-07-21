@@ -11,6 +11,7 @@
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use parking_lot::Mutex as PLMutex;
 use tokio::net::UdpSocket;
@@ -18,6 +19,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::jitter::JitterBuffer;
+use super::rtcp_stats::RxStats;
 use super::rtp::{self, RtpPacket};
 use crate::stun;
 
@@ -26,6 +28,8 @@ pub struct RecvLoopConfig {
     pub jitter: Arc<PLMutex<JitterBuffer>>,
     pub remote_addr: Arc<PLMutex<Option<SocketAddr>>>,
     pub in_count: Arc<AtomicU64>,
+    /// RFC 3550 receiver accounting — fed on every inbound RTP packet.
+    pub rx_stats: Arc<PLMutex<RxStats>>,
     pub local_icepwd: Arc<PLMutex<String>>,
     pub dtls_tx: Arc<PLMutex<Option<mpsc::Sender<Vec<u8>>>>>,
     pub cancel: CancellationToken,
@@ -88,6 +92,15 @@ async fn handle_packet(cfg: &RecvLoopConfig, pkt: &[u8], peer: SocketAddr) {
     // at pop time in the tick, since it needs access to Subsystems.
     if pkt.len() >= rtp::RTP_FIXED_HEADER_LEN {
         cfg.in_count.fetch_add(1, Ordering::Relaxed);
+        // RFC 3550 receiver accounting: sequence/loss (A.1/A.3) and
+        // interarrival jitter (A.8). DTMF (rfc2833) shares the audio stream's
+        // SSRC and sequence space, so it is counted here too.
+        cfg.rx_stats.lock().on_packet_at(
+            rtp::ssrc(pkt),
+            rtp::sequence_number(pkt),
+            rtp::timestamp(pkt),
+            Instant::now(),
+        );
         let mut rp = RtpPacket::new();
         rp.as_mut_slice_for_fill(pkt.len()).copy_from_slice(pkt);
         cfg.jitter.lock().push(rp);

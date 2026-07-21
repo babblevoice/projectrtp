@@ -774,12 +774,7 @@ impl Member {
     fn emit_close_event(&self, reason: &str) {
         self.events.post(Event::Close {
             reason: reason.into(),
-            stats: super::actor::ChannelStats {
-                in_count: self.state.in_count.load(Ordering::Relaxed),
-                in_dropped: self.state.in_dropped + self.state.jitter.lock().dropped,
-                in_skip: self.state.in_skip,
-                out_count: self.state.out_count,
-            },
+            stats: super::actor::build_channel_stats(&self.state),
         });
     }
 }
@@ -896,6 +891,9 @@ async fn run_post_mix_phase(members: &mut HashMap<ChannelId, Box<Member>>, n_ali
         .await;
         m.send_dtmf_outbound().await;
         m.drain_pending_events();
+        // Periodic RTCP — mirror of the Local `tick::run` call. Runs once per
+        // member per tick, after this leg's outbound audio has been sent.
+        super::rtcp_tx::maybe_send_rtcp(&mut m.state).await;
     }
 }
 
@@ -1119,14 +1117,18 @@ async fn feed_recorders(
 }
 
 async fn send_rtp(state: &mut ChannelState, pkt: &RtpPacket, remote: SocketAddr) {
+    // Payload octets (excludes the RTP header) — the RTCP SR octet count.
+    let octets = pkt.payload_len() as u64;
     if let Some(ref mut ctx) = state.srtp_encrypt {
         if let Ok(encrypted) = ctx.encrypt_rtp(pkt.as_slice()) {
             if state.rtp_sock.send_to(&encrypted, remote).await.is_ok() {
                 state.out_count += 1;
+                state.out_octets += octets;
             }
         }
     } else if state.rtp_sock.send_to(pkt.as_slice(), remote).await.is_ok() {
         state.out_count += 1;
+        state.out_octets += octets;
     }
 }
 

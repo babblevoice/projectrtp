@@ -35,6 +35,23 @@ use super::tick::{self, TickOutcome};
 pub const TICK_MS: u64 = 20;
 pub const DEFAULT_CMD_QUEUE_DEPTH: usize = 64;
 
+/// RFC 3550 quality summary attached to the Close event. `in_*` is our
+/// reception of the peer's stream (from `RxStats`); `out_*` is the peer's
+/// reported reception of the stream we send (from its SR/RR, in `RemoteReport`).
+#[derive(Debug, Clone, Default)]
+pub struct RtcpSummary {
+    pub in_cumulative_lost: i32,
+    pub in_fraction_lost: u8,
+    pub in_jitter: u32,
+    /// Whether the peer has sent us at least one report about our stream.
+    pub remote_valid: bool,
+    pub out_fraction_lost: u8,
+    pub out_cumulative_lost: i32,
+    pub out_jitter: u32,
+    /// Round-trip time in ms, or `None` until the peer echoes one of our SRs.
+    pub rtt_ms: Option<f64>,
+}
+
 /// Events the actor emits back to the outside world. The JS facade (Task #9)
 /// will bridge these into a napi `ThreadsafeFunction`.
 #[derive(Debug, Clone, Default)]
@@ -43,6 +60,8 @@ pub struct ChannelStats {
     pub in_dropped: u64,
     pub in_skip: u64,
     pub out_count: u64,
+    /// `None` until the channel has RTCP data (received RTP or a peer report).
+    pub rtcp: Option<RtcpSummary>,
 }
 
 impl ChannelStats {
@@ -53,9 +72,62 @@ impl ChannelStats {
         if self.in_count == 0 {
             return 0.0;
         }
-        let r = ((self.in_count - self.in_skip) as f64 / self.in_count as f64) * 100.0;
+        // `saturating_sub`: `in_skip` now carries real RFC 3550 loss, which a
+        // pathological stream could in principle drive above `in_count`.
+        let received = self.in_count.saturating_sub(self.in_skip);
+        let r = (received as f64 / self.in_count as f64) * 100.0;
         let r = r.clamp(0.0, 100.0);
         1.0 + (0.035 * r) + (0.000007 * r * (r - 60.0) * (100.0 - r))
+    }
+}
+
+/// Snapshot the channel's stats for a Close event. Shared by the Local
+/// (`actor.rs`) and Mixed (`mixer.rs`) close paths so the two never drift.
+///
+/// Routes the real RFC 3550 cumulative-loss figure into `in_skip` — the field
+/// is otherwise never incremented, so `mos()` used to read near-perfect for
+/// every call regardless of actual loss.
+pub fn build_channel_stats(state: &ChannelState) -> ChannelStats {
+    let now = std::time::Instant::now();
+    let in_count = state.in_count.load(Ordering::Relaxed);
+
+    let (in_lost, in_jitter, in_fraction, have_source) = {
+        let mut rx = state.rx_stats.lock();
+        (
+            rx.cumulative_lost(),
+            rx.jitter(),
+            rx.fraction_lost(),
+            rx.remote_ssrc.is_some(),
+        )
+    };
+    let _ = now; // reserved for future report_block-style snapshots
+    let remote = *state.remote_report.lock();
+
+    let rtcp = if have_source || remote.valid {
+        Some(RtcpSummary {
+            in_cumulative_lost: in_lost,
+            in_fraction_lost: in_fraction,
+            in_jitter,
+            remote_valid: remote.valid,
+            out_fraction_lost: remote.fraction_lost,
+            out_cumulative_lost: remote.cumulative_lost,
+            out_jitter: remote.jitter,
+            rtt_ms: remote.rtt_ms,
+        })
+    } else {
+        None
+    };
+
+    // Real inbound loss → in_skip (clamped: never negative, never exceeds the
+    // number of packets we counted receiving).
+    let in_skip = (in_lost.max(0) as u64).min(in_count);
+
+    ChannelStats {
+        in_count,
+        in_dropped: state.in_dropped + state.jitter.lock().dropped,
+        in_skip,
+        out_count: state.out_count,
+        rtcp,
     }
 }
 
@@ -147,10 +219,22 @@ pub fn spawn_with_sockets(
         jitter: state.jitter.clone(),
         remote_addr: state.remote_addr.clone(),
         in_count: state.in_count.clone(),
+        rx_stats: state.rx_stats.clone(),
         local_icepwd: state.local_icepwd.clone(),
         dtls_tx: state.dtls_inbound_tx.clone(),
         cancel: cancel.clone(),
     });
+
+    // Spawn the inbound RTCP reader on the P+1 control socket. It shares the
+    // recv_loop cancellation token, so the close path stops both at once.
+    super::rtcp_loop::spawn(super::rtcp_loop::RtcpLoopConfig {
+        sock: state.rtcp_sock.clone(),
+        rx_stats: state.rx_stats.clone(),
+        remote_report: state.remote_report.clone(),
+        local_ssrc: state.ssrc,
+        cancel: cancel.clone(),
+    });
+
     state.recv_cancel = Some(cancel);
 
     let (tx, rx) = mpsc::channel::<Command>(DEFAULT_CMD_QUEUE_DEPTH);
@@ -515,12 +599,7 @@ async fn run(
     if let Some(cancel) = state.recv_cancel.take() {
         cancel.cancel();
     }
-    let stats = ChannelStats {
-        in_count: state.in_count.load(Ordering::Relaxed),
-        in_dropped: state.in_dropped + state.jitter.lock().dropped,
-        in_skip: state.in_skip,
-        out_count: state.out_count,
-    };
+    let stats = build_channel_stats(state);
     state.close_info = Some(CloseInfo {
         reason: reason.clone(),
     });

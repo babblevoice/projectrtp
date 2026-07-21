@@ -105,6 +105,10 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
 
     send_outbound(state, subs, out_frame, inbound_pkt.as_ref()).await;
 
+    // Periodic RTCP (SR/RR + SDES) on the P+1 control socket. No-op
+    // off-interval or until a remote is known.
+    super::rtcp_tx::maybe_send_rtcp(state).await;
+
     check_idle_timeout(state)
 }
 
@@ -564,14 +568,18 @@ pub(crate) fn poll_dtls_handshake(state: &mut ChannelState) {
 // ---- outbound send primitives --------------------------------------------
 
 async fn send_rtp(state: &mut ChannelState, pkt: &RtpPacket, remote: SocketAddr) {
+    // Payload octets (excludes the RTP header) — the RTCP SR octet count.
+    let octets = pkt.payload_len() as u64;
     if let Some(ref mut ctx) = state.srtp_encrypt {
         if let Ok(encrypted) = ctx.encrypt_rtp(pkt.as_slice()) {
             if state.rtp_sock.send_to(&encrypted, remote).await.is_ok() {
                 state.out_count += 1;
+                state.out_octets += octets;
             }
         }
     } else if state.rtp_sock.send_to(pkt.as_slice(), remote).await.is_ok() {
         state.out_count += 1;
+        state.out_octets += octets;
     }
 }
 
