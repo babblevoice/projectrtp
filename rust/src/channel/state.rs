@@ -169,4 +169,14 @@ impl ChannelState {
     pub fn set_remote_addr(&self, addr: SocketAddr) {
         *self.remote_addr.lock() = Some(addr);
     }
+
+    /// True when the channel negotiated DTLS but SRTP keys are not (yet)
+    /// established. Media must be withheld in this state rather than sent in
+    /// the clear: otherwise a failed or in-progress handshake — including a
+    /// peer whose certificate fails fingerprint verification — would silently
+    /// downgrade to plaintext, defeating the point of DTLS-SRTP. Always false
+    /// for non-DTLS (plain RTP) channels, so their behaviour is unchanged.
+    pub fn secure_not_ready(&self) -> bool {
+        self.srtp_encrypt.is_none() && self.remote.as_ref().and_then(|r| r.dtls.as_ref()).is_some()
+    }
 }

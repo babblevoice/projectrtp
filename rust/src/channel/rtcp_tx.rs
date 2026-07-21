@@ -106,6 +106,11 @@ fn build_report(state: &ChannelState, bye: bool) -> Vec<u8> {
 /// datagram goes out on the RTP socket (shared 5-tuple), otherwise on the P+1
 /// control socket.
 async fn send_compound(state: &mut ChannelState, compound: &[u8], remote: SocketAddr) {
+    // Don't emit cleartext RTCP on a DTLS channel whose keys aren't ready —
+    // same no-downgrade rule as the RTP send path.
+    if state.secure_not_ready() {
+        return;
+    }
     // Clone the Arc up front so the socket borrow doesn't collide with the
     // mutable `state.srtp_encrypt` borrow below.
     let sock = if state.rtcpmux {

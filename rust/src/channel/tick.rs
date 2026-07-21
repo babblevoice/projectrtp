@@ -562,6 +562,11 @@ pub(crate) fn poll_dtls_handshake(state: &mut ChannelState) {
 // ---- outbound send primitives --------------------------------------------
 
 async fn send_rtp(state: &mut ChannelState, pkt: &RtpPacket, remote: SocketAddr) {
+    // Never emit plaintext on a channel that negotiated DTLS but has no keys
+    // yet — a failed/in-progress handshake must not downgrade to cleartext.
+    if state.secure_not_ready() {
+        return;
+    }
     // Payload octets (excludes the RTP header) — the RTCP SR octet count.
     let octets = pkt.payload_len() as u64;
     if let Some(ref mut ctx) = state.srtp_encrypt {

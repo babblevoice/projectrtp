@@ -36,13 +36,21 @@ fn init_cert() -> Certificate {
         .expect("generate self-signed ECDSA P-256 cert")
 }
 
+/// SHA-256 fingerprint of a DER-encoded certificate, formatted as
+/// colon-separated uppercase hex — the canonical form projectrtp advertises in
+/// SDP and matches inbound peer certs against (see
+/// `channel::dtls_session::PeerFingerprint`).
+pub fn sha256_fingerprint(der: &[u8]) -> String {
+    hex_colon(&Sha256::digest(der))
+}
+
 fn compute_fingerprint(cert: &Certificate) -> String {
     let der = cert
         .certificate
         .first()
         .expect("cert has at least one DER entry")
         .as_ref();
-    hex_colon(&Sha256::digest(der))
+    sha256_fingerprint(der)
 }
 
 /// Process-lifetime certificate used for every DTLS handshake on this

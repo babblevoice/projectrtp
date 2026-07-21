@@ -19,18 +19,59 @@ use async_trait::async_trait;
 use parking_lot::Mutex as PLMutex;
 use tokio::sync::mpsc;
 use webrtc_dtls::config::Config as DtlsConfig;
-use webrtc_dtls::config::ExtendedMasterSecretType;
+use webrtc_dtls::config::{ClientAuthType, ExtendedMasterSecretType};
 use webrtc_dtls::conn::DTLSConn;
 use webrtc_dtls::crypto::Certificate;
 use webrtc_srtp::protection_profile::ProtectionProfile;
 
 use crate::channel::commands::DtlsSetup;
 
+/// The peer's certificate fingerprint as promised out-of-band in SDP
+/// (`a=fingerprint`). DTLS-SRTP has no CA: the peer's self-signed cert is
+/// authenticated by matching the fingerprint of the cert seen in the handshake
+/// against this value (RFC 5763 §5).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct PeerFingerprint {
+    /// Hash algorithm, lowercased (e.g. `sha-256`). Only `sha-256` is
+    /// supported for matching — any other value fails closed.
     pub algorithm: String,
+    /// Colon-separated uppercase hex of the digest (e.g. `A1:B2:…`).
     pub hex_colon: String,
+}
+
+impl PeerFingerprint {
+    /// Parse an SDP fingerprint value. Accepts either the full `a=fingerprint`
+    /// form `"<algorithm> <hex>"` or a bare colon-hex string (algorithm assumed
+    /// `sha-256`, matching what `crate::dtls::fingerprint` advertises and what
+    /// the JS layer currently forwards). Returns `None` for empty/whitespace,
+    /// which the caller treats as "no fingerprint supplied → skip verification".
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        match s.split_once(char::is_whitespace) {
+            Some((algo, hex)) => Some(Self {
+                algorithm: algo.trim().to_ascii_lowercase(),
+                hex_colon: hex.trim().to_ascii_uppercase(),
+            }),
+            None => Some(Self {
+                algorithm: "sha-256".to_string(),
+                hex_colon: s.to_ascii_uppercase(),
+            }),
+        }
+    }
+
+    /// True iff `der` (a peer certificate in DER form) hashes to this
+    /// fingerprint. Only sha-256 is honoured; any other algorithm returns
+    /// false so an unknown/downgraded hash fails the handshake rather than
+    /// silently passing.
+    pub fn matches_der(&self, der: &[u8]) -> bool {
+        if self.algorithm != "sha-256" {
+            return false;
+        }
+        crate::dtls::sha256_fingerprint(der).eq_ignore_ascii_case(&self.hex_colon)
+    }
 }
 
 /// Keying material extracted from a completed DTLS handshake.
@@ -164,6 +205,7 @@ pub fn spawn_handshake(
     inbound_rx: mpsc::Receiver<Vec<u8>>,
     certificate: Certificate,
     remote_addr: Arc<PLMutex<Option<SocketAddr>>>,
+    expected_fingerprint: Option<PeerFingerprint>,
 ) -> HandshakeHandle {
     let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
@@ -180,13 +222,36 @@ pub fn spawn_handshake(
     ];
 
     let join = tokio::spawn(async move {
-        let config = DtlsConfig {
+        let mut config = DtlsConfig {
             certificates: vec![certificate],
             srtp_protection_profiles: srtp_profiles,
+            // DTLS-SRTP uses self-signed certs with no CA, so skip the built-in
+            // chain/name verification; the peer is instead authenticated by its
+            // SDP fingerprint via `verify_peer_certificate` below.
             insecure_skip_verify: true,
+            // Make the *server* (passive) role send a CertificateRequest and
+            // require the peer to present a cert — otherwise it never receives
+            // one to fingerprint. Ignored for the client role. We do the actual
+            // authentication in `verify_peer_certificate`, not via a CA, so no
+            // client_cert_verifier is needed (RequireAnyClientCert < the
+            // VerifyClientCertIfGiven threshold that would demand one).
+            client_auth: ClientAuthType::RequireAnyClientCert,
             extended_master_secret: ExtendedMasterSecretType::Require,
             ..Default::default()
         };
+
+        // When SDP supplied a fingerprint, enforce it: the handshake fails
+        // (BadCertificate alert) unless the peer's leaf cert hashes to it. With
+        // no fingerprint we fall back to the prior unauthenticated behaviour.
+        if let Some(fp) = expected_fingerprint {
+            config.verify_peer_certificate =
+                Some(Arc::new(move |certs, _chains| match certs.first() {
+                    Some(der) if fp.matches_der(der) => Ok(()),
+                    _ => Err(webrtc_dtls::Error::Other(
+                        "dtls peer certificate fingerprint mismatch".to_owned(),
+                    )),
+                }));
+        }
 
         let outcome = tokio::time::timeout(
             HANDSHAKE_TIMEOUT,
@@ -281,14 +346,30 @@ mod tests {
     use std::time::Duration;
     use tokio::net::UdpSocket;
 
-    // Multi-thread flavor: DTLSConn spawns internal tasks (and the relay
-    // task above is a tokio::select! loop), so the handshake will
-    // deadlock on the default single-threaded runtime.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn dtls_handshake_between_two_peers() {
-        let server_cert = Certificate::generate_self_signed(vec!["server".into()]).unwrap();
-        let client_cert = Certificate::generate_self_signed(vec!["client".into()]).unwrap();
+    /// The sha-256 `PeerFingerprint` of a certificate's leaf DER — what the
+    /// peer would advertise in SDP.
+    fn fp_of(cert: &Certificate) -> PeerFingerprint {
+        let der = cert.certificate.first().unwrap().as_ref();
+        PeerFingerprint {
+            algorithm: "sha-256".to_string(),
+            hex_colon: crate::dtls::sha256_fingerprint(der),
+        }
+    }
 
+    /// Drive a full DTLS handshake between an active (client) and passive
+    /// (server) peer over loopback, each optionally verifying the other's
+    /// certificate fingerprint. Returns the two handshake outcomes (`None` =
+    /// the handshake failed — e.g. a fingerprint mismatch).
+    ///
+    /// Multi-thread flavor is required by callers: DTLSConn spawns internal
+    /// tasks and the relay below is a `tokio::select!` loop, so a
+    /// single-threaded runtime would deadlock.
+    async fn handshake_pair(
+        server_cert: Certificate,
+        client_cert: Certificate,
+        server_expects: Option<PeerFingerprint>,
+        client_expects: Option<PeerFingerprint>,
+    ) -> (Option<HandshakeResult>, Option<HandshakeResult>) {
         let server_sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
         let client_sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
         let server_addr = server_sock.local_addr().unwrap();
@@ -334,6 +415,7 @@ mod tests {
             server_dtls_rx,
             server_cert,
             server_remote,
+            server_expects,
         );
         let client_h = spawn_handshake(
             DtlsSetup::Active,
@@ -342,8 +424,11 @@ mod tests {
             client_dtls_rx,
             client_cert,
             client_remote,
+            client_expects,
         );
 
+        // A failed handshake still resolves the oneshot (with `None`); only a
+        // dropped sender or true timeout should panic here.
         let server_result = tokio::time::timeout(Duration::from_secs(5), server_h.result_rx)
             .await
             .expect("server handshake timeout")
@@ -352,6 +437,18 @@ mod tests {
             .await
             .expect("client handshake timeout")
             .expect("client oneshot dropped");
+
+        relay.abort();
+        (server_result, client_result)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dtls_handshake_between_two_peers() {
+        let server_cert = Certificate::generate_self_signed(vec!["server".into()]).unwrap();
+        let client_cert = Certificate::generate_self_signed(vec!["client".into()]).unwrap();
+
+        let (server_result, client_result) =
+            handshake_pair(server_cert, client_cert, None, None).await;
 
         assert!(server_result.is_some(), "server handshake failed");
         assert!(client_result.is_some(), "client handshake failed");
@@ -409,7 +506,115 @@ mod tests {
 
         let decrypted = decrypt_ctx.decrypt_rtp(&encrypted).expect("decrypt");
         assert_eq!(&decrypted[..], &rtp_pkt[..], "round-trip should match");
+    }
 
-        relay.abort();
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dtls_handshake_succeeds_when_fingerprints_match() {
+        let server_cert = Certificate::generate_self_signed(vec!["server".into()]).unwrap();
+        let client_cert = Certificate::generate_self_signed(vec!["client".into()]).unwrap();
+        // Each side is given the *other's* real fingerprint, as SDP would carry.
+        let server_expects = fp_of(&client_cert);
+        let client_expects = fp_of(&server_cert);
+
+        let (server_result, client_result) = handshake_pair(
+            server_cert,
+            client_cert,
+            Some(server_expects),
+            Some(client_expects),
+        )
+        .await;
+
+        assert!(
+            server_result.is_some() && client_result.is_some(),
+            "matching fingerprints must complete the handshake"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dtls_handshake_rejects_a_mismatched_peer_fingerprint() {
+        let server_cert = Certificate::generate_self_signed(vec!["server".into()]).unwrap();
+        let client_cert = Certificate::generate_self_signed(vec!["client".into()]).unwrap();
+        // The server is told to expect a fingerprint that is NOT the client's —
+        // a stand-in for a MITM presenting a different cert. The server must
+        // abort, so no keying material is exported on either side.
+        let wrong = PeerFingerprint {
+            algorithm: "sha-256".to_string(),
+            hex_colon: "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:\
+                        00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF"
+                .to_string(),
+        };
+
+        let (server_result, client_result) =
+            handshake_pair(server_cert, client_cert, Some(wrong), None).await;
+
+        assert!(
+            server_result.is_none(),
+            "server must reject a mismatched client fingerprint"
+        );
+        assert!(
+            client_result.is_none(),
+            "the aborted handshake must also fail the peer"
+        );
+    }
+
+    #[test]
+    fn fingerprint_parse_bare_hex_assumes_sha256() {
+        let fp = PeerFingerprint::parse("a1:b2:c3").unwrap();
+        assert_eq!(fp.algorithm, "sha-256");
+        assert_eq!(fp.hex_colon, "A1:B2:C3");
+    }
+
+    #[test]
+    fn fingerprint_parse_algorithm_prefixed() {
+        let fp = PeerFingerprint::parse("SHA-256 a1:b2:c3").unwrap();
+        assert_eq!(fp.algorithm, "sha-256");
+        assert_eq!(fp.hex_colon, "A1:B2:C3");
+    }
+
+    #[test]
+    fn fingerprint_parse_empty_is_none() {
+        assert!(PeerFingerprint::parse("").is_none());
+        assert!(PeerFingerprint::parse("   ").is_none());
+    }
+
+    #[test]
+    fn fingerprint_matches_der_of_own_cert() {
+        let cert = Certificate::generate_self_signed(vec!["peer".into()]).unwrap();
+        let der = cert.certificate.first().unwrap().as_ref();
+        let fp = fp_of(&cert);
+        assert!(fp.matches_der(der), "a cert must match its own fingerprint");
+
+        // Case-insensitive on the hex.
+        let lower = PeerFingerprint {
+            algorithm: "sha-256".to_string(),
+            hex_colon: fp.hex_colon.to_ascii_lowercase(),
+        };
+        assert!(lower.matches_der(der));
+    }
+
+    #[test]
+    fn fingerprint_rejects_wrong_hash_and_unknown_algorithm() {
+        let cert = Certificate::generate_self_signed(vec!["peer".into()]).unwrap();
+        let der = cert.certificate.first().unwrap().as_ref();
+
+        let mut wrong = fp_of(&cert);
+        // Flip the first hex nibble.
+        let first = if wrong.hex_colon.starts_with('0') {
+            '1'
+        } else {
+            '0'
+        };
+        wrong.hex_colon.replace_range(0..1, &first.to_string());
+        assert!(!wrong.matches_der(der), "a flipped digit must not match");
+
+        // A correct digest under an unsupported algorithm must fail closed.
+        let unknown = PeerFingerprint {
+            algorithm: "sha-1".to_string(),
+            hex_colon: crate::dtls::sha256_fingerprint(der),
+        };
+        assert!(
+            !unknown.matches_der(der),
+            "unsupported algorithm must fail closed"
+        );
     }
 }

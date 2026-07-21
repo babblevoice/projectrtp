@@ -168,6 +168,70 @@ describe( "dtls", function() {
 
   } )
 
+  it( "rejects a peer whose certificate fingerprint does not match SDP", async function() {
+
+    /* Security regression: a mismatched fingerprint must fail the handshake,
+       and the no-downgrade gate must then withhold media rather than fall back
+       to plaintext. */
+    this.timeout( 4000 )
+    this.slow( 3000 )
+
+    projectrtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000", "/tmp/ukringing.wav" )
+
+    let closea = {}
+    let closeb = {}
+    let resolvea
+    let resolveb
+    const donea = new Promise( ( r ) => { resolvea = r } )
+    const doneb = new Promise( ( r ) => { resolveb = r } )
+
+    const channela = await projectrtp.openchannel( {}, ( d ) => {
+      if( "close" === d.action ) { closea = d; resolvea() }
+    } )
+    const channelb = await projectrtp.openchannel( {}, ( d ) => {
+      if( "close" === d.action ) { closeb = d; resolveb() }
+    } )
+
+    /* Corrupt the fingerprint channela is told to expect for channelb by
+       flipping its first hex digit — a stand-in for a MITM presenting a
+       different certificate. channela (the DTLS client) must abort, so neither
+       side derives SRTP keys. */
+    const good = channelb.local.dtls.fingerprint
+    const bad = ( "0" === good[ 0 ] ? "1" : "0" ) + good.slice( 1 )
+    expect( bad ).to.not.equal( good )
+
+    expect( channela.remote( {
+      "address": "127.0.0.1",
+      "port": channelb.local.port,
+      "codec": 0,
+      "dtls": { "fingerprint": { "hash": bad }, "mode": "active" },
+    } ) ).to.be.true
+
+    expect( channelb.remote( {
+      "address": "127.0.0.1",
+      "port": channela.local.port,
+      "codec": 0,
+      "dtls": { "fingerprint": { "hash": channela.local.dtls.fingerprint }, "mode": "passive" },
+    } ) ).to.be.true
+
+    channela.play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } )
+    expect( channelb.echo() ).to.be.true
+
+    /* Give the handshake time to fail and any media time to (not) flow. */
+    await new Promise( ( r ) => setTimeout( r, 2000 ) )
+    channela.close()
+    channelb.close()
+    await Promise.all( [ donea, doneb ] )
+
+    await fs.promises.unlink( "/tmp/ukringing.wav" ).catch( () => {} )
+
+    /* No keys were established, so the gate withholds all media: neither side
+       sends in the clear, so neither receives anything. (Contrast the matching-
+       fingerprint test above, where in.count climbs past 70.) */
+    expect( closea.stats.in.count ).to.equal( 0 )
+    expect( closeb.stats.in.count ).to.equal( 0 )
+  } )
+
   it( "Create 2 channels and call remote", async function() {
 
     /*

@@ -29,7 +29,8 @@ pub struct RemoteConfig {
 
 #[derive(Debug, Clone)]
 pub struct RemoteDtls {
-    #[allow(dead_code)]
+    /// The peer's SDP `a=fingerprint` value. Verified against the certificate
+    /// presented in the DTLS handshake (see `dtls_session::PeerFingerprint`).
     pub fingerprint: String,
     pub setup: DtlsSetup,
 }

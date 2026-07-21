@@ -778,6 +778,11 @@ async fn handle_command_local(
                 }
                 let (dtls_tx, dtls_rx) = mpsc::channel::<Vec<u8>>(64);
                 *state.dtls_inbound_tx.lock() = Some(dtls_tx);
+                // Authenticate the peer against the fingerprint promised in SDP
+                // (RFC 5763). `None` when none was supplied → unverified, as
+                // before. A mismatch fails the handshake, so no SRTP keys are
+                // derived and the channel never carries secure media.
+                let expected_fp = super::dtls_session::PeerFingerprint::parse(&dtls.fingerprint);
                 let h = super::dtls_session::spawn_handshake(
                     dtls.setup,
                     state.local_addr,
@@ -785,6 +790,7 @@ async fn handle_command_local(
                     dtls_rx,
                     crate::dtls::get_certificate(),
                     state.remote_addr.clone(),
+                    expected_fp,
                 );
                 state.dtls_result_rx = Some(h.result_rx);
                 state.dtls_handshake_abort = Some(h.abort);
