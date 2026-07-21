@@ -48,6 +48,9 @@ pub struct ChannelState {
     /// Per-channel xorshift state for randomising the report interval
     /// (RFC 3550 §6.3.1). Seeded non-zero at construction.
     pub rtcp_rng: u64,
+    /// RFC 5761 rtcp-mux: RTCP rides the RTP port/5-tuple rather than P+1.
+    /// Latched from the `remote()` config; false = classic split ports.
+    pub rtcpmux: bool,
 
     #[allow(dead_code)]
     pub out_pool: Vec<RtpPacket>,
@@ -127,6 +130,7 @@ impl ChannelState {
                 .unwrap_or(0)
                 ^ ((ssrc as u64) << 32))
                 | 1,
+            rtcpmux: false,
             out_pool: Vec::new(),
             out_sn: 0,
             out_ts: 0,

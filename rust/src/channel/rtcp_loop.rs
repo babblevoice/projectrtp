@@ -56,7 +56,13 @@ async fn run(cfg: RtcpLoopConfig) {
                 match result {
                     Ok((n, _peer)) => {
                         maybe_build_decrypt(&cfg.key_rx, &mut srtcp_decrypt);
-                        handle_datagram(&cfg, &buf[..n], srtcp_decrypt.as_mut());
+                        handle_rtcp(
+                            &buf[..n],
+                            srtcp_decrypt.as_mut(),
+                            &cfg.rx_stats,
+                            &cfg.remote_report,
+                            cfg.local_ssrc,
+                        );
                     }
                     Err(_) => break,
                 }
@@ -66,8 +72,9 @@ async fn run(cfg: RtcpLoopConfig) {
 }
 
 /// Build the SRTCP decrypt context once the handshake has published keys.
-/// No-op if already built or no keys yet.
-fn maybe_build_decrypt(
+/// No-op if already built or no keys yet. Shared with `recv_loop`, which
+/// builds its own context for rtcp-mux'd inbound RTCP.
+pub fn maybe_build_decrypt(
     key_rx: &watch::Receiver<Option<SrtpKeyingMaterial>>,
     slot: &mut Option<webrtc_srtp::context::Context>,
 ) {
@@ -82,24 +89,33 @@ fn maybe_build_decrypt(
     }
 }
 
-/// Decrypt (if secure) then hand the cleartext compound to `handle_packet`.
-fn handle_datagram(
-    cfg: &RtcpLoopConfig,
+/// Decrypt (if a context is present) then parse and fold an inbound RTCP
+/// datagram into the shared accounting. Shared by this dedicated P+1 loop and,
+/// under rtcp-mux (RFC 5761), by `recv_loop` reading off the RTP port.
+pub fn handle_rtcp(
     pkt: &[u8],
     decrypt: Option<&mut webrtc_srtp::context::Context>,
+    rx_stats: &PLMutex<RxStats>,
+    remote_report: &PLMutex<RemoteReport>,
+    local_ssrc: u32,
 ) {
     match decrypt {
         // Auth failure / malformed SRTCP → decrypt errors, packet dropped.
         Some(ctx) => {
             if let Ok(plain) = ctx.decrypt_rtcp(pkt) {
-                handle_packet(cfg, &plain);
+                parse_and_fold(&plain, rx_stats, remote_report, local_ssrc);
             }
         }
-        None => handle_packet(cfg, pkt),
+        None => parse_and_fold(pkt, rx_stats, remote_report, local_ssrc),
     }
 }
 
-fn handle_packet(cfg: &RtcpLoopConfig, pkt: &[u8]) {
+fn parse_and_fold(
+    pkt: &[u8],
+    rx_stats: &PLMutex<RxStats>,
+    remote_report: &PLMutex<RemoteReport>,
+    local_ssrc: u32,
+) {
     // Malformed / non-RTCP compound — ignore (best-effort).
     let items = match rtcp::parse(pkt) {
         Ok(items) => items,
@@ -113,13 +129,13 @@ fn handle_packet(cfg: &RtcpLoopConfig, pkt: &[u8]) {
     for item in items {
         match item {
             RtcpItem::SenderReport { info, reports, .. } => {
-                cfg.rx_stats
+                rx_stats
                     .lock()
                     .note_sender_report(info.ntp_sec, info.ntp_frac, now);
-                fold_reports(cfg, &reports, now_ntp_mid);
+                fold_reports(remote_report, local_ssrc, &reports, now_ntp_mid);
             }
             RtcpItem::ReceiverReport { reports, .. } => {
-                fold_reports(cfg, &reports, now_ntp_mid);
+                fold_reports(remote_report, local_ssrc, &reports, now_ntp_mid);
             }
             RtcpItem::Bye { .. } => {
                 // Peer signalled end of stream; teardown is driven elsewhere.
@@ -128,10 +144,15 @@ fn handle_packet(cfg: &RtcpLoopConfig, pkt: &[u8]) {
     }
 }
 
-fn fold_reports(cfg: &RtcpLoopConfig, reports: &[ReportBlock], now_ntp_mid: u32) {
+fn fold_reports(
+    remote_report: &PLMutex<RemoteReport>,
+    local_ssrc: u32,
+    reports: &[ReportBlock],
+    now_ntp_mid: u32,
+) {
     for rb in reports {
-        if rb.ssrc == cfg.local_ssrc {
-            cfg.remote_report.lock().update_from(rb, now_ntp_mid);
+        if rb.ssrc == local_ssrc {
+            remote_report.lock().update_from(rb, now_ntp_mid);
         }
     }
 }

@@ -322,6 +322,10 @@ impl ChannelObject {
         let port = params.get_named_property::<u32>("port").ok();
         let codec = params.get_named_property::<u32>("codec").ok().unwrap_or(0);
         let icepwd = params.get_named_property::<String>("icepwd").ok();
+        let rtcpmux = params
+            .get_named_property::<bool>("rtcpmux")
+            .ok()
+            .unwrap_or(false);
         let dtls = parse_remote_dtls(&params);
         let Some(addr_s) = addr else {
             return false;
@@ -343,6 +347,7 @@ impl ChannelObject {
                     ilbc_payload_type: None,
                     rfc2833_payload_type: None,
                     dtls,
+                    rtcpmux,
                     icepwd,
                 },
                 ack,
@@ -1031,6 +1036,16 @@ fn extract_remote_icepwd(params: &Object) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// RFC 5761 rtcp-mux flag from `openchannel({ remote: { rtcpmux: true } })`.
+/// Absent/false = classic split RTP/RTCP ports.
+fn extract_rtcpmux(params: &Object) -> bool {
+    params
+        .get_named_property::<Object>("remote")
+        .ok()
+        .and_then(|r| r.get_named_property::<bool>("rtcpmux").ok())
+        .unwrap_or(false)
+}
+
 /// Parse an optional `dtls` block from a remote config object. JS shape:
 /// `{ fingerprint: { hash: "sha-256 ..." }, mode: "active"|"passive" }`
 /// — matches `projectrtpdtls.js` test fixtures. Returns None when missing
@@ -1065,6 +1080,7 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
     let override_local_icepwd = extract_local_icepwd(&params);
     let initial_remote_icepwd = extract_remote_icepwd(&params);
     let initial_remote_dtls = extract_remote_dtls(&params);
+    let initial_rtcpmux = extract_rtcpmux(&params);
     let initial_direction = extract_direction(&params);
     let mut tsfn: ThreadsafeFunction<EventPayload, ErrorStrategy::Fatal> = callback
         .create_threadsafe_function(
@@ -1245,6 +1261,7 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
             ilbc_payload_type: Some(ilbc_pt),
             rfc2833_payload_type: rfc2833_pt,
             dtls: initial_remote_dtls.clone(),
+            rtcpmux: initial_rtcpmux,
             icepwd: initial_remote_icepwd.clone(),
         };
         let _ = handle.cmd.try_send(Command::Remote { cfg, ack });

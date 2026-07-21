@@ -62,12 +62,16 @@ pub async fn send_bye(state: &mut ChannelState) {
     send_compound(state, &compound, rtcp_remote).await;
 }
 
-/// The RTCP destination: the RTP peer's IP with port + 1 (symmetric RTCP
-/// without mux).
+/// The RTCP destination. Under rtcp-mux (RFC 5761) RTCP shares the RTP
+/// 5-tuple, so it is the RTP peer itself; otherwise it is the RTP peer's IP
+/// with port + 1 (symmetric RTCP on the separate control port).
 fn rtcp_remote_addr(state: &ChannelState) -> Option<SocketAddr> {
-    state
-        .get_remote_addr()
-        .map(|r| SocketAddr::new(r.ip(), r.port().wrapping_add(1)))
+    let r = state.get_remote_addr()?;
+    if state.rtcpmux {
+        Some(r)
+    } else {
+        Some(SocketAddr::new(r.ip(), r.port().wrapping_add(1)))
+    }
 }
 
 /// Build a compound report: SR when we've sent audio, otherwise RR; always
@@ -98,14 +102,23 @@ fn build_report(state: &ChannelState, bye: bool) -> Vec<u8> {
 }
 
 /// Send a compound to `remote`, protecting it as SRTCP first on a secure
-/// channel (same gate/context as the RTP send path).
+/// channel (same gate/context as the RTP send path). Under rtcp-mux the
+/// datagram goes out on the RTP socket (shared 5-tuple), otherwise on the P+1
+/// control socket.
 async fn send_compound(state: &mut ChannelState, compound: &[u8], remote: SocketAddr) {
+    // Clone the Arc up front so the socket borrow doesn't collide with the
+    // mutable `state.srtp_encrypt` borrow below.
+    let sock = if state.rtcpmux {
+        state.rtp_sock.clone()
+    } else {
+        state.rtcp_sock.clone()
+    };
     if let Some(ref mut ctx) = state.srtp_encrypt {
         if let Ok(protected) = ctx.encrypt_rtcp(compound) {
-            let _ = state.rtcp_sock.send_to(&protected, remote).await;
+            let _ = sock.send_to(&protected, remote).await;
         }
     } else {
-        let _ = state.rtcp_sock.send_to(compound, remote).await;
+        let _ = sock.send_to(compound, remote).await;
     }
 }
 

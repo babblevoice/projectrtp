@@ -204,6 +204,7 @@ class proxy {
  * @param { Object } [ properties.remote.dtls ]
  * @param { string } properties.remote.dtls.fingerprint - the fingerprint we verify the remote against
  * @param { string } properties.remote.dtls.setup - "active" or "passive"
+ * @param { boolean } [ properties.remote.rtcpmux = false ] - RFC 5761 rtcp-mux: carry RTCP over the RTP port/5-tuple instead of the separate P+1 control port. Set from the SDP `a=rtcp-mux` attribute.
  * @param { Object } [ properties.direction ] - direction from our perspective
  * @param { boolean } [ properties.direction.send = true ]
  * @param { boolean } [ properties.direction.recv = true ]

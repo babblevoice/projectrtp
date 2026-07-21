@@ -15,6 +15,10 @@ pub struct RemoteConfig {
     pub ilbc_payload_type: Option<u8>,
     pub rfc2833_payload_type: Option<u8>,
     pub dtls: Option<RemoteDtls>,
+    /// RFC 5761 rtcp-mux: when true the peer carries RTCP over the RTP port /
+    /// 5-tuple, so we send/receive RTCP there instead of on the separate P+1
+    /// control port. Default false = classic split ports (SIP softphones).
+    pub rtcpmux: bool,
     /// ICE password of the *remote* agent. Per RFC 8445 §7.1.1, the remote
     /// uses our local icepwd to sign STUN Binding Requests it sends us; our
     /// Binding Responses are signed with the same key. This field is kept
