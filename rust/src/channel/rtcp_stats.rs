@@ -62,6 +62,11 @@ pub struct RxStats {
 
     // --- for converting live arrival instants to RTP units ---
     epoch: Option<Instant>,
+
+    /// A different SSRC seen once but not yet switched to. A second consecutive
+    /// sighting commits the switch (`reset_source`); a single stray/reordered/
+    /// spoofed packet is ignored. Cleared as soon as an in-source packet lands.
+    pending_ssrc: Option<u32>,
 }
 
 impl RxStats {
@@ -84,7 +89,18 @@ impl RxStats {
             last_sr_ntp_mid: 0,
             last_sr_at: None,
             epoch: None,
+            pending_ssrc: None,
         }
+    }
+
+    /// Re-latch to a new remote SSRC, discarding all A.1/A.3/A.8 accounting for
+    /// the previous source. A mid-call SSRC change (re-INVITE, hold/resume, a
+    /// device swap) is a *new* stream, so loss/jitter/RTT must not be computed
+    /// across the discontinuity — we start fresh, keeping only the clock rate.
+    fn reset_source(&mut self, ssrc: u32) {
+        let clock_rate = self.clock_rate;
+        *self = Self::new(clock_rate);
+        self.remote_ssrc = Some(ssrc);
     }
 
     /// Reset sequence state to a fresh base (RFC 3550 A.1 `init_seq`).
@@ -101,9 +117,25 @@ impl RxStats {
     /// Live entry point for the recv loop: latch the SSRC, convert `now` to RTP
     /// timestamp units, and run the accounting. Returns true if counted valid.
     pub fn on_packet_at(&mut self, ssrc: u32, seq: u16, rtp_ts: u32, now: Instant) -> bool {
-        if self.remote_ssrc.is_none() {
-            self.remote_ssrc = Some(ssrc);
+        match self.remote_ssrc {
+            // First packet on the channel latches the source.
+            None => self.remote_ssrc = Some(ssrc),
+            // Same source — the common path.
+            Some(cur) if cur == ssrc => {}
+            // A different SSRC: require a second consecutive sighting before
+            // switching, so a lone stray/reordered/spoofed packet can't wipe
+            // the accounting. The first sighting is not counted.
+            Some(_) => {
+                if self.pending_ssrc == Some(ssrc) {
+                    self.reset_source(ssrc);
+                } else {
+                    self.pending_ssrc = Some(ssrc);
+                    return false;
+                }
+            }
         }
+        // Any in-source (or freshly switched) packet clears a half-seen change.
+        self.pending_ssrc = None;
         let arrival_rtp = self.arrival_units(now);
         self.update(seq, rtp_ts, arrival_rtp)
     }
@@ -470,5 +502,52 @@ mod tests {
         rx.on_packet_at(0xCAFEBABE, 101, 160, now);
         let rb = rx.report_block(now).expect("have ssrc");
         assert_eq!(rb.ssrc, 0xCAFEBABE);
+    }
+
+    #[test]
+    fn single_stray_ssrc_packet_does_not_relatch() {
+        let mut rx = RxStats::new(DEFAULT_CLOCK_RATE);
+        let now = Instant::now();
+        rx.on_packet_at(0xA, 100, 0, now);
+        rx.on_packet_at(0xA, 101, 160, now);
+        rx.on_packet_at(0xA, 102, 320, now);
+
+        // One packet from a different SSRC: ignored, not latched.
+        let counted = rx.on_packet_at(0xB, 5000, 999, now);
+        assert!(!counted, "a lone stray-SSRC packet must not be counted");
+        assert_eq!(rx.remote_ssrc, Some(0xA), "must stay latched to A");
+
+        // An in-source packet clears the half-seen change and keeps counting A.
+        assert!(rx.on_packet_at(0xA, 103, 480, now));
+        assert_eq!(rx.ext_max(), 103);
+        assert_eq!(rx.cumulative_lost(), 0, "A's accounting is intact");
+    }
+
+    #[test]
+    fn repeated_new_ssrc_relatches_and_resets_accounting() {
+        let mut rx = RxStats::new(DEFAULT_CLOCK_RATE);
+        let now = Instant::now();
+        // Source A with a gap → real loss on A. (`on_packet_at`, not `feed`, so
+        // the SSRC is actually latched.)
+        rx.on_packet_at(0xA, 100, 0, now);
+        rx.on_packet_at(0xA, 101, 160, now);
+        rx.on_packet_at(0xA, 105, 800, now);
+        assert!(rx.cumulative_lost() > 0, "A has loss to be discarded");
+
+        // Source B appears; two consecutive sightings commit the switch.
+        assert!(
+            !rx.on_packet_at(0xB, 200, 0, now),
+            "first B sighting ignored"
+        );
+        assert_eq!(rx.remote_ssrc, Some(0xA), "not switched on one sighting");
+        rx.on_packet_at(0xB, 201, 160, now); // second sighting → reset + relatch
+        rx.on_packet_at(0xB, 202, 320, now);
+
+        assert_eq!(rx.remote_ssrc, Some(0xB), "relatched to B");
+        // Accounting reflects only B (fresh base after probation), not A's loss.
+        assert_eq!(rx.ext_max(), 202);
+        assert_eq!(rx.cumulative_lost(), 0, "A's loss discarded on relatch");
+        // Stale SR/LSR state from A is gone too.
+        assert_eq!(rx.lsr(), 0);
     }
 }
