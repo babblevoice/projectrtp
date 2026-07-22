@@ -208,7 +208,7 @@ impl RxStats {
     /// Cumulative packets lost, clamped to the signed 24-bit report field.
     pub fn cumulative_lost(&self) -> i32 {
         let lost = self.expected() as i64 - self.received as i64;
-        lost.clamp(-0x0080_0000, 0x007F_FFFF) as i32
+        lost.clamp(-0x00800000, 0x007FFFFF) as i32
     }
 
     /// Interarrival jitter in RTP timestamp units (RFC 3550 A.8).
@@ -446,14 +446,14 @@ mod tests {
 
     #[test]
     fn compute_rtt_none_without_lsr() {
-        assert!(compute_rtt_ms(0x1234_5678, 0, 0).is_none());
+        assert!(compute_rtt_ms(0x12345678, 0, 0).is_none());
     }
 
     #[test]
     fn compute_rtt_basic() {
         // now - lsr = 0x20000 units (2 s); dlsr = 0x10000 units (1 s) → 1 s RTT.
-        let rtt = compute_rtt_ms(0x0003_0000, 0x0001_0000, 0x0001_0000).unwrap();
-        assert!((rtt - 1000.0).abs() < 0.01, "rtt was {rtt}");
+        let rtt = compute_rtt_ms(0x00030000, 0x00010000, 0x00010000).unwrap();
+        assert!((rtt - 1000.0).abs() < 0.01, "rtt was {}", rtt);
     }
 
     #[test]
@@ -466,9 +466,9 @@ mod tests {
     fn report_block_carries_latched_ssrc() {
         let mut rx = RxStats::new(DEFAULT_CLOCK_RATE);
         let now = Instant::now();
-        rx.on_packet_at(0xCAFE_BABE, 100, 0, now);
-        rx.on_packet_at(0xCAFE_BABE, 101, 160, now);
+        rx.on_packet_at(0xCAFEBABE, 100, 0, now);
+        rx.on_packet_at(0xCAFEBABE, 101, 160, now);
         let rb = rx.report_block(now).expect("have ssrc");
-        assert_eq!(rb.ssrc, 0xCAFE_BABE);
+        assert_eq!(rb.ssrc, 0xCAFEBABE);
     }
 }

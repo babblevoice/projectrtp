@@ -179,7 +179,7 @@ mod tests {
     fn srtcp_roundtrip_preserves_compound() {
         // A plain RR + SDES compound (what `maybe_send_rtcp` emits pre-audio).
         let compound =
-            rtcp::build_compound(0xDEAD_BEEF, None, &[], Some("abcd1234@127.0.0.1"), false);
+            rtcp::build_compound(0xDEADBEEF, None, &[], Some("abcd1234@127.0.0.1"), false);
         let (mut enc, mut dec) = srtcp_pair();
 
         let protected = enc.encrypt_rtcp(&compound).expect("encrypt_rtcp");
@@ -206,7 +206,7 @@ mod tests {
 
     #[test]
     fn srtcp_rejects_tampered_packet() {
-        let compound = rtcp::build_compound(0x1234_5678, None, &[], Some("x@127.0.0.1"), false);
+        let compound = rtcp::build_compound(0x12345678, None, &[], Some("x@127.0.0.1"), false);
         let (mut enc, mut dec) = srtcp_pair();
 
         let mut protected = enc.encrypt_rtcp(&compound).expect("encrypt_rtcp").to_vec();

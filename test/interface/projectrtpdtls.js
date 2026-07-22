@@ -185,11 +185,17 @@ describe( "dtls", function() {
     const donea = new Promise( ( r ) => { resolvea = r } )
     const doneb = new Promise( ( r ) => { resolveb = r } )
 
-    const channela = await projectrtp.openchannel( {}, ( d ) => {
-      if( "close" === d.action ) { closea = d; resolvea() }
+    const channela = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) {
+        closea = d
+        resolvea()
+      }
     } )
-    const channelb = await projectrtp.openchannel( {}, ( d ) => {
-      if( "close" === d.action ) { closeb = d; resolveb() }
+    const channelb = await projectrtp.openchannel( {}, function( d ) {
+      if( "close" === d.action ) {
+        closeb = d
+        resolveb()
+      }
     } )
 
     /* Corrupt the fingerprint channela is told to expect for channelb by
@@ -204,14 +210,14 @@ describe( "dtls", function() {
       "address": "127.0.0.1",
       "port": channelb.local.port,
       "codec": 0,
-      "dtls": { "fingerprint": { "hash": bad }, "mode": "active" },
+      "dtls": { "fingerprint": { "hash": bad }, "mode": "active" }
     } ) ).to.be.true
 
     expect( channelb.remote( {
       "address": "127.0.0.1",
       "port": channela.local.port,
       "codec": 0,
-      "dtls": { "fingerprint": { "hash": channela.local.dtls.fingerprint }, "mode": "passive" },
+      "dtls": { "fingerprint": { "hash": channela.local.dtls.fingerprint }, "mode": "passive" }
     } ) ).to.be.true
 
     channela.play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } )

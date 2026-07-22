@@ -119,7 +119,7 @@ pub fn ntp_now() -> (u32, u32) {
 /// The middle 32 bits of a 64-bit NTP timestamp, as carried in an SR and echoed
 /// back in a report block's LSR field (RFC 3550 §6.4.1).
 pub fn ntp_middle_32(ntp_sec: u32, ntp_frac: u32) -> u32 {
-    ((ntp_sec & 0x0000_FFFF) << 16) | (ntp_frac >> 16)
+    ((ntp_sec & 0x0000FFFF) << 16) | (ntp_frac >> 16)
 }
 
 // ---------- encode ----------
@@ -144,7 +144,7 @@ fn push_header(out: &mut Vec<u8>, count: u8, pt: u8, length_words: u16) {
 fn push_report_block(out: &mut Vec<u8>, r: &ReportBlock) {
     push_u32(out, r.ssrc);
     // fraction lost (8 bits) then cumulative lost (signed 24 bits).
-    let cum = (r.cumulative_lost as u32) & 0x00FF_FFFF;
+    let cum = (r.cumulative_lost as u32) & 0x00FFFFFF;
     out.push(r.fraction_lost);
     out.push((cum >> 16) as u8);
     out.push((cum >> 8) as u8);
@@ -247,8 +247,8 @@ fn read_u32(b: &[u8]) -> u32 {
 /// Sign-extend a 24-bit big-endian value into `i32` (cumulative lost).
 fn read_i24(b: &[u8]) -> i32 {
     let raw = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | (b[2] as u32);
-    if raw & 0x0080_0000 != 0 {
-        (raw | 0xFF00_0000) as i32
+    if raw & 0x00800000 != 0 {
+        (raw | 0xFF000000) as i32
     } else {
         raw as i32
     }
@@ -373,18 +373,18 @@ mod tests {
             ssrc,
             fraction_lost: 12,
             cumulative_lost: -5,
-            ext_highest_seq: 0x0001_2345,
+            ext_highest_seq: 0x00012345,
             jitter: 4321,
-            lsr: 0xAABB_CCDD,
-            dlsr: 0x0000_1000,
+            lsr: 0xAABBCCDD,
+            dlsr: 0x00001000,
         }
     }
 
     fn sample_sender_info() -> SenderInfo {
         SenderInfo {
-            ntp_sec: 0xE0E1_E2E3,
-            ntp_frac: 0x1122_3344,
-            rtp_ts: 0x0002_0000,
+            ntp_sec: 0xE0E1E2E3,
+            ntp_frac: 0x11223344,
+            rtp_ts: 0x00020000,
             packet_count: 500,
             octet_count: 80_000,
         }
@@ -393,9 +393,9 @@ mod tests {
     #[test]
     fn compound_is_32bit_aligned() {
         let pkt = build_compound(
-            0x1234_5678,
+            0x12345678,
             Some(&sample_sender_info()),
-            &[sample_report(0xDEAD_BEEF)],
+            &[sample_report(0xDEADBEEF)],
             Some("host@example.com"),
             false,
         );
@@ -405,8 +405,8 @@ mod tests {
     #[test]
     fn sr_roundtrip() {
         let info = sample_sender_info();
-        let r = sample_report(0xDEAD_BEEF);
-        let pkt = build_compound(0x1234_5678, Some(&info), &[r], Some("a@b"), false);
+        let r = sample_report(0xDEADBEEF);
+        let pkt = build_compound(0x12345678, Some(&info), &[r], Some("a@b"), false);
 
         let items = parse(&pkt).expect("parse");
         assert_eq!(items.len(), 1, "SDES is skipped, only SR surfaces");
@@ -416,42 +416,42 @@ mod tests {
                 info: got_info,
                 reports,
             } => {
-                assert_eq!(*ssrc, 0x1234_5678);
+                assert_eq!(*ssrc, 0x12345678);
                 assert_eq!(*got_info, info);
                 assert_eq!(reports.len(), 1);
                 assert_eq!(reports[0], r);
             }
-            other => panic!("expected SR, got {other:?}"),
+            other => panic!("expected SR, got {:?}", other),
         }
     }
 
     #[test]
     fn rr_roundtrip() {
-        let r0 = sample_report(0x1111_1111);
-        let r1 = sample_report(0x2222_2222);
-        let pkt = build_compound(0xABCD_0000, None, &[r0, r1], Some("cn"), false);
+        let r0 = sample_report(0x11111111);
+        let r1 = sample_report(0x22222222);
+        let pkt = build_compound(0xABCD0000, None, &[r0, r1], Some("cn"), false);
 
         let items = parse(&pkt).expect("parse");
         match &items[0] {
             RtcpItem::ReceiverReport { ssrc, reports } => {
-                assert_eq!(*ssrc, 0xABCD_0000);
+                assert_eq!(*ssrc, 0xABCD0000);
                 assert_eq!(reports.len(), 2);
                 assert_eq!(reports[0], r0);
                 assert_eq!(reports[1], r1);
             }
-            other => panic!("expected RR, got {other:?}"),
+            other => panic!("expected RR, got {:?}", other),
         }
     }
 
     #[test]
     fn bye_roundtrip() {
-        let pkt = build_compound(0x0BAD_F00D, None, &[], None, true);
+        let pkt = build_compound(0x0BADF00D, None, &[], None, true);
         let items = parse(&pkt).expect("parse");
         // RR (with zero reports) then BYE.
         assert!(matches!(items[0], RtcpItem::ReceiverReport { .. }));
         match items.last().unwrap() {
-            RtcpItem::Bye { ssrcs } => assert_eq!(ssrcs, &vec![0x0BAD_F00D]),
-            other => panic!("expected BYE, got {other:?}"),
+            RtcpItem::Bye { ssrcs } => assert_eq!(ssrcs, &vec![0x0BADF00D]),
+            other => panic!("expected BYE, got {:?}", other),
         }
     }
 
@@ -518,16 +518,16 @@ mod tests {
                 info,
                 reports,
             } => {
-                assert_eq!(*ssrc, 0x1122_3344);
+                assert_eq!(*ssrc, 0x11223344);
                 assert_eq!(info.rtp_ts, 10_000);
                 assert_eq!(info.packet_count, 100);
                 assert_eq!(info.octet_count, 16_000);
                 assert_eq!(reports.len(), 1);
-                assert_eq!(reports[0].ssrc, 0x5566_7788);
+                assert_eq!(reports[0].ssrc, 0x55667788);
                 assert_eq!(reports[0].ext_highest_seq, 256);
                 assert_eq!(reports[0].jitter, 10);
             }
-            other => panic!("expected SR, got {other:?}"),
+            other => panic!("expected SR, got {:?}", other),
         }
     }
 
@@ -541,8 +541,8 @@ mod tests {
 
     #[test]
     fn ntp_middle_32_packs_correctly() {
-        let mid = ntp_middle_32(0xAABB_CCDD, 0x1122_3344);
+        let mid = ntp_middle_32(0xAABBCCDD, 0x11223344);
         // low 16 of sec (CCDD) then high 16 of frac (1122).
-        assert_eq!(mid, 0xCCDD_1122);
+        assert_eq!(mid, 0xCCDD1122);
     }
 }
