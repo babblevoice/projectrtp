@@ -44,7 +44,8 @@ describe( "rtcp secure (SRTCP)", function() {
 
   it( "protects RTCP as SRTCP over DTLS and folds the peer's decrypted reports", async function() {
 
-    /* One RTCP interval is ~5 s (tick 250); allow headroom past it. */
+    /* Randomised reports: first fires ~1–3 s, RTT needs a second exchange;
+       6.5 s below leaves headroom for both directions. */
     this.timeout( 12000 )
     this.slow( 10000 )
 
@@ -93,16 +94,16 @@ describe( "rtcp secure (SRTCP)", function() {
     chanB.close()
     await Promise.all( [ closedA, closedB ] )
 
-    /* out.valid === 1 means the peer's SR — SRTCP-encrypted on the wire — was
-       received, passed auth, decrypted, and its report block about *us* folded
-       into RemoteReport. That is the end-to-end proof the SRTCP path works both
-       ways. (rttMs needs two intervals to become >= 0, so we only assert it is
-       a number here.) */
+    /* out.valid === true means the peer's SR — SRTCP-encrypted on the wire —
+       was received, passed auth, decrypted, and its report block about *us*
+       folded into RemoteReport. That is the end-to-end proof the SRTCP path
+       works both ways. (rttms stays null until the peer echoes one of our SRs,
+       which needs two intervals, so we allow null-or-number here.) */
     for( const [ name, s ] of [ [ "A", statsA ], [ "B", statsB ] ] ) {
       expect( s, `${name} close stats` ).to.have.property( "rtcp" )
-      expect( s.rtcp.out.valid, `${name} peer report not valid — SRTCP decrypt failed?` ).to.equal( 1 )
-      expect( s.rtcp.in.cumulativeLost, `${name} in.cumulativeLost` ).to.be.a( "number" )
-      expect( s.rtcp.rttMs, `${name} rttMs` ).to.be.a( "number" )
+      expect( s.rtcp.out.valid, `${name} peer report not valid — SRTCP decrypt failed?` ).to.equal( true )
+      expect( s.rtcp.in.cumulativelost, `${name} in.cumulativelost` ).to.be.a( "number" )
+      expect( s.rtcp.rttms, `${name} rttms` ).to.satisfy( ( v ) => null === v || "number" === typeof v )
     }
   } )
 } )

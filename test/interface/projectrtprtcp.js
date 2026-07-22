@@ -66,7 +66,7 @@ describe( "rtcp", function() {
 
   it( "emits SR + SDES on P+1 and reflects a peer RR in the close stats", async function() {
 
-    /* RTCP first fires at tick 250 (~5s); allow headroom. */
+    /* Randomised first report fires ~1–3 s (half a randomised interval); headroom. */
     this.timeout( 9000 )
     this.slow( 8000 )
 
@@ -209,9 +209,9 @@ describe( "rtcp", function() {
 
     /* The muxed RR was folded and surfaced in the close stats. */
     expect( closestats ).to.have.property( "rtcp" )
-    expect( closestats.rtcp.out.valid ).to.equal( 1 )
-    expect( closestats.rtcp.out.fractionLost ).to.equal( 25 )
-    expect( closestats.rtcp.out.cumulativeLost ).to.equal( 12 )
+    expect( closestats.rtcp.out.valid ).to.equal( true )
+    expect( closestats.rtcp.out.fractionlost ).to.equal( 25 )
+    expect( closestats.rtcp.out.cumulativelost ).to.equal( 12 )
     expect( closestats.rtcp.out.jitter ).to.equal( 40 )
 
     /* Nothing should ever land on the separate P+1 control port under mux. */
