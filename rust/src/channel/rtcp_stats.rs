@@ -233,6 +233,21 @@ impl RxStats {
         }
     }
 
+    /// Fraction lost across the whole session so far, as an 8-bit fixed-point
+    /// value (RFC 3550 A.3 scaling). Unlike `fraction_lost`, this reads the
+    /// cumulative counters *without mutating* the per-interval state, so it is
+    /// safe for the Close summary — calling it can never perturb the interval
+    /// figure that `rtcp_tx`'s periodic report blocks depend on.
+    pub fn fraction_lost_session(&self) -> u8 {
+        let expected = self.expected();
+        let lost = self.cumulative_lost();
+        if expected == 0 || lost <= 0 {
+            0
+        } else {
+            (((lost as i64) << 8) / expected as i64).min(255) as u8
+        }
+    }
+
     // --- LSR / DLSR ---
 
     /// Record the arrival of a peer SR so our next report can echo LSR/DLSR.

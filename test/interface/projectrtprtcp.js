@@ -43,7 +43,7 @@ function walkrtcp( buf ) {
 
 /* Build a receiver report (PT 201) with a single report block about `aboutssrc`
    — the stream the channel sends — so the channel's rtcp_loop folds it into its
-   RemoteReport. LSR/DLSR left 0 so no RTT is derived (rttMs stays -1). */
+   RemoteReport. LSR/DLSR left 0 so no RTT is derived (rttms stays null). */
 function buildrr( senderssrc, aboutssrc, fraction, cumulative, jitter ) {
   const b = Buffer.alloc( 32 )
   b[ 0 ] = 0x80 | 0x01 /* V=2, RC=1 */
@@ -132,15 +132,16 @@ describe( "rtcp", function() {
     expect( closestats ).to.have.property( "rtcp" )
     const r = closestats.rtcp
     /* Our reception of the peer (50 clean packets → ~no loss). */
-    expect( r.in.cumulativeLost ).to.be.a( "number" )
+    expect( r.in.valid ).to.equal( true )
+    expect( r.in.cumulativelost ).to.be.a( "number" )
     expect( r.in.jitter ).to.be.a( "number" )
     /* The peer's reported reception of us — the crafted RR values. */
-    expect( r.out.valid ).to.equal( 1 )
-    expect( r.out.fractionLost ).to.equal( 25 )
-    expect( r.out.cumulativeLost ).to.equal( 12 )
+    expect( r.out.valid ).to.equal( true )
+    expect( r.out.fractionlost ).to.equal( 25 )
+    expect( r.out.cumulativelost ).to.equal( 12 )
     expect( r.out.jitter ).to.equal( 40 )
     /* LSR was 0 in the RR, so no RTT could be derived. */
-    expect( r.rttMs ).to.equal( -1 )
+    expect( r.rttms ).to.equal( null )
   } )
 
   it( "populates in.skip and lowers MOS when inbound packets are lost", function( done ) {

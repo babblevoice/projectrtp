@@ -40,6 +40,10 @@ pub const DEFAULT_CMD_QUEUE_DEPTH: usize = 64;
 /// reported reception of the stream we send (from its SR/RR, in `RemoteReport`).
 #[derive(Debug, Clone, Default)]
 pub struct RtcpSummary {
+    /// Whether we have latched an inbound source (received at least one RTP
+    /// packet). When false the `in_*` figures are zeroed, not meaningful — the
+    /// mirror of `remote_valid` for the outbound direction.
+    pub in_valid: bool,
     pub in_cumulative_lost: i32,
     pub in_fraction_lost: u8,
     pub in_jitter: u32,
@@ -88,26 +92,30 @@ impl ChannelStats {
 /// is otherwise never incremented, so `mos()` used to read near-perfect for
 /// every call regardless of actual loss.
 pub fn build_channel_stats(state: &ChannelState) -> ChannelStats {
-    let now = std::time::Instant::now();
     let in_count = state.in_count.load(Ordering::Relaxed);
 
+    // `fraction_lost_session` is non-mutating: reading it here must not disturb
+    // the per-interval counters that `rtcp_tx`'s periodic report blocks consume.
     let (in_lost, in_jitter, in_fraction, have_source) = {
-        let mut rx = state.rx_stats.lock();
+        let rx = state.rx_stats.lock();
         (
             rx.cumulative_lost(),
             rx.jitter(),
-            rx.fraction_lost(),
+            rx.fraction_lost_session(),
             rx.remote_ssrc.is_some(),
         )
     };
-    let _ = now; // reserved for future report_block-style snapshots
     let remote = *state.remote_report.lock();
 
     let rtcp = if have_source || remote.valid {
         Some(RtcpSummary {
-            in_cumulative_lost: in_lost,
-            in_fraction_lost: in_fraction,
-            in_jitter,
+            in_valid: have_source,
+            // Zeroed until an inbound source is latched, so a send-only channel
+            // doesn't report a phantom loss of 1 (`expected()` is 1 before the
+            // first packet while `received` is still 0).
+            in_cumulative_lost: if have_source { in_lost } else { 0 },
+            in_fraction_lost: if have_source { in_fraction } else { 0 },
+            in_jitter: if have_source { in_jitter } else { 0 },
             remote_valid: remote.valid,
             out_fraction_lost: remote.fraction_lost,
             out_cumulative_lost: remote.cumulative_lost,
@@ -119,8 +127,13 @@ pub fn build_channel_stats(state: &ChannelState) -> ChannelStats {
     };
 
     // Real inbound loss → in_skip (clamped: never negative, never exceeds the
-    // number of packets we counted receiving).
-    let in_skip = (in_lost.max(0) as u64).min(in_count);
+    // number of packets we counted receiving). Only when a source is latched,
+    // so the phantom pre-first-packet loss never leaks into MOS.
+    let in_skip = if have_source {
+        (in_lost.max(0) as u64).min(in_count)
+    } else {
+        0
+    };
 
     ChannelStats {
         in_count,

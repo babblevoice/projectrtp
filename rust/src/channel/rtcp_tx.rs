@@ -24,6 +24,13 @@ pub async fn maybe_send_rtcp(state: &mut ChannelState) {
         return;
     }
 
+    // Tier 1 emits plain RTP/AVP RTCP only. On an SRTP/DTLS channel that would
+    // be unencrypted (non-compliant SRTCP) and would leak SSRC/CNAME/counts in
+    // the clear, so stay silent until the Tier 2 SRTCP path lands.
+    if state.srtp_encrypt.is_some() {
+        return;
+    }
+
     // Derive the RTCP remote: the RTP peer's IP with port + 1 (symmetric RTCP
     // without mux). Skip entirely until the RTP peer is known.
     let Some(rtp_remote) = state.get_remote_addr() else {

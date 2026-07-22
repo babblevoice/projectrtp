@@ -1119,17 +1119,21 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
                     s.set_named_property("tick", tick_o)?;
                     // RFC 3550 RTCP summary — present only once the channel has
                     // seen inbound RTP or a peer report. `in.*` is our reception
-                    // of the peer; `out.*` is the peer's reported reception of
-                    // us; `rttMs` is -1 until the peer echoes one of our SRs.
+                    // of the peer (meaningful only when `in.valid`); `out.*` is
+                    // the peer's reported reception of us (meaningful only when
+                    // `out.valid`); `rttms` is `null` until the peer echoes one
+                    // of our SRs. Keys are lowercase to match the sibling stats
+                    // objects (`tick.meanus`/`tick.maxus`).
                     if let Some(rtcp) = &stats.rtcp {
                         let mut r = env.create_object()?;
                         let mut r_in = env.create_object()?;
+                        r_in.set_named_property("valid", env.get_boolean(rtcp.in_valid)?)?;
                         r_in.set_named_property(
-                            "cumulativeLost",
+                            "cumulativelost",
                             env.create_int64(rtcp.in_cumulative_lost as i64)?,
                         )?;
                         r_in.set_named_property(
-                            "fractionLost",
+                            "fractionlost",
                             env.create_int64(rtcp.in_fraction_lost as i64)?,
                         )?;
                         r_in.set_named_property(
@@ -1137,16 +1141,13 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
                             env.create_int64(rtcp.in_jitter as i64)?,
                         )?;
                         let mut r_out = env.create_object()?;
+                        r_out.set_named_property("valid", env.get_boolean(rtcp.remote_valid)?)?;
                         r_out.set_named_property(
-                            "valid",
-                            env.create_int64(rtcp.remote_valid as i64)?,
-                        )?;
-                        r_out.set_named_property(
-                            "fractionLost",
+                            "fractionlost",
                             env.create_int64(rtcp.out_fraction_lost as i64)?,
                         )?;
                         r_out.set_named_property(
-                            "cumulativeLost",
+                            "cumulativelost",
                             env.create_int64(rtcp.out_cumulative_lost as i64)?,
                         )?;
                         r_out.set_named_property(
@@ -1155,10 +1156,10 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
                         )?;
                         r.set_named_property("in", r_in)?;
                         r.set_named_property("out", r_out)?;
-                        r.set_named_property(
-                            "rttMs",
-                            env.create_double(rtcp.rtt_ms.unwrap_or(-1.0))?,
-                        )?;
+                        match rtcp.rtt_ms {
+                            Some(rtt) => r.set_named_property("rttms", env.create_double(rtt)?)?,
+                            None => r.set_named_property("rttms", env.get_null()?)?,
+                        }
                         s.set_named_property("rtcp", r)?;
                     }
                     obj.set_named_property("stats", s)?;
