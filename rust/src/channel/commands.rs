@@ -58,6 +58,12 @@ pub struct PlayRecordConfig {
     pub interrupt: bool,
     pub bargein_power: Option<i32>,
     pub bargein_packets: Option<u32>,
+    /// Concurrent-capture mode. When true the recorder is opened immediately and
+    /// runs *alongside* the player (staying gated by `start_above_power` until the
+    /// caller speaks); the player is never auto-interrupted by inbound energy.
+    /// The controller stops the prompt explicitly with `StopPlay` once it has an
+    /// acceptable answer. Mutually exclusive with `interrupt` (concurrent wins).
+    pub concurrent: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -148,6 +154,11 @@ pub enum Command {
     Echo {
         enabled: bool,
     },
+    /// `channel.stopplay()` — stop the active player immediately without
+    /// disturbing any running recorder. Fire-and-forget (no ack). Companion to
+    /// `playrecord({ concurrent: true })`: JS captures the answer while the
+    /// prompt plays, then fires this to interrupt once the answer is acceptable.
+    StopPlay,
     Direction(Direction),
     /// Migrate this channel's state + subs into a mix group actor. The actor
     /// transitions from Local to Mixed mode; subsequent commands are

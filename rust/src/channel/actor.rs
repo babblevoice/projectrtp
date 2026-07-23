@@ -979,7 +979,10 @@ async fn handle_command_local(
                 reason: Some("new".into()),
             });
 
-            if cfg.interrupt {
+            // Energy barge-in is only for the hard-interrupt mode. In concurrent
+            // mode inbound energy must NOT stop the prompt — the controller does
+            // that explicitly via `StopPlay` once it has an acceptable answer.
+            if cfg.interrupt && !cfg.concurrent {
                 if let Some(threshold) = cfg.bargein_power {
                     let mut ma = crate::firfilter::MaFilter::new();
                     if let Some(n) = cfg.bargein_packets {
@@ -1005,7 +1008,41 @@ async fn handle_command_local(
                 file_str,
             });
 
+            // Concurrent mode: open the recorder right now so it runs alongside
+            // the player. It stays gated by `start_above_power` (writes nothing
+            // until the caller speaks), and its min/max durations are measured
+            // from speech-start, so opening early is safe — it just means the
+            // power warm-up elapses during the prompt. The player keeps playing
+            // until `StopPlay`.
+            if cfg.concurrent {
+                let mut evs = Vec::new();
+                let _ = activate_pending_recorder(subs, &mut evs).await;
+                for ev in evs {
+                    events.post(ev);
+                }
+            }
+
             let _ = ack.send(());
+            LocalOutcome::Continue
+        }
+
+        Command::StopPlay => {
+            // Explicit "stop the prompt now". Leaves any running recorder alone;
+            // if a deferred pending recorder is still queued it is activated
+            // (parity with a natural play-end) so its capture isn't lost.
+            if subs.player.is_some() {
+                subs.player = None;
+                subs.bargein = None;
+                events.post(Event::Play {
+                    state: PlayState::End,
+                    reason: Some("stopped".into()),
+                });
+                let mut evs = Vec::new();
+                let _ = activate_pending_recorder(subs, &mut evs).await;
+                for ev in evs {
+                    events.post(ev);
+                }
+            }
             LocalOutcome::Continue
         }
 
@@ -1314,6 +1351,7 @@ mod tests {
             interrupt: false,
             bargein_power: None,
             bargein_packets: None,
+            concurrent: false,
         };
         handle.play_record(cfg).await.unwrap();
 

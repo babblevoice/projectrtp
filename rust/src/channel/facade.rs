@@ -297,6 +297,17 @@ impl ChannelObject {
         true
     }
 
+    /// Stop a currently-playing prompt immediately, leaving any running
+    /// recorder untouched. Companion to `playrecord({ concurrent: true })`:
+    /// the caller's answer is captured while the prompt plays, then JS fires
+    /// this to "interrupt" once it has an acceptable result. Fire-and-forget.
+    #[napi]
+    pub fn stopplay(&self) -> bool {
+        let cmd = self.handle.cmd.clone();
+        let _ = cmd.try_send(super::commands::Command::StopPlay);
+        true
+    }
+
     /// JS calls `channel.direction({ send, recv })` with a single object.
     #[napi]
     pub fn direction(&self, opts: DirectionOpts) -> bool {
@@ -574,12 +585,17 @@ impl ChannelObject {
         let bargein_packets = params
             .get_named_property::<u32>("bargeinpoweraveragepackets")
             .ok();
+        let concurrent = params
+            .get_named_property::<bool>("concurrent")
+            .ok()
+            .unwrap_or(false);
         let cfg = super::commands::PlayRecordConfig {
             player,
             recorder,
             interrupt,
             bargein_power,
             bargein_packets,
+            concurrent,
         };
         let (ack, _) = tokio::sync::oneshot::channel();
         self.handle

@@ -260,6 +260,74 @@ describe( "playrecord", function() {
     expect( recstart ).to.exist
   } )
 
+  it( "concurrent — loud audio does NOT interrupt; stopplay ends the prompt", async function() {
+    this.timeout( 8000 )
+    this.slow( 6000 )
+
+    const server = dgram.createSocket( "udp4" )
+    server.on( "message", function() {} )
+    server.bind()
+    await new Promise( resolve => server.on( "listening", resolve ) )
+
+    const events = []
+    let done
+    const finished = new Promise( r => done = r )
+
+    const channel = await prtp.projectrtp.openchannel(
+      { "remote": { "address": "127.0.0.1", "port": server.address().port, "codec": 0 } },
+      function( d ) {
+        events.push( d )
+        if( "close" === d.action ) done()
+      }
+    )
+
+    /* concurrent: recorder runs alongside the (3s) prompt, gated by startabovepower.
+       Inbound energy must NOT interrupt the prompt — only stopplay() ends it. */
+    expect( channel.playrecord( {
+      "soup": { "files": [ { "wav": "/tmp/pr_long_prompt.wav" } ] },
+      "record": {
+        "file": "/tmp/pr_concurrent_rec.wav",
+        "numchannels": 1,
+        "startabovepower": 100,
+        "maxduration": 5000
+      },
+      "concurrent": true
+    } ) ).to.be.true
+
+    /* silence then a loud tone — under the old interrupt mode this would barge-in */
+    const silencesamples = 8000 * 1.5
+    const tonesamples = 8000 * 2
+    const sendbuffer = Buffer.concat( [
+      Buffer.alloc( silencesamples, prtp.projectrtp.codecx.linear162pcmu( 0 ) ),
+      genpcmutone( 2, 50, 8000, 20000 )
+    ] )
+    const totalpackets = Math.ceil( ( silencesamples + tonesamples ) / 160 )
+    const delayedjobs = []
+    for( let i = 0; i < totalpackets; i++ ) {
+      delayedjobs.push( sendpk( i, i, channel.local.port, server, sendbuffer ) )
+    }
+
+    /* fire the interrupt from "JS" partway through the 3s prompt */
+    setTimeout( () => channel.stopplay(), 2500 )
+
+    await new Promise( resolve => setTimeout( resolve, 4000 ) )
+    channel.close()
+    await finished
+    delayedjobs.forEach( id => clearTimeout( id ) )
+    await new Promise( resolve => server.close( resolve ) )
+
+    /* the prompt must have been ended by stopplay, never by energy barge-in */
+    const interrupted = events.find( e => "play" === e.action && "end" === e.event && "interrupted" === e.reason )
+    expect( interrupted, "energy must not interrupt in concurrent mode" ).to.not.exist
+
+    const playend = events.find( e => "play" === e.action && "end" === e.event )
+    expect( playend ).to.exist
+    expect( playend.reason ).to.equal( "stopped" )
+
+    /* the concurrent recorder was opened and captured to disk */
+    expect( fs.existsSync( "/tmp/pr_concurrent_rec.wav" ) ).to.be.true
+  } )
+
   it( "playrecord with record finish request", async function() {
     this.timeout( 3000 )
     this.slow( 2500 )
@@ -348,6 +416,7 @@ describe( "playrecord", function() {
       "/tmp/pr_long_prompt.wav",
       "/tmp/pr_basic_rec.wav",
       "/tmp/pr_bargein_rec.wav",
+      "/tmp/pr_concurrent_rec.wav",
       "/tmp/pr_silence_rec.wav",
       "/tmp/pr_finish_rec.wav",
       "/tmp/pr_close_rec.wav"

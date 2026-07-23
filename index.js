@@ -182,6 +182,7 @@ class proxy {
  * @property { function } play
  * @property { function } record
  * @property { function } playrecord
+ * @property { function } stopplay
  * @property { function } direction
  * @property { object } local
  * @property { number } local.port

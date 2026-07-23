@@ -1361,7 +1361,8 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
                 state: PlayState::Start,
                 reason: Some("new".into()),
             });
-            if cfg.interrupt {
+            // Concurrent mode disables energy barge-in (see local-mode handler).
+            if cfg.interrupt && !cfg.concurrent {
                 if let Some(threshold) = cfg.bargein_power {
                     let mut ma = crate::firfilter::MaFilter::new();
                     if let Some(n) = cfg.bargein_packets {
@@ -1383,7 +1384,31 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
                 cfg: recorder_cfg,
                 file_str,
             });
+            // Concurrent: open the recorder now so it runs alongside the player
+            // (parity with the local-mode handler).
+            if cfg.concurrent {
+                let mut evs = Vec::new();
+                let _ = activate_pending_recorder(&mut m.subs, &mut evs).await;
+                for ev in evs {
+                    m.events.post(ev);
+                }
+            }
             let _ = ack.send(());
+        }
+        Command::StopPlay => {
+            if m.subs.player.is_some() {
+                m.subs.player = None;
+                m.subs.bargein = None;
+                m.events.post(Event::Play {
+                    state: PlayState::End,
+                    reason: Some("stopped".into()),
+                });
+                let mut evs = Vec::new();
+                let _ = activate_pending_recorder(&mut m.subs, &mut evs).await;
+                for ev in evs {
+                    m.events.post(ev);
+                }
+            }
         }
         Command::EnterMix { .. } | Command::LeaveMix { .. } | Command::Close { .. } => {}
     }
