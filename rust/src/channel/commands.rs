@@ -248,4 +248,10 @@ impl Handle {
             .map_err(|_| ())?;
         rx.await.map_err(|_| ())
     }
+
+    /// Stop the active player without disturbing any recorder. Fire-and-forget
+    /// (no ack) — companion to `playrecord({ concurrent: true })`.
+    pub async fn stop_play(&self) {
+        let _ = self.cmd.send(Command::StopPlay).await;
+    }
 }

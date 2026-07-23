@@ -22,6 +22,7 @@ Features
   * Start, pause and end based on power detection or on command
 * WAV playback using sound soup descriptions to play complex sentences from parts
 * Combined play+record (playrecord) for zero-gap prompt-then-record with optional barge-in
+  * Barge-in modes: energy `interrupt` (loud inbound cuts the prompt), or `concurrent` (record the answer while the prompt keeps playing, then `stopplay()` to end it once the answer is acceptable — content-gated rather than energy-gated)
 * DTMF (RFC 2833) - send, receive and bridge
 * DTLS SRTP (WebRTC)
 * Highly scalable - server/node solution to scale out media nodes

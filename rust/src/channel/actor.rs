@@ -1427,4 +1427,80 @@ mod tests {
         handle.close("done").await;
         let _ = std::fs::remove_file(&rec_path);
     }
+
+    /// Concurrent mode is the inverse of the deferred test above: the recorder
+    /// must open at command-accept time (running alongside the player), NOT at
+    /// play-end. With a non-gated recorder that surfaces as a `Record::Recording`
+    /// event emitted *before* the empty player's `Play::End`, whereas the
+    /// deferred path emits it after. Proves inbound energy is irrelevant to when
+    /// the recorder starts and that the player is left running.
+    #[tokio::test]
+    async fn playrecord_concurrent_opens_recorder_immediately() {
+        let (tx, mut rx) = tmpsc::unbounded_channel();
+        let sink = Arc::new(TestSink { tx });
+
+        let handle = spawn(SpawnConfig {
+            id: 8,
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            ssrc: 1,
+            events: sink,
+            port_reservation: None,
+            local_icepwd: String::new(),
+        })
+        .await
+        .unwrap();
+
+        let rec_cfg = test_recorder_cfg("actor_playrecord_concurrent.wav");
+        let rec_path = rec_cfg.file.clone();
+        let rec_path_str = rec_path.to_string_lossy().into_owned();
+
+        let cfg = crate::channel::commands::PlayRecordConfig {
+            player: crate::channel::player::SoundSoupSpec {
+                files: vec![],
+                overall_loops: None,
+                interrupt: false,
+            },
+            // non-gated (start_above_power None) so activation emits Recording now
+            recorder: rec_cfg,
+            interrupt: false,
+            bargein_power: None,
+            bargein_packets: None,
+            concurrent: true,
+        };
+        handle.play_record(cfg).await.unwrap();
+
+        let mut observed: Vec<Event> = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(250);
+        while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, rx.recv()).await {
+            observed.push(ev);
+        }
+
+        let rec_rec_idx = observed
+            .iter()
+            .position(|e| {
+                matches!(e, Event::Record { state: RecordState::Recording, file: Some(f), .. }
+                      if f == &rec_path_str)
+            })
+            .expect("expected Record::Recording (recorder opened immediately)");
+        let play_end_idx = observed
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    Event::Play {
+                        state: PlayState::End,
+                        ..
+                    }
+                )
+            })
+            .expect("expected Play::End from the empty soup");
+
+        assert!(
+            rec_rec_idx < play_end_idx,
+            "concurrent: Record::Recording must precede Play::End (opened at command time): {observed:?}"
+        );
+
+        handle.close("done").await;
+        let _ = std::fs::remove_file(&rec_path);
+    }
 }
