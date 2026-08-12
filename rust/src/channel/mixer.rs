@@ -40,7 +40,7 @@ use super::actor::{
 };
 use super::commands::{ChannelId, Command};
 use super::player::Player;
-use super::recorder::{FinishReason, Recorder, RecorderState};
+use super::recorder::{FinishReason, RecordDirection, Recorder, RecorderState};
 use super::rtp::RtpPacket;
 use super::state::ChannelState;
 
@@ -1045,49 +1045,85 @@ async fn feed_recorders(
     channel_in_count: u64,
     pending_events: &mut Vec<Event>,
 ) {
+    // Silence stand-in for a direction=out recorder on a tick where the
+    // peer produced nothing — keeps the file's timeline coherent.
+    let peer_silence: Vec<i16>;
+    let peer_or_silence: &[i16] = match peer_samples {
+        Some(p) => p,
+        None => {
+            peer_silence = vec![0i16; samples.len()];
+            &peer_silence
+        }
+    };
+
     let mut i = 0;
     while i < recorders.len() {
         let rec = &mut recorders[i];
         let prev_state = rec.state();
+        // In a mix, "in" is this leg's own inbound and "out" is what this
+        // leg is sent — the mix peer's inbound.
+        let single: Option<&[i16]> = match rec.direction() {
+            RecordDirection::In => Some(samples),
+            RecordDirection::Out => Some(peer_or_silence),
+            RecordDirection::Both => None,
+        };
         let frame: Vec<i16> = if rec.num_channels() == 2 {
             let mut inter = Vec::with_capacity(samples.len() * 2);
-            match peer_samples {
-                Some(peer) => {
-                    for (idx, &s) in samples.iter().enumerate() {
-                        inter.push(s);
-                        inter.push(peer.get(idx).copied().unwrap_or(0));
-                    }
-                }
-                None => {
-                    // No peer available — duplicate-mono fallback.
-                    for &s in samples {
+            match single {
+                // Single-leg stereo — duplicate across L/R, same convention
+                // as the mono-direction audio reader.
+                Some(side) => {
+                    for &s in side {
                         inter.push(s);
                         inter.push(s);
                     }
                 }
+                None => match peer_samples {
+                    Some(peer) => {
+                        for (idx, &s) in samples.iter().enumerate() {
+                            inter.push(s);
+                            inter.push(peer.get(idx).copied().unwrap_or(0));
+                        }
+                    }
+                    None => {
+                        // No peer available — duplicate-mono fallback.
+                        for &s in samples {
+                            inter.push(s);
+                            inter.push(s);
+                        }
+                    }
+                },
             }
             inter
         } else {
-            // Mono: saturated sum of self leg + peer leg, matching C++
-            // `soundfilewriter::write` where mono advances buf by 1 in
-            // both loops so the second leg is `*buf += outval`.
-            match peer_samples {
-                Some(peer) => samples
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, &s)| {
-                        let a = s as i32;
-                        let b = peer.get(idx).copied().unwrap_or(0) as i32;
-                        (a + b).clamp(i16::MIN as i32, i16::MAX as i32) as i16
-                    })
-                    .collect(),
-                None => samples.to_vec(),
+            match single {
+                Some(side) => side.to_vec(),
+                // Mono both: saturated sum of self leg + peer leg, matching
+                // C++ `soundfilewriter::write` where mono advances buf by 1
+                // in both loops so the second leg is `*buf += outval`.
+                None => match peer_samples {
+                    Some(peer) => samples
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, &s)| {
+                            let a = s as i32;
+                            let b = peer.get(idx).copied().unwrap_or(0) as i32;
+                            (a + b).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+                        })
+                        .collect(),
+                    None => samples.to_vec(),
+                },
             }
         };
-        // Power calc on the narrowband `samples` (self's inbound), not
-        // the interleaved stereo `frame` — matches C++ `codecx::power()`.
+        // Power calc on the narrowband slice of the leg(s) recorded — self
+        // inbound for "in"/"both" (matches C++ `codecx::power()`), the peer
+        // leg for "out" so a gated out-only recording can still trigger.
+        let power_s: &[i16] = match rec.direction() {
+            RecordDirection::Out => peer_or_silence,
+            _ => samples,
+        };
         let _ = rec
-            .write_frame(&frame, samples, Some(channel_in_count))
+            .write_frame(&frame, power_s, Some(channel_in_count))
             .await;
         let new_state = rec.state();
         let file_str = rec.file().to_string_lossy().into_owned();

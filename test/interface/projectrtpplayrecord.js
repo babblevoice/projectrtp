@@ -398,6 +398,64 @@ describe( "playrecord", function() {
     expect( fs.existsSync( "/tmp/pr_rearm_b.wav" ) ).to.be.true
   } )
 
+  it( "concurrent — direction in records the caller only, never the prompt", async function() {
+    /* Regression: a mono concurrent capture used to be a saturated sum of
+       inbound + player, so the STT heard our own TTS prompt. With
+       direction:"in" the file must contain only what the remote sent us. */
+    this.timeout( 10000 )
+    this.slow( 8000 )
+
+    const runcapture = async ( recordoptions ) => {
+      const server = dgram.createSocket( "udp4" )
+      server.on( "message", function() {} )
+      server.bind()
+      await new Promise( resolve => server.on( "listening", resolve ) )
+
+      let done
+      const finished = new Promise( r => done = r )
+      const channel = await prtp.projectrtp.openchannel(
+        { "remote": { "address": "127.0.0.1", "port": server.address().port, "codec": 0 } },
+        function( d ) {
+          if( "close" === d.action ) done()
+        }
+      )
+
+      expect( channel.playrecord( {
+        "soup": { "files": [ { "wav": "/tmp/pr_prompt.wav" } ] },
+        "record": { "numchannels": 1, "maxduration": 1500, ...recordoptions },
+        "concurrent": true
+      } ) ).to.be.true
+
+      /* inbound is pure silence — any energy on disk came from the prompt */
+      const delayedjobs = []
+      for( let i = 0; 100 > i; i++ ) {
+        delayedjobs.push( sendpk( i, i, channel.local.port, server,
+          Buffer.alloc( 16000, prtp.projectrtp.codecx.linear162pcmu( 0 ) ) ) )
+      }
+
+      await new Promise( resolve => setTimeout( resolve, 2500 ) )
+      channel.close()
+      await finished
+      delayedjobs.forEach( id => clearTimeout( id ) )
+      await new Promise( resolve => server.close( resolve ) )
+
+      const wav = fs.readFileSync( recordoptions.file )
+      let maxabs = 0
+      for( let off = 44; off + 1 < wav.length; off += 2 ) {
+        maxabs = Math.max( maxabs, Math.abs( wav.readInt16LE( off ) ) )
+      }
+      return maxabs
+    }
+
+    const inonly = await runcapture( { "file": "/tmp/pr_dir_in.wav", "direction": "in" } )
+    expect( inonly, "direction in must exclude the prompt" ).to.be.below( 100 )
+
+    /* control: the default (both) mixes the prompt in, proving the prompt
+       really was playing while the in-only capture stayed clean */
+    const both = await runcapture( { "file": "/tmp/pr_dir_both.wav" } )
+    expect( both, "default both should contain the prompt" ).to.be.above( 1000 )
+  } )
+
   it( "playrecord with record finish request", async function() {
     this.timeout( 3000 )
     this.slow( 2500 )

@@ -391,11 +391,15 @@ async fn write_recorder_frames(
     while i < subs.recorders.len() {
         let rec = &mut subs.recorders[i];
         let prev_state = rec.state();
-        let frame = build_recorder_frame(rec.num_channels(), in_s, out_s, len);
-        // Power calc runs on the inbound narrowband only — matches C++
-        // `codecx::power()` which operates on the 160-sample mono slice
-        // rather than the interleaved stereo frame.
-        let _ = rec.write_frame(&frame, in_s, Some(chan_in_count)).await;
+        let frame = build_recorder_frame(rec.num_channels(), rec.direction(), in_s, out_s, len);
+        // Power calc runs on the narrowband slice of the leg(s) being
+        // recorded — inbound for "in"/"both" (matches C++ `codecx::power()`),
+        // outbound for "out" so a gated out-only recording can still trigger.
+        let power_s: &[i16] = match rec.direction() {
+            super::recorder::RecordDirection::Out => out_s,
+            _ => in_s,
+        };
+        let _ = rec.write_frame(&frame, power_s, Some(chan_in_count)).await;
 
         let new_state = rec.state();
         let file_str = rec.file().to_string_lossy().into_owned();
@@ -432,21 +436,52 @@ async fn write_recorder_frames(
     }
 }
 
-/// Build one WAV frame — mono = saturated sum, stereo = interleaved L=in R=out.
-fn build_recorder_frame(num_channels: u16, in_s: &[i16], out_s: &[i16], len: usize) -> Vec<i16> {
+/// Build one WAV frame honouring the recorder's direction.
+///
+/// direction=Both (default): mono = saturated sum, stereo = interleaved
+/// L=in R=out — the legacy call-recording behaviour.
+/// direction=In / Out: only that leg is written — mono takes the slice as
+/// is, stereo duplicates it across L/R (same convention as the mono-direction
+/// audio reader and the mixer's no-peer fallback). "In" is what STT captures
+/// want: a concurrent playrecord must not transcribe its own prompt.
+fn build_recorder_frame(
+    num_channels: u16,
+    direction: super::recorder::RecordDirection,
+    in_s: &[i16],
+    out_s: &[i16],
+    len: usize,
+) -> Vec<i16> {
+    use super::recorder::RecordDirection;
+    let single: Option<&[i16]> = match direction {
+        RecordDirection::In => Some(in_s),
+        RecordDirection::Out => Some(out_s),
+        RecordDirection::Both => None,
+    };
     if num_channels == 2 {
         let mut v = Vec::with_capacity(len * 2);
         for j in 0..len {
-            v.push(in_s.get(j).copied().unwrap_or(0));
-            v.push(out_s.get(j).copied().unwrap_or(0));
+            match single {
+                Some(s) => {
+                    let val = s.get(j).copied().unwrap_or(0);
+                    v.push(val);
+                    v.push(val);
+                }
+                None => {
+                    v.push(in_s.get(j).copied().unwrap_or(0));
+                    v.push(out_s.get(j).copied().unwrap_or(0));
+                }
+            }
         }
         v
     } else {
         (0..len)
-            .map(|j| {
-                let a = in_s.get(j).copied().unwrap_or(0) as i32;
-                let b = out_s.get(j).copied().unwrap_or(0) as i32;
-                (a + b).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+            .map(|j| match single {
+                Some(s) => s.get(j).copied().unwrap_or(0),
+                None => {
+                    let a = in_s.get(j).copied().unwrap_or(0) as i32;
+                    let b = out_s.get(j).copied().unwrap_or(0) as i32;
+                    (a + b).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+                }
             })
             .collect()
     }
@@ -1001,6 +1036,70 @@ mod tests {
             vec!['9', '1', '9', '9', '3', '3', '1', '1', '1', '1', '2'],
             "expected full IVR digit sequence; got {:?}",
             digits
+        );
+    }
+
+    #[test]
+    fn recorder_frame_direction_both_mono_sums_and_stereo_interleaves() {
+        use crate::channel::recorder::RecordDirection;
+        let in_s = [100i16, 200];
+        let out_s = [1000i16, 2000];
+        assert_eq!(
+            build_recorder_frame(1, RecordDirection::Both, &in_s, &out_s, 2),
+            vec![1100, 2200]
+        );
+        assert_eq!(
+            build_recorder_frame(2, RecordDirection::Both, &in_s, &out_s, 2),
+            vec![100, 1000, 200, 2000]
+        );
+    }
+
+    #[test]
+    fn recorder_frame_direction_in_excludes_player_audio() {
+        // The languagegate regression: a mono concurrent-playrecord STT
+        // capture must contain only the caller, never the TTS prompt.
+        use crate::channel::recorder::RecordDirection;
+        let in_s = [100i16, 200];
+        let out_s = [1000i16, 2000]; // the prompt
+        assert_eq!(
+            build_recorder_frame(1, RecordDirection::In, &in_s, &out_s, 2),
+            vec![100, 200]
+        );
+        // Stereo single-direction duplicates across L/R (reader convention).
+        assert_eq!(
+            build_recorder_frame(2, RecordDirection::In, &in_s, &out_s, 2),
+            vec![100, 100, 200, 200]
+        );
+    }
+
+    #[test]
+    fn recorder_frame_direction_out_excludes_inbound_audio() {
+        use crate::channel::recorder::RecordDirection;
+        let in_s = [100i16, 200];
+        let out_s = [1000i16, 2000];
+        assert_eq!(
+            build_recorder_frame(1, RecordDirection::Out, &in_s, &out_s, 2),
+            vec![1000, 2000]
+        );
+        assert_eq!(
+            build_recorder_frame(2, RecordDirection::Out, &in_s, &out_s, 2),
+            vec![1000, 1000, 2000, 2000]
+        );
+    }
+
+    #[test]
+    fn recorder_frame_direction_saturates_and_zero_fills() {
+        use crate::channel::recorder::RecordDirection;
+        // Both: sum clamps at i16 bounds; short slices zero-fill to len.
+        let in_s = [i16::MAX, 5];
+        let out_s = [i16::MAX];
+        assert_eq!(
+            build_recorder_frame(1, RecordDirection::Both, &in_s, &out_s, 2),
+            vec![i16::MAX, 5]
+        );
+        assert_eq!(
+            build_recorder_frame(1, RecordDirection::Out, &in_s, &out_s, 2),
+            vec![i16::MAX, 0]
         );
     }
 

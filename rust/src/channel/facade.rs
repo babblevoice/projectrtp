@@ -384,7 +384,8 @@ impl ChannelObject {
     }
 
     /// Start (or finish / pause) a recording. Shapes:
-    /// - `{ file, numchannels, maxduration, startabovepower, ... }` — start
+    /// - `{ file, numchannels, direction, maxduration, startabovepower, ... }` — start
+    ///   (`direction`: "in" | "out" | "both" (default) — which side(s) land in the file)
     /// - `{ file, finish: true }` — finalize the recorder at that file path
     /// - `{ file, pause: true|false }` — pause/resume the recorder
     /// Matches the C++ `projectrtpchannelrecorder.cpp` JS API. Multiple
@@ -937,9 +938,21 @@ fn parse_recorder(params: &Object) -> Option<super::recorder::RecorderConfig> {
         .filter(|&v| v > 0)
         .map(|v| v as u16)
         .unwrap_or(2);
+    // Same strings as the reader's direction, but the recorder defaults to
+    // "both" — a call recording wants both legs unless told otherwise.
+    let direction = match params
+        .get_named_property::<String>("direction")
+        .ok()
+        .as_deref()
+    {
+        Some("in") => super::recorder::RecordDirection::In,
+        Some("out") => super::recorder::RecordDirection::Out,
+        _ => super::recorder::RecordDirection::Both,
+    };
     Some(super::recorder::RecorderConfig {
         file: std::path::PathBuf::from(file),
         num_channels,
+        direction,
         sample_rate: 8000,
         max_duration_ms: params
             .get_named_property::<u32>("maxduration")

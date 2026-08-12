@@ -359,7 +359,12 @@ pub(super) async fn activate_pending_recorder(
     let is_gated = cfg.start_above_power.is_some();
     match Recorder::open(cfg).await {
         Ok(mut rec) => {
-            let drained: Vec<i16> = subs.prebuffer.drain(..).collect();
+            let mut drained: Vec<i16> = subs.prebuffer.drain(..).collect();
+            // The pre-buffer holds inbound audio only — an out-only recorder
+            // must not have the caller's speech flushed into it.
+            if rec.direction() == super::recorder::RecordDirection::Out {
+                drained.clear();
+            }
             if !drained.is_empty() {
                 let frame = if rec.num_channels() == 2 {
                     let mut inter = Vec::with_capacity(drained.len() * 2);
@@ -1189,6 +1194,7 @@ mod tests {
         RecorderConfig {
             file: p,
             num_channels: 1,
+            direction: crate::channel::recorder::RecordDirection::Both,
             sample_rate: 8000,
             max_duration_ms: None,
             start_above_power: None,

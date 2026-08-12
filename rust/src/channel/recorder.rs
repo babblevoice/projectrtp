@@ -13,10 +13,28 @@ use std::path::PathBuf;
 use crate::firfilter::{DcFilter, MaFilter};
 use crate::soundfile::WavWriter;
 
+/// Which side(s) of the call the recorder writes. Same JS strings as the
+/// audio reader's direction ("in" / "out" / "both") but the default differs:
+/// recorders default to `Both` to preserve the call-recording behaviour
+/// (mono = saturated sum of both legs, stereo = L=in R=out).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RecordDirection {
+    /// Inbound only — what the remote party sends us. The right choice for
+    /// STT captures: our own playback (TTS prompt) never lands in the file.
+    In,
+    /// Outbound only — what we send (player / echo; the mix peer in a mix).
+    Out,
+    /// Both legs (default) — mono sums, stereo interleaves L=in R=out.
+    #[default]
+    Both,
+}
+
 #[derive(Debug, Clone)]
 pub struct RecorderConfig {
     pub file: PathBuf,
     pub num_channels: u16,
+    /// Which side(s) of the call to write — see `RecordDirection`.
+    pub direction: RecordDirection,
     pub sample_rate: u32,
     /// Hard stop once this many ms have been recorded.
     pub max_duration_ms: Option<u64>,
@@ -121,6 +139,9 @@ impl Recorder {
     }
     pub fn num_channels(&self) -> u16 {
         self.cfg.num_channels
+    }
+    pub fn direction(&self) -> RecordDirection {
+        self.cfg.direction
     }
     /// Total file size in bytes (header + PCM data written so far).
     pub fn file_size(&self) -> u64 {
@@ -318,6 +339,7 @@ mod tests {
         RecorderConfig {
             file: p,
             num_channels: 1,
+            direction: RecordDirection::Both,
             sample_rate: 8000,
             max_duration_ms: None,
             start_above_power: None,
