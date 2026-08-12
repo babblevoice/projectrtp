@@ -305,7 +305,12 @@ describe( "record", function() {
           } )
           server.close()
           const stats = fs.statSync( "/tmp/ourpowerrecording.wav" )
-          expect( stats.size ).to.be.within( 70000, 80000 )
+          /* Bound shifted from 70000..80000: a power-gated recorder now
+             prepends its pending prebuffer (2x the MA window - here
+             2x20 packets = 0.8s of stereo = 25600 bytes) when the gate
+             opens, so the speech onset the smoothed MA lagged past is in
+             the file rather than discarded. */
+          expect( stats.size ).to.be.within( 95000, 106000 )
           done()
         }
       } )
@@ -474,7 +479,10 @@ describe( "record", function() {
     // The Rust recording of ~1.46 s (power-gate from ~220 ms warmup to
     // 240 ms after tone ends, which is the MA(10) decay time) is
     // mathematically correct; the ceiling was C++-calibrated.
-    expect( stats.size ).to.be.within( 30000, 50000 )
+    // Shifted again by +12800 (2x the MA(10) window = 0.4 s of stereo):
+    // a power-gated recorder now prepends its pending prebuffer when the
+    // gate opens so the onset the smoothed MA lagged past is kept.
+    expect( stats.size ).to.be.within( 42000, 63000 )
 
     stats = fs.statSync( "/tmp/dualrecording.wav" )
     expect( stats.size ).to.be.within( 110000, 190000 )
