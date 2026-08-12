@@ -394,6 +394,11 @@ impl Member {
         let mut player_frame: Option<Vec<i16>> = None;
         let mut player_just_ended = false;
         if let Some(player) = self.subs.player.as_mut() {
+            // A paused player holds its position and produces nothing until
+            // resumed — mirrors the Local-mode tick.
+            if player.is_paused() {
+                return None;
+            }
             let frame = player.read(160).await;
             if !frame.samples.is_empty() {
                 player_frame = Some(frame.samples);
@@ -1443,6 +1448,22 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
                 let _ = activate_pending_recorder(&mut m.subs, &mut evs).await;
                 for ev in evs {
                     m.events.post(ev);
+                }
+            }
+        }
+        Command::PausePlay { pause } => {
+            // Freeze/unfreeze the player in place — mirrors the Local-mode
+            // handler: recorders untouched, no play/end emitted.
+            if let Some(p) = m.subs.player.as_mut() {
+                if p.set_paused(pause) {
+                    m.events.post(Event::Play {
+                        state: if pause {
+                            PlayState::Paused
+                        } else {
+                            PlayState::Resumed
+                        },
+                        reason: None,
+                    });
                 }
             }
         }

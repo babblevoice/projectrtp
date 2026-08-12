@@ -40,6 +40,11 @@ pub struct Player {
     file_loop: u32,
     overall_loop: u32,
     finished: bool,
+    /// Paused players hold their position (file index, loop counts, read
+    /// offset) and emit no frames until resumed — unlike `StopPlay`, which
+    /// destroys the player. Lets a controller pause a prompt while it
+    /// classifies a capture, then resume rather than restart.
+    paused: bool,
     /// Samples remaining before the current file's `stop_ms` boundary. `None`
     /// when the current file has no stop trim (read until EOF). Decremented
     /// each successful read; when it hits 0 we advance like an EOF.
@@ -67,6 +72,7 @@ impl Player {
             file_loop: 0,
             overall_loop: 0,
             finished: false,
+            paused: false,
             remaining_samples: None,
             source_sr: 8000,
         }
@@ -77,6 +83,18 @@ impl Player {
     }
     pub fn interrupts(&self) -> bool {
         self.spec.interrupt
+    }
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+    /// Returns true when this call changed the paused state (used to decide
+    /// whether a paused/resumed event is owed).
+    pub fn set_paused(&mut self, paused: bool) -> bool {
+        if self.paused == paused || self.finished {
+            return false;
+        }
+        self.paused = paused;
+        true
     }
 
     /// Read up to `samples_wanted` 16-bit samples, advancing through files
@@ -237,6 +255,41 @@ mod tests {
         w.write_samples(samples).await.unwrap();
         w.close().unwrap();
         p
+    }
+
+    #[tokio::test]
+    async fn pause_holds_position_and_resume_continues() {
+        // Pause must freeze the player in place — the next read after resume
+        // continues from exactly where it left off (resume, not restart).
+        let mut samples = vec![1i16; 400];
+        samples.extend(vec![2i16; 400]);
+        let p = make_wav("player_pause.wav", &samples).await;
+        let spec = SoundSoupSpec {
+            files: vec![SoundSoupFileSpec {
+                path: p.clone(),
+                start_ms: None,
+                stop_ms: None,
+                max_loops: None,
+            }],
+            overall_loops: None,
+            interrupt: false,
+        };
+        let mut pl = Player::new(spec);
+        let frame = pl.read(400).await;
+        assert!(frame.samples.iter().all(|&s| s == 1));
+
+        // Toggling reports the change; repeats are no-ops (no duplicate events
+        // owed). The tick layer stops calling read() while paused.
+        assert!(pl.set_paused(true));
+        assert!(!pl.set_paused(true));
+        assert!(pl.is_paused());
+        assert!(pl.set_paused(false));
+        assert!(!pl.set_paused(false));
+
+        // Continues from sample 400 — the second half, not the first again.
+        let frame = pl.read(400).await;
+        assert!(frame.samples.iter().all(|&s| s == 2));
+        let _ = std::fs::remove_file(&p);
     }
 
     #[tokio::test]

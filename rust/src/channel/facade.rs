@@ -105,6 +105,8 @@ fn event_to_payload(ev: Event) -> EventPayload {
                 match state {
                     PlayState::Start => "start",
                     PlayState::End => "end",
+                    PlayState::Paused => "paused",
+                    PlayState::Resumed => "resumed",
                 }
                 .into(),
             ),
@@ -305,6 +307,25 @@ impl ChannelObject {
     pub fn stopplay(&self) -> bool {
         let cmd = self.handle.cmd.clone();
         let _ = cmd.try_send(super::commands::Command::StopPlay);
+        true
+    }
+
+    /// Freeze the active player in place (position, loop counters) without
+    /// destroying it — the channel sends silence until `resumeplay()`. Emits
+    /// `play`/`paused`. Recorders are untouched. Fire-and-forget.
+    #[napi]
+    pub fn pauseplay(&self) -> bool {
+        let cmd = self.handle.cmd.clone();
+        let _ = cmd.try_send(super::commands::Command::PausePlay { pause: true });
+        true
+    }
+
+    /// Resume a player frozen by `pauseplay()` from where it left off —
+    /// resume, not restart. Emits `play`/`resumed`. Fire-and-forget.
+    #[napi]
+    pub fn resumeplay(&self) -> bool {
+        let cmd = self.handle.cmd.clone();
+        let _ = cmd.try_send(super::commands::Command::PausePlay { pause: false });
         true
     }
 

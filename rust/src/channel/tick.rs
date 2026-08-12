@@ -177,6 +177,11 @@ async fn tick_player(state: &mut ChannelState, subs: &mut Subsystems) -> Option<
     let mut player_frame: Option<Vec<i16>> = None;
     let mut player_just_ended = false;
     if let Some(player) = subs.player.as_mut() {
+        // A paused player holds its position and produces nothing — the tick
+        // sends silence and the player cannot finish until resumed.
+        if player.is_paused() {
+            return None;
+        }
         let frame = player.read(FRAME_SAMPLES).await;
         if !frame.samples.is_empty() {
             player_frame = Some(frame.samples);

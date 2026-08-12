@@ -159,6 +159,14 @@ pub enum Command {
     /// `playrecord({ concurrent: true })`: JS captures the answer while the
     /// prompt plays, then fires this to interrupt once the answer is acceptable.
     StopPlay,
+    /// `channel.pauseplay()` / `channel.resumeplay()` — freeze/unfreeze the
+    /// active player in place (position, loops) without destroying it, leaving
+    /// any recorder untouched. Fire-and-forget. Lets a controller pause the
+    /// prompt the moment the caller speaks and *resume* (not restart) it when
+    /// the capture turns out not to be an answer (e.g. a cough).
+    PausePlay {
+        pause: bool,
+    },
     Direction(Direction),
     /// Migrate this channel's state + subs into a mix group actor. The actor
     /// transitions from Local to Mixed mode; subsequent commands are
@@ -253,5 +261,11 @@ impl Handle {
     /// (no ack) — companion to `playrecord({ concurrent: true })`.
     pub async fn stop_play(&self) {
         let _ = self.cmd.send(Command::StopPlay).await;
+    }
+
+    /// Pause (true) or resume (false) the active player in place without
+    /// destroying it. Fire-and-forget (no ack).
+    pub async fn pause_play(&self, pause: bool) {
+        let _ = self.cmd.send(Command::PausePlay { pause }).await;
     }
 }

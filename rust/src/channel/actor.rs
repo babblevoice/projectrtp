@@ -172,6 +172,11 @@ pub enum Event {
 pub enum PlayState {
     Start,
     End,
+    /// The player was frozen in place by `pauseplay()` — it holds its
+    /// position and emits no frames until resumed.
+    Paused,
+    /// The player picked up where it left off after `resumeplay()`.
+    Resumed,
 }
 
 #[derive(Debug, Clone)]
@@ -1046,6 +1051,25 @@ async fn handle_command_local(
                 let _ = activate_pending_recorder(subs, &mut evs).await;
                 for ev in evs {
                     events.post(ev);
+                }
+            }
+            LocalOutcome::Continue
+        }
+
+        Command::PausePlay { pause } => {
+            // Freeze/unfreeze the player in place — nothing else is touched:
+            // recorders keep running, a pending recorder stays pending (the
+            // prompt is not over), and no play/end is emitted.
+            if let Some(p) = subs.player.as_mut() {
+                if p.set_paused(pause) {
+                    events.post(Event::Play {
+                        state: if pause {
+                            PlayState::Paused
+                        } else {
+                            PlayState::Resumed
+                        },
+                        reason: None,
+                    });
                 }
             }
             LocalOutcome::Continue

@@ -456,6 +456,70 @@ describe( "playrecord", function() {
     expect( both, "default both should contain the prompt" ).to.be.above( 1000 )
   } )
 
+  it( "pauseplay freezes the prompt and resumeplay continues (not restarts)", async function() {
+    /* the languagegate cough flow: caller speaks -> pause the prompt for
+       feedback; capture turns out not to be an answer -> resume from where
+       it left off. The prompt must complete naturally, delayed by roughly
+       the paused period, with paused/resumed events in between. */
+    this.timeout( 10000 )
+    this.slow( 8000 )
+
+    const server = dgram.createSocket( "udp4" )
+    server.on( "message", function() {} )
+    server.bind()
+    await new Promise( resolve => server.on( "listening", resolve ) )
+
+    const events = []
+    let done
+    const finished = new Promise( r => done = r )
+
+    const channel = await prtp.projectrtp.openchannel(
+      { "remote": { "address": "127.0.0.1", "port": server.address().port, "codec": 0 } },
+      function( d ) {
+        events.push( { ...d, at: Date.now() } )
+        if( "close" === d.action ) done()
+      }
+    )
+
+    const begin = Date.now()
+    /* 3s prompt */
+    expect( channel.playrecord( {
+      "soup": { "files": [ { "wav": "/tmp/pr_long_prompt.wav" } ] },
+      "record": { "file": "/tmp/pr_pause_rec.wav", "startabovepower": 100, "maxduration": 8000 },
+      "concurrent": true
+    } ) ).to.be.true
+
+    /* keep RTP flowing so the channel ticks */
+    const delayedjobs = []
+    for( let i = 0; 350 > i; i++ ) {
+      delayedjobs.push( sendpk( i, i, channel.local.port, server,
+        Buffer.alloc( 60000, prtp.projectrtp.codecx.linear162pcmu( 0 ) ) ) )
+    }
+
+    setTimeout( () => channel.pauseplay(), 500 )
+    setTimeout( () => channel.resumeplay(), 2000 )   /* paused ~1.5s */
+
+    await new Promise( resolve => setTimeout( resolve, 6000 ) )
+    channel.close()
+    await finished
+    delayedjobs.forEach( id => clearTimeout( id ) )
+    await new Promise( resolve => server.close( resolve ) )
+
+    const paused = events.find( e => "play" === e.action && "paused" === e.event )
+    const resumed = events.find( e => "play" === e.action && "resumed" === e.event )
+    expect( paused, "paused event emitted" ).to.exist
+    expect( resumed, "resumed event emitted" ).to.exist
+
+    const playend = events.find( e => "play" === e.action && "end" === e.event )
+    expect( playend, "prompt completed naturally after resume" ).to.exist
+    expect( playend.reason ).to.equal( "completed" )
+    /* 3s prompt + ~1.5s pause: completion must be pushed well past the
+       prompt's natural 3s end, proving resume (a restart from the top would
+       also delay it, but pause held position: total ~4.5s not ~5s+) */
+    const elapsed = playend.at - begin
+    expect( elapsed, "delayed by the paused period" ).to.be.within( 4000, 5600 )
+  } )
+
   it( "playrecord with record finish request", async function() {
     this.timeout( 3000 )
     this.slow( 2500 )
