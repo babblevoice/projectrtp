@@ -449,6 +449,19 @@ class projectrtp {
           setImmediate( () => { throw e } )
         }
       } )
+      /* The RTP sockets bind to 0.0.0.0, so a capture would otherwise record
+         our end as "0.0.0.0" and look broken to whoever opens it. Default the
+         capture's local address to the same address we advertise in SDP —
+         which is the address the far end is really sending to. An explicit
+         localaddress in the options still wins. */
+      const nativepcap = chan.pcap.bind( chan )
+      Object.defineProperty( chan, "pcap", {
+        value: ( options = {} ) => nativepcap( { "localaddress": localaddress, ...options } ),
+        writable: true,
+        configurable: true,
+        enumerable: false,
+      } )
+
       /* Build chan.local from the Rust napi-class getters (port/ssrc/icepwd/
          dtlsfingerprint). napi-rs class getters can't be replaced on the
          instance, so we attach `local` as a regular own-property here. */

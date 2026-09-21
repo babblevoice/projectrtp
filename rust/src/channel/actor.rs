@@ -160,6 +160,15 @@ pub enum Event {
         file: Option<String>,
         filesize: Option<u64>,
     },
+    /// A packet capture finished — carries the file so babble-rtp can ship it
+    /// off the node, exactly as it does for a finished recording.
+    Pcap {
+        reason: String,
+        file: String,
+        filesize: u64,
+        packets: u64,
+        skipped: u64,
+    },
     Telephone {
         digit: char,
     },
@@ -600,6 +609,16 @@ async fn run(
             filesize: Some(size),
         });
     }
+    if let Some(mut cap) = state.pcap.take() {
+        let _ = cap.finish();
+        events.post(Event::Pcap {
+            reason: "channelclosed".into(),
+            file: cap.path().to_string_lossy().into_owned(),
+            filesize: cap.bytes(),
+            packets: cap.packets(),
+            skipped: cap.skipped(),
+        });
+    }
     // Drop readers — their mpsc senders close, forwarder tasks exit, JS
     // `Readable.push(null)` fires `end`. No event emitted here: the
     // JS-side Readable already signals `end`/`close` to userland.
@@ -963,6 +982,52 @@ async fn handle_command_local(
                 } else {
                     rec.resume();
                 }
+            }
+            LocalOutcome::Continue
+        }
+
+        Command::Pcap { cfg, ack } => {
+            // Replace any capture already running: one per channel keeps the
+            // arm/disarm lifecycle in the control plane unambiguous.
+            if let Some(mut old) = state.pcap.take() {
+                let _ = old.finish();
+                events.post(Event::Pcap {
+                    reason: "replaced".into(),
+                    file: old.path().to_string_lossy().into_owned(),
+                    filesize: old.bytes(),
+                    packets: old.packets(),
+                    skipped: old.skipped(),
+                });
+            }
+            match super::pcap::PcapWriter::create(&cfg) {
+                Ok(w) => state.pcap = Some(w),
+                Err(e) => {
+                    // Capture is diagnostic: a bad path must never fail the
+                    // call, so report it as an event and carry on - matching
+                    // how a recorder that cannot open its file behaves.
+                    events.post(Event::Pcap {
+                        reason: format!("open-failed: {e}"),
+                        file: cfg.file.to_string_lossy().into_owned(),
+                        filesize: 0,
+                        packets: 0,
+                        skipped: 0,
+                    });
+                }
+            }
+            let _ = ack.send(());
+            LocalOutcome::Continue
+        }
+
+        Command::PcapFinish => {
+            if let Some(mut cap) = state.pcap.take() {
+                let _ = cap.finish();
+                events.post(Event::Pcap {
+                    reason: "requested".into(),
+                    file: cap.path().to_string_lossy().into_owned(),
+                    filesize: cap.bytes(),
+                    packets: cap.packets(),
+                    skipped: cap.skipped(),
+                });
             }
             LocalOutcome::Continue
         }
