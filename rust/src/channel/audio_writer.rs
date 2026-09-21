@@ -135,8 +135,9 @@ impl AudioWriter {
                 Ok(bytes) => {
                     // L16 LE → i16. Any trailing odd byte is dropped —
                     // consumers should always write whole samples.
-                    for chunk in bytes.chunks_exact(2) {
-                        self.buffered.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+                    let (samples, _) = bytes.as_chunks::<2>();
+                    for pair in samples {
+                        self.buffered.push(i16::from_le_bytes(*pair));
                     }
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
