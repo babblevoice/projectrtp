@@ -50,6 +50,7 @@ pub type SoundSoup = super::player::SoundSoupSpec;
 /// Same struct the recorder subsystem uses — the facade does all JS→Rust
 /// parsing, so Command payloads are already fully-typed.
 pub type RecordConfig = super::recorder::RecorderConfig;
+pub type PcapConfig = super::pcap::PcapConfig;
 
 #[derive(Debug, Clone)]
 pub struct PlayRecordConfig {
@@ -113,6 +114,17 @@ pub enum Command {
         file: std::path::PathBuf,
         paused: bool,
     },
+    /// `channel.pcap({ file: "..." })` — start writing this channel's RTP to
+    /// a libpcap file. One capture per channel: arming again replaces the
+    /// current one, which keeps the arm/disarm lifecycle in the control plane
+    /// simple (there is no per-file keying as there is for recorders).
+    Pcap {
+        cfg: PcapConfig,
+        ack: Ack,
+    },
+    /// `channel.pcap({ finish: true })` — close the capture and emit its
+    /// `pcap` event. Fire-and-forget: the event carries the result.
+    PcapFinish,
     PlayRecord {
         cfg: PlayRecordConfig,
         ack: Ack,
@@ -246,6 +258,19 @@ impl Handle {
             .await
             .map_err(|_| ())?;
         rx.await.map_err(|_| ())
+    }
+
+    pub async fn pcap(&self, cfg: PcapConfig) -> Result<(), ()> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd
+            .send(Command::Pcap { cfg, ack: tx })
+            .await
+            .map_err(|_| ())?;
+        rx.await.map_err(|_| ())
+    }
+
+    pub async fn pcap_finish(&self) {
+        let _ = self.cmd.send(Command::PcapFinish).await;
     }
 
     pub async fn play_record(&self, cfg: PlayRecordConfig) -> Result<(), ()> {

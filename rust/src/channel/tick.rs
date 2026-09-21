@@ -74,6 +74,13 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
             break;
         };
         popped_any = true;
+        // Capture tap (inbound). Deliberately before the DTMF branch: a
+        // capture is meant to show everything that was on the wire, and
+        // rfc2833 digits are usually exactly what someone is chasing. This is
+        // the cleartext side of SRTP - `pop_and_decrypt_inbound` has already
+        // decrypted - which is the whole reason capture lives here and not in
+        // a tcpdump sidecar.
+        state.capture(super::pcap::PcapDirection::In, &pk);
         if pk.payload_type() == state.rfc2833_pt {
             classify_dtmf_inbound(state, subs, &pk).await;
             continue;
@@ -607,6 +614,11 @@ async fn send_rtp(state: &mut ChannelState, pkt: &RtpPacket, remote: SocketAddr)
     if state.secure_not_ready() {
         return;
     }
+    // Capture tap (outbound). Before `encrypt_rtp` below, so the file holds
+    // cleartext. send_rtp is the single funnel for player, echo and dtmf, so
+    // one tap here covers every outbound path.
+    state.capture(super::pcap::PcapDirection::Out, pkt);
+
     // Payload octets (excludes the RTP header) — the RTCP SR octet count.
     let octets = pkt.payload_len() as u64;
     if let Some(ref mut ctx) = state.srtp_encrypt {

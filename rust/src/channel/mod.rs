@@ -24,6 +24,7 @@ pub mod dtmf;
 pub mod facade;
 pub mod jitter;
 pub mod mixer;
+pub mod pcap;
 pub mod player;
 pub mod recorder;
 pub mod recv_loop;

@@ -354,6 +354,66 @@ channel.record( {
 } )
 ```
 
+### Packet capture — `channel.pcap`
+
+Write the channel's RTP to a pcap file. This is the media half of a call
+capture: the SIP side is captured by drachtio's native HEP support, the media
+side here.
+
+The taps sit either side of the crypto boundary — inbound after decryption,
+outbound before encryption — so an SRTP or DTLS-SRTP call captures as
+**cleartext RTP**. There is no key material to hand over and nothing to decrypt
+afterwards; the file opens and plays in Wireshark as-is.
+
+Both directions are captured, including RFC 2833 DTMF, and packets generated
+locally (player, tone, echo, mixed audio from a peer channel).
+
+```js
+channel.pcap( {
+  "file": "/tmp/capture/pcap/<uuid>.pcap",
+  "maxsize": 5 * 1024 * 1024,  /* bytes, optional */
+  "maxduration": 60 * 1000     /* mS, optional */
+} )
+
+channel.pcap( { "finish": true } )   /* stop early; closing the channel also finishes */
+```
+
+file = &lt;string&gt; - filename to write. Required; without it the call returns false.
+maxsize = &lt;int&gt; - stop once the file would exceed this many bytes
+maxduration = &lt;int&gt; - stop after this many mS
+localaddress = &lt;string&gt; - address to record as our own end. Defaults to the
+address configured with `setaddress()`, i.e. the one advertised in SDP. The RTP
+sockets bind to 0.0.0.0, so without this a capture names one end "0.0.0.0" and
+reads as broken.
+
+Exactly one capture runs per channel; arming a second replaces the first
+(the replaced one is finished and reported with `reason: "replaced"`).
+
+Completion is reported as an event, whether it ended because it was asked to,
+hit a limit, or the channel closed. A capture that hits a limit, or cannot be
+written, is reported at that moment rather than when the channel closes, so the
+file can be collected while the call is still up:
+
+```js
+{
+  action: "pcap",
+  event: "finished.requested",   /* requested | maxsize | maxduration | replaced | channelclosed | open-failed: <err> | write-failed: <err> */
+  reason: "requested",
+  file: "/tmp/capture/pcap/<uuid>.pcap",
+  filesize: 23024,
+  packets: 100,                  /* packets written */
+  skipped: 0                     /* IPv6 packets, which are counted but not written */
+}
+```
+
+Files are written as `LINKTYPE_ETHERNET` with synthetic locally-administered
+MACs (`02:00:00:00:00:0x`). Ethernet rather than `LINKTYPE_RAW` because it is
+what every tool reads, including this repo's own pcap decoder in
+`test/interface/pcap.js` — which means a capture taken from a live call can be
+replayed straight into the DTMF and codec tests. IP header checksums are
+computed; UDP checksums are left at 0 ("not computed"), which is valid over
+IPv4 and preferable to a wrong value.
+
 ### Live audio — `channel.createReadStream`
 
 Returns a standard Node `Readable` that emits decoded audio buffers as the channel receives / sends them. Use this to feed the audio into anything that takes a stream — STT, translation, captioning, WebSocket forwarders, on-disk capture — without going through the recorder / file path.

@@ -99,9 +99,51 @@ pub struct ChannelState {
     /// Publishes DTLS keying material to the inbound RTCP loop once the
     /// handshake completes, so it can build its SRTCP decrypt context.
     pub srtp_key_tx: Option<watch::Sender<Option<SrtpKeyingMaterial>>>,
+    /// Active packet capture, if armed (Command::Pcap). Lives here rather
+    /// than in Subsystems because it is about the socket - it is written from
+    /// the tick's two cleartext taps using `local_addr`/`remote_addr`, and
+    /// `send_rtp` only carries `state`.
+    pub pcap: Option<super::pcap::PcapWriter>,
 }
 
 impl ChannelState {
+    /// Write one packet to this channel's capture, if one is armed.
+    ///
+    /// Called from the cleartext side of the crypto boundary on both the
+    /// local tick and the mixer: inbound straight after SRTP decrypt,
+    /// outbound just before encrypt. Cheap and non-fatal by design - it sits
+    /// on the media hot path, so a full disk or a reached size limit simply
+    /// closes the capture and the call carries on untouched.
+    pub fn capture(&mut self, direction: super::pcap::PcapDirection, pkt: &super::rtp::RtpPacket) {
+        let Some(remote) = *self.remote_addr.lock() else {
+            // Before the far end is known there is no flow to describe.
+            return;
+        };
+        let local = self.local_addr;
+        let Some(cap) = self.pcap.as_mut() else {
+            return;
+        };
+        let reason = match cap.write_packet(direction, local, remote, pkt.as_slice()) {
+            Ok(true) => return,
+            Ok(false) => cap.stop_reason().unwrap_or("finished").to_string(),
+            Err(e) => format!("write-failed: {e}"),
+        };
+        // A limit was reached, or the file could not be written: this capture
+        // is over. Report it now, with why, rather than holding the writer
+        // until the channel closes - so the file can be uploaded straight away
+        // instead of when the call ends.
+        if let Some(mut cap) = self.pcap.take() {
+            let _ = cap.finish();
+            self.pending_events.push(Event::Pcap {
+                reason,
+                file: cap.path().to_string_lossy().into_owned(),
+                filesize: cap.bytes(),
+                packets: cap.packets(),
+                skipped: cap.skipped(),
+            });
+        }
+    }
+
     pub fn new(
         id: ChannelId,
         local_addr: SocketAddr,
@@ -114,6 +156,7 @@ impl ChannelState {
             local_addr,
             remote_addr: Arc::new(PLMutex::new(None)),
             remote: None,
+            pcap: None,
             direction: Direction::default(),
             rtp_sock: Arc::new(rtp_sock),
             rtcp_sock: Arc::new(rtcp_sock),
