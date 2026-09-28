@@ -729,6 +729,33 @@ describe( "rtpproxy server", function() {
     p.destroy()
   } )
 
+  it( "relaylimits reach a relay leg opened on a remote node", async function() {
+
+    /* the abuse limits are enforced in the node's native relay, so they
+       must survive the node protocol - and a proxied leg opened without
+       them must still get the defaults */
+    const ourport = getnextport()
+    prtp.server.clearnodes()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    const ournode = await prtp.node.connect( ourport, "127.0.0.1" )
+
+    const limited = await prtp.openchannel( { "relay": true, "relaylimits": { "bitrate": 500000, "framerate": 15, "maxfs": 0 } } )
+    const defaulted = await prtp.openchannel( { "relay": true } )
+    expect( limited.connection ).to.be.an( "object" ) /* proxied, not local */
+
+    const l = await limited.livestats()
+    expect( l.relaylimits ).to.deep.equal( { "bitrate": 500000, "burst": 62500, "packetrate": 1000, "framerate": 15, "maxfs": 0 } )
+    expect( l.in ).to.include( { "ratedropped": 0, "framedropped": 0, "oversizedropped": 0 } )
+    const d = await defaulted.livestats()
+    expect( d.relaylimits ).to.deep.equal( { "bitrate": 2000000, "burst": 250000, "packetrate": 1000, "framerate": 30, "maxfs": 3600 } )
+
+    await limited.close()
+    await defaulted.close()
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    ournode.destroy()
+    p.destroy()
+  } )
+
   it( "livestats carries a relay leg's stream mapping over the node protocol", async function() {
 
     const dgram = require( "dgram" )

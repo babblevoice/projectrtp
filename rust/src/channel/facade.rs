@@ -669,6 +669,12 @@ impl ChannelObject {
         obj.set_named_property("in", in_o)?;
         obj.set_named_property("out", out_o)?;
         obj.set_named_property("relay", env.get_boolean(self.relay.is_some())?)?;
+        // The abuse limits the leg's inbound is held to (effective values),
+        // beside the `in.ratedropped` / `framedropped` / `oversizedropped`
+        // they explain.
+        if self.relay.is_some() {
+            obj.set_named_property("relaylimits", relay_limits_object(&env, &c.limits)?)?;
+        }
         // The outbound streams this leg forwards — one per source stream:
         // `{ source: <source channel uuid>, ssrc, sourcessrc, pt }`. What a
         // signalling layer announces (a=ssrc / msid) for a group of 3+.
@@ -799,9 +805,63 @@ fn set_relay_counters(
     in_o.set_named_property("rtcp", env.create_int64(c.rtcp_in as i64)?)?;
     in_o.set_named_property("decryptfailed", env.create_int64(c.decrypt_failed as i64)?)?;
     in_o.set_named_property("prekey", env.create_int64(c.prekey_dropped as i64)?)?;
+    in_o.set_named_property("ratedropped", env.create_int64(c.rate_dropped as i64)?)?;
+    in_o.set_named_property("framedropped", env.create_int64(c.frame_dropped as i64)?)?;
+    in_o.set_named_property(
+        "oversizedropped",
+        env.create_int64(c.oversize_dropped as i64)?,
+    )?;
     out_o.set_named_property("dropped", env.create_int64(c.dropped as i64)?)?;
     out_o.set_named_property("ptdropped", env.create_int64(c.pt_dropped as i64)?)?;
     Ok(())
+}
+
+/// A relay leg's effective abuse limits as the `relaylimits` object of
+/// livestats() and close stats — the shape `openchannel` takes, with `burst`
+/// resolved (0 = unlimited throughout).
+fn relay_limits_object(env: &Env, l: &super::relay_limits::RelayLimits) -> Result<Object> {
+    let mut o = env.create_object()?;
+    o.set_named_property("bitrate", env.create_int64(l.bitrate as i64)?)?;
+    o.set_named_property("burst", env.create_int64(l.burst as i64)?)?;
+    o.set_named_property("packetrate", env.create_int64(l.packetrate as i64)?)?;
+    o.set_named_property("framerate", env.create_int64(l.framerate as i64)?)?;
+    o.set_named_property("maxfs", env.create_int64(l.maxfs as i64)?)?;
+    Ok(o)
+}
+
+/// `openchannel({ relay: true, relaylimits })` — see relay_limits.rs. Every
+/// field is optional and a missing one takes `RelayLimits::DEFAULT`, as does
+/// the whole object when absent: a relay leg is protected whether or not the
+/// caller remembers to ask. `0` is unlimited. A value that is not a finite,
+/// non-negative number also takes the default — failing safe, not open.
+fn extract_relay_limits(params: &Object) -> super::relay_limits::RelayLimits {
+    let mut l = super::relay_limits::RelayLimits::DEFAULT;
+    let Ok(o) = params.get_named_property::<Object>("relaylimits") else {
+        return l;
+    };
+    let field = |name: &str| -> Option<u64> {
+        let v = o.get_named_property::<napi::JsUnknown>(name).ok()?;
+        if v.get_type().ok()? != napi::ValueType::Number {
+            return None;
+        }
+        super::relay_limits::limit_from_number(v.coerce_to_number().ok()?.get_double().ok()?)
+    };
+    if let Some(v) = field("bitrate") {
+        l.bitrate = v;
+    }
+    if let Some(v) = field("burst") {
+        l.burst = v;
+    }
+    if let Some(v) = field("packetrate") {
+        l.packetrate = v;
+    }
+    if let Some(v) = field("framerate") {
+        l.framerate = v;
+    }
+    if let Some(v) = field("maxfs") {
+        l.maxfs = v;
+    }
+    l
 }
 
 #[cfg_attr(not(test), napi(object))]
@@ -1265,6 +1325,7 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
         .get_named_property::<bool>("relay")
         .ok()
         .unwrap_or(false);
+    let relay_limits = extract_relay_limits(&params);
     let rfc2833_pt = extract_rfc2833_pt(&params);
     let ilbc_pt = extract_ilbc_pt(&params).unwrap_or(97);
     let override_local_icepwd = extract_local_icepwd(&params);
@@ -1323,6 +1384,7 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
                     if let Some(c) = &stats.relay {
                         set_relay_counters(&env, &mut in_o, &mut out_o, c)?;
                         s.set_named_property("relay", env.get_boolean(true)?)?;
+                        s.set_named_property("relaylimits", relay_limits_object(&env, &c.limits)?)?;
                     }
                     s.set_named_property("in", in_o)?;
                     s.set_named_property("out", out_o)?;
@@ -1422,7 +1484,8 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
             data_tx,
             initial_remote_dtls.is_some(),
             remote_pt as u32,
-        );
+        )
+        .with_limits(relay_limits);
         // index.js passes the JS channel's uuid, so `livestats().streams`
         // names each source the way callers (and the node protocol) do.
         if let Ok(uuid) = params.get_named_property::<String>("uuid") {

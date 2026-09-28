@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 use super::dtls_session::{remote_srtp_params, SrtpKeyingMaterial};
 use super::jitter::JitterBuffer;
 use super::relay::{self, RelayShared};
+use super::relay_limits::{InboundGuard, Verdict};
 use super::rtcp_loop;
 use super::rtcp_stats::{RemoteReport, RxStats};
 use super::rtp::{self, RtpPacket};
@@ -37,13 +38,18 @@ pub struct RelayRecv {
     /// Highest authenticated RTP sequence / SRTCP index seen per SSRC — a
     /// secure leg's remote moves only for a packet newer than these.
     pub fresh: PLMutex<Freshness>,
+    /// The leg's abuse limits, applied to every accepted packet before
+    /// fan-out (see relay_limits.rs). Only this loop takes it — a leaf.
+    pub guard: PLMutex<InboundGuard>,
 }
 
 impl RelayRecv {
     pub fn new(own: Arc<RelayShared>) -> Self {
+        let guard = PLMutex::new(InboundGuard::new(own.limits()));
         Self {
             own,
             fresh: PLMutex::new(Freshness::default()),
+            guard,
         }
     }
 }
@@ -566,10 +572,26 @@ async fn handle_packet(
                 // a forged packet, or an RTX / FEC stream under its own SSRC
                 // and PT, must not re-point keyframe requests away from the
                 // main stream.
-                if relay_cfg.own.pts().declares(rp.payload_type()) {
+                let pts = relay_cfg.own.pts();
+                if pts.declares(rp.payload_type()) {
                     rx_account(cfg, rp.as_slice());
                 }
                 relay_cfg.own.accepted.fetch_add(1, Ordering::Relaxed);
+                // Abuse limits (bitrate, packet rate, frame rate, resolution)
+                // — after authentication, so only our remote's own packets
+                // spend its budget, and before fan-out, so nothing over the
+                // limits reaches any receiver. Still accounted above: the
+                // PLI a receiver sends must name the source even while its
+                // stream is being refused, or it can never recover.
+                let verdict = relay_cfg.guard.lock().check(
+                    rp.as_slice(),
+                    pts.format_of(rp.payload_type()),
+                    Instant::now(),
+                );
+                if verdict != Verdict::Forward {
+                    relay_cfg.own.count_refused(verdict);
+                    return;
+                }
                 relay_cfg.own.fan_out(rp);
             }
             return;
@@ -1468,6 +1490,85 @@ mod tests {
                 &rtp[..],
                 "forwarded bytes are not the plaintext"
             );
+        }
+
+        /// The abuse limits sit between authentication and fan-out: forged
+        /// packets never spend a leg's budget, a packet over it reaches no
+        /// receiver and is counted, and an oversized keyframe is refused
+        /// while the PLI target still follows its stream (so the receiver's
+        /// keyframe request can reach it and recover the picture).
+        #[tokio::test]
+        async fn abuse_limits_apply_to_authenticated_packets_before_fan_out() {
+            use crate::channel::relay::PtMap;
+            use crate::channel::relay_limits::RelayLimits;
+            use crate::channel::video_dims::tests::vp8_payload;
+            let mut r = rig().await;
+            let from: SocketAddr = "127.0.0.1:9".parse().unwrap();
+            let (mut rtcp_ctx, mut rtp_ctx, mut gates) = (None, None, RelayGates::default());
+            let (own_tx, _own_rx) = mpsc::channel(4);
+            let own = Arc::new(
+                RelayShared::new(10, own_tx, true, 96).with_limits(RelayLimits {
+                    packetrate: 3,
+                    ..RelayLimits::DEFAULT
+                }),
+            );
+            own.set_pts(PtMap::new(96, [("vp8".to_string(), 96)]));
+            let (tx, mut rx) = mpsc::channel(16);
+            let peer = Arc::new(RelayShared::new(11, tx, false, 96));
+            assert!(relay::join(&own, &peer));
+            r.cfg.relay = Some(RelayRecv::new(own.clone()));
+            r.key_tx.send(Some(keys())).unwrap();
+            let mut enc = remote_encryptor();
+            let pkt = |sn: u8, ts: u8, payload: &[u8]| {
+                let mut p = vec![0x80u8, 96, 0, sn, 0, 0, 0, ts, 0, 0, 0, 0x55];
+                p.extend_from_slice(payload);
+                p
+            };
+            let inter = vp8_payload(false, true, 0, 0);
+
+            // Forged packets: refused by SRTP, so they cost the leg nothing.
+            for sn in 1..=10 {
+                let forged = pkt(sn, 1, &inter);
+                handle_packet(
+                    &r.cfg,
+                    &forged,
+                    from,
+                    &mut rtcp_ctx,
+                    &mut rtp_ctx,
+                    &mut gates,
+                )
+                .await;
+            }
+            // 1080p keyframe: authenticated, refused, counted — and still
+            // the stream a PLI names.
+            let big = enc
+                .encrypt_rtp(&pkt(1, 2, &vp8_payload(true, true, 1920, 1080)))
+                .unwrap();
+            handle_packet(&r.cfg, &big, from, &mut rtcp_ctx, &mut rtp_ctx, &mut gates).await;
+            assert!(rx.try_recv().is_err(), "oversized keyframe forwarded");
+            let c = own.snapshot();
+            assert_eq!(
+                (c.accepted, c.oversize_dropped, c.decrypt_failed),
+                (1, 1, 10)
+            );
+            assert_eq!(r.cfg.rx_stats.lock().remote_ssrc, Some(0x55));
+
+            // 720p keyframe then interframes: 3 packets/s admits exactly 3.
+            let ok = enc
+                .encrypt_rtp(&pkt(2, 3, &vp8_payload(true, true, 1280, 720)))
+                .unwrap();
+            handle_packet(&r.cfg, &ok, from, &mut rtcp_ctx, &mut rtp_ctx, &mut gates).await;
+            for sn in 3..=6 {
+                let e = enc.encrypt_rtp(&pkt(sn, 4, &inter)).unwrap();
+                handle_packet(&r.cfg, &e, from, &mut rtcp_ctx, &mut rtp_ctx, &mut gates).await;
+            }
+            let mut forwarded = 0;
+            while rx.try_recv().is_ok() {
+                forwarded += 1;
+            }
+            assert_eq!(forwarded, 3);
+            let c = own.snapshot();
+            assert_eq!((c.rate_dropped, c.oversize_dropped, c.accepted), (2, 1, 6));
         }
     }
 

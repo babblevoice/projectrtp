@@ -24,10 +24,15 @@
 // translated into the source's own series, so the source browser
 // retransmits the packets the receiver lost.
 //
+// Abuse limits: before fan-out, the source leg's recv_loop holds every
+// authenticated inbound RTP packet to the leg's `RelayLimits` (bitrate,
+// packet rate, per-stream frame rate and resolution) — see relay_limits.rs.
+// A guest's modified browser can ignore every SDP limit; this cannot be.
+//
 // Lock order (deadlock safety): a leg's `group` slot, then the group's
 // member list; when two slots are held (`join`) they are taken in
-// ascending leg-id order. `retired`, `out_routes`, `pts`, `nacks`, `nack_limit` are leaves — nothing is
-// locked while holding them. The per-packet path never holds a slot while
+// ascending leg-id order. `retired`, `out_routes`, `pts`, `nacks`, `nack_limit` and the
+// recv loop's `RelayRecv::guard` are leaves — nothing is locked while holding them. The per-packet path never holds a slot while
 // taking another lock: it clones the group handle and releases the slot.
 //
 // Why not make the tick pipeline polymorphic: the audio tick pops exactly
@@ -62,8 +67,10 @@ use tokio::sync::{mpsc, watch, Notify};
 use tokio_util::sync::CancellationToken;
 
 use super::dtls_session::{local_srtp_params, SrtpKeyingMaterial};
+use super::relay_limits::RelayLimits;
 use super::rtcp_stats::RxStats;
 use super::rtp::RtpPacket;
+use super::video_dims::VideoFormat;
 
 /// Depth of the per-leg forward queue. Sized for a keyframe burst at
 /// near-MTU packets (a 250 KB IDR is ~200 packets); beyond that we drop
@@ -164,6 +171,27 @@ impl PtMap {
     /// Does the leg negotiate `pt` (or declare nothing, so any PT goes)?
     pub fn declares(&self, pt: u8) -> bool {
         self.is_empty() || self.primary == Some(pt) || self.named.iter().any(|(_, p)| *p == pt)
+    }
+
+    /// The payload format `pt` is negotiated as on this leg, from the label
+    /// `remote.codecs` gives it: "vp8" or "h264" (optionally followed by
+    /// "/<profile>" and anything else). `None` when the PT has no label, a
+    /// label naming another codec, or labels naming two different formats —
+    /// the relay's resolution limit never guesses (see relay_limits.rs).
+    pub fn format_of(&self, pt: u8) -> Option<VideoFormat> {
+        let mut found = None;
+        for (label, _) in self.named.iter().filter(|(_, p)| *p == pt) {
+            let fmt = match label.split('/').next().map(str::trim) {
+                Some("vp8") => VideoFormat::Vp8,
+                Some("h264") => VideoFormat::H264,
+                _ => return None,
+            };
+            if found.is_some_and(|f| f != fmt) {
+                return None;
+            }
+            found = Some(fmt);
+        }
+        found
     }
 
     /// The PT a packet sent under `pt` on a leg with map `src` goes out
@@ -277,7 +305,10 @@ pub struct RelayShared {
     /// signal; see `liveness()`.
     pub in_count: AtomicU64,
     /// Inbound RTP accepted for forwarding: decrypted and authenticated on
-    /// a secure leg, or simply well-formed on a clear one.
+    /// a secure leg, or simply well-formed on a clear one. Counted before
+    /// the abuse limits (`rate_dropped` / `frame_dropped` /
+    /// `oversize_dropped` are subsets of it): a remote being policed is
+    /// still a live remote.
     pub accepted: AtomicU64,
     /// Inbound RTCP (muxed on the RTP port) accepted the same way. Counts
     /// towards liveness: a browser that turns its camera off stops sending
@@ -305,6 +336,17 @@ pub struct RelayShared {
     /// Packets dropped because the forward queue was full (keyframe burst
     /// overrunning the peer) — surfaced in stats, never silent.
     pub dropped: AtomicU64,
+    /// The abuse limits inbound RTP from our remote is held to (see
+    /// relay_limits.rs), as effective. Fixed at open.
+    limits: RelayLimits,
+    /// Authenticated inbound RTP not forwarded because it was over the
+    /// leg's bitrate or packet rate.
+    pub rate_dropped: AtomicU64,
+    /// ...because its frame was over its stream's frame rate.
+    pub frame_dropped: AtomicU64,
+    /// ...because its stream's latest keyframe / SPS was over max-fs (or
+    /// unreadable).
+    pub oversize_dropped: AtomicU64,
 }
 
 impl RelayShared {
@@ -333,7 +375,34 @@ impl RelayShared {
             pt_dropped: AtomicU64::new(0),
             secure: AtomicBool::new(secure),
             dropped: AtomicU64::new(0),
+            limits: RelayLimits::DEFAULT.effective(),
+            rate_dropped: AtomicU64::new(0),
+            frame_dropped: AtomicU64::new(0),
+            oversize_dropped: AtomicU64::new(0),
         }
+    }
+
+    /// Hold inbound RTP to `limits` instead of `RelayLimits::DEFAULT`.
+    pub fn with_limits(mut self, limits: RelayLimits) -> Self {
+        self.limits = limits.effective();
+        self
+    }
+
+    /// The limits inbound RTP is held to, as effective.
+    pub fn limits(&self) -> RelayLimits {
+        self.limits
+    }
+
+    /// Count one packet the inbound guard refused.
+    pub fn count_refused(&self, v: super::relay_limits::Verdict) {
+        use super::relay_limits::Verdict;
+        let c = match v {
+            Verdict::Forward => return,
+            Verdict::Rate => &self.rate_dropped,
+            Verdict::Frame => &self.frame_dropped,
+            Verdict::Oversize => &self.oversize_dropped,
+        };
+        c.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Name this leg as a source (see `label`).
@@ -565,6 +634,10 @@ impl RelayShared {
             out_count: self.out_count.load(Ordering::Relaxed),
             dropped: self.dropped.load(Ordering::Relaxed),
             pt_dropped: self.pt_dropped.load(Ordering::Relaxed),
+            rate_dropped: self.rate_dropped.load(Ordering::Relaxed),
+            frame_dropped: self.frame_dropped.load(Ordering::Relaxed),
+            oversize_dropped: self.oversize_dropped.load(Ordering::Relaxed),
+            limits: self.limits,
         }
     }
 }
@@ -633,6 +706,12 @@ pub struct RelayCounters {
     pub out_count: u64,
     pub dropped: u64,
     pub pt_dropped: u64,
+    pub rate_dropped: u64,
+    pub frame_dropped: u64,
+    pub oversize_dropped: u64,
+    /// The effective limits (not a counter; carried so close stats can
+    /// report them alongside the drops they explain).
+    pub limits: RelayLimits,
 }
 
 /// `mix(a, b)` for relay legs — the audio mix's group rules: both
@@ -1912,6 +1991,32 @@ mod tests {
         // A source that declared nothing has no codec to map from.
         assert_eq!(dst.map_from(&none, 96), None);
         assert!(src.declares(96) && !src.declares(97) && none.declares(97));
+    }
+
+    /// The resolution limit needs a PT's payload format, and only a
+    /// `remote.codecs` label names one — never guessed from a bare PT.
+    #[test]
+    fn pt_map_format_comes_from_the_codec_label_only() {
+        use crate::channel::video_dims::VideoFormat;
+        let m = PtMap::new(
+            96,
+            named(&[
+                ("VP8", 96),
+                ("h264/42e01f", 102),
+                ("H264", 104),
+                ("av1", 45),
+            ]),
+        );
+        assert_eq!(m.format_of(96), Some(VideoFormat::Vp8));
+        assert_eq!(m.format_of(102), Some(VideoFormat::H264));
+        assert_eq!(m.format_of(104), Some(VideoFormat::H264));
+        assert_eq!(m.format_of(45), None);
+        assert_eq!(m.format_of(97), None);
+        // primary only: unknown
+        assert_eq!(PtMap::new(96, []).format_of(96), None);
+        // one PT labelled as two formats: unknown
+        let m = PtMap::new(0, named(&[("vp8", 96), ("h264", 96)]));
+        assert_eq!(m.format_of(96), None);
     }
 
     #[test]

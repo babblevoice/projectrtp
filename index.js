@@ -185,8 +185,13 @@ class proxy {
  * @property { function } stopplay
  * @property { function } direction
  * @property { function } livestats - live media-flow counters (a Promise on a proxied channel):
- *   { relay, in: { count, accepted, rtcp, decryptfailed, prekey }, out: { count, dropped, ptdropped },
- *   streams: [ { source, ssrc, sourcessrc, pt } ] }. On a relay leg `streams` is its current outbound
+ *   { relay, in: { count, accepted, rtcp, decryptfailed, prekey, ratedropped, framedropped,
+ *   oversizedropped }, out: { count, dropped, ptdropped }, relaylimits: { bitrate, burst, packetrate,
+ *   framerate, maxfs }, streams: [ { source, ssrc, sourcessrc, pt } ] }. On a relay leg
+ *   in.ratedropped / in.framedropped / in.oversizedropped count authenticated inbound RTP refused by
+ *   the leg's relaylimits (a subset of in.accepted - never forwarded), and relaylimits are the
+ *   limits in force (burst resolved; see openchannel). Close stats of a relay leg carry the same
+ *   in.* / out.* counters and relaylimits. On a relay leg `streams` is its current outbound
  *   stream mapping, read-only: one entry per stream it forwards - `source` the uuid of the channel the
  *   stream comes from, `ssrc` the SSRC this leg sends it under (the leg's own local.ssrc for the first
  *   source's main stream), `sourcessrc` the source's own SSRC, `pt` the payload type it goes out under.
@@ -226,6 +231,27 @@ class proxy {
  * @param { boolean } [ properties.remote.rtcpmux = false ] - RFC 5761 rtcp-mux: carry RTCP over the RTP port/5-tuple instead of the separate P+1 control port. Set from the SDP `a=rtcp-mux` attribute.
  * @param { boolean } [ properties.relay = false ] - open a tick-free relay (video) leg: RTP is
  *   forwarded to the other legs it is mix()ed with, never decoded
+ * @param { Object } [ properties.relaylimits ] - relay legs only: abuse limits on the RTP this leg's
+ *   remote sends, enforced before it is forwarded (SDP limits only bind an honest browser). Every
+ *   field is optional: a missing field - or the whole object - takes its default, so a relay leg is
+ *   always protected; only an explicit 0 means unlimited; a value is rounded to an integer, and one
+ *   that is not a number, is negative or rounds to 0 (0.4, say) takes the default.
+ *   Refused packets are counted in livestats() (in.ratedropped, in.framedropped, in.oversizedropped).
+ * @param { number } [ properties.relaylimits.bitrate = 2000000 ] - bits/s of inbound RTP (header and
+ *   payload) for the leg, all its SSRCs together; a token bucket, packets over it are dropped
+ * @param { number } [ properties.relaylimits.burst = 0 ] - bitrate bucket depth in bytes; 0 = one
+ *   second of bitrate (250000 at 2 Mbit/s), enough for an honest keyframe
+ * @param { number } [ properties.relaylimits.packetrate = 1000 ] - RTP packets/s for the leg, bucket
+ *   one second deep
+ * @param { number } [ properties.relaylimits.framerate = 30 ] - frames/s per source stream (SSRC),
+ *   a frame being a distinct RTP timestamp. Enforced with 1.5x tolerance (a bucket refilling at
+ *   45 frames/s, 45 deep) so an honest sender's jitter and bunching is never cut; frames over it are
+ *   dropped whole
+ * @param { number } [ properties.relaylimits.maxfs = 3600 ] - largest frame in 16x16 macroblocks
+ *   (3600 = 1280x720), each side at most sqrt(8 * maxfs) macroblocks so portrait fits too (RFC
+ *   6184/7741 max-fs). Read from VP8 keyframes and H.264 SPS - only for PTs remote.codecs labels
+ *   "vp8" or "h264[/...]"; a PT given only as remote.codec is not checked. A stream over it is
+ *   dropped until it sends a keyframe / SPS within it
  * @param { Object } [ properties.direction ] - direction from our perspective
  * @param { boolean } [ properties.direction.send = true ]
  * @param { boolean } [ properties.direction.recv = true ]

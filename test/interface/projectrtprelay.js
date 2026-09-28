@@ -43,6 +43,14 @@ What is pinned, and why:
   authenticate and are what keeps a leg from idling out (RTCP alone does:
   camera off), while in.prekey / in.decryptfailed expose a leg that
   receives packets but never keyed.
+- Abuse limits (relaylimits): a source over its leg's bitrate has packets
+  dropped before fan-out and counted in livestats().in.ratedropped; the
+  defaults apply when relaylimits is absent (protection must not depend on
+  the caller remembering it) yet admit an honest keyframe burst; 0 turns a
+  limit off; and a VP8 keyframe over max-fs is refused whole
+  (in.oversizedropped) until a keyframe within it arrives. The token-bucket,
+  frame-rate and SPS/keyframe parsing detail is pinned in the Rust unit
+  tests (relay_limits.rs, video_dims.rs).
 */
 
 const expect = require( "chai" ).expect
@@ -364,15 +372,17 @@ describe( "rtprelay", function() {
 
     const { a, b, closed } = await openrelaypair( alice, bob )
 
-    /* 200 near-MTU packets in ~100ms (2000 pps) — a keyframe burst. The
-       audio path could deliver at most ~5 in that window (one per 20ms
-       tick) and its 32-slot jitter buffer would shed the rest. Sent in
-       paced batches of 10 per 5ms so the kernel's default UDP receive
-       buffer (~200KB) isn't the thing under test. */
+    /* 200 near-MTU packets in ~100ms (2000 pps) — a keyframe burst, so
+       one frame (one timestamp), ~220KB: inside the default relaylimits
+       burst, which must admit exactly this. The audio path could deliver
+       at most ~5 in that window (one per 20ms tick) and its 32-slot
+       jitter buffer would shed the rest. Sent in paced batches of 10 per
+       5ms so the kernel's default UDP receive buffer (~200KB) isn't the
+       thing under test. */
     const total = 200
     for( let i = 0; total > i; i += 10 ) {
       for( let j = i; i + 10 > j; j++ )
-        alice.send( rtppacket( { sn: j, ts: 3000 * j, payloadsize: 1100 } ), a.local.port, "127.0.0.1" )
+        alice.send( rtppacket( { sn: j, ts: 90000, payloadsize: 1100 } ), a.local.port, "127.0.0.1" )
       await new Promise( ( resolve ) => setTimeout( resolve, 5 ) )
     }
 
@@ -388,6 +398,8 @@ describe( "rtprelay", function() {
     expect( astats.in.accepted ).to.equal( astats.in.count )
     expect( astats.in.prekey ).to.equal( 0 )
     expect( astats.in.decryptfailed ).to.equal( 0 )
+    expect( astats.in.ratedropped ).to.equal( 0 )
+    expect( astats.in.framedropped ).to.equal( 0 )
     expect( bstats.out.count ).to.equal( received )
 
     a.close()
@@ -881,5 +893,200 @@ describe( "rtprelay", function() {
 
     alice.close()
     bob.close()
+  } )
+
+  describe( "abuse limits", function() {
+
+    this.timeout( 6000 )
+
+    const wait = ( ms ) => new Promise( ( resolve ) => setTimeout( resolve, ms ) )
+
+    /**
+     * Open a relay pair; `alimits` (if defined) is leg A's relaylimits, and
+     * A's remote declares `codecs`.
+     * @param { object } alice
+     * @param { object } bob
+     * @param { object } [ alimits ]
+     * @param { object } [ codecs ]
+     * @returns { Promise< object > }
+     */
+    async function limitedpair( alice, bob, alimits, codecs ) {
+      const { closed, mkclose } = closetracker()
+      const aparams = { "relay": true, "forcelocal": true,
+        "remote": { "address": "127.0.0.1", "port": alice.address().port, "codec": 96 } }
+      if( undefined !== alimits ) aparams.relaylimits = alimits
+      if( codecs ) aparams.remote.codecs = codecs
+      const a = await projectrtp.openchannel( aparams, mkclose() )
+      const b = await projectrtp.openchannel(
+        { "relay": true, "forcelocal": true, "remote": { "address": "127.0.0.1", "port": bob.address().port, "codec": 96 } },
+        mkclose() )
+      expect( a.mix( b ) ).to.be.true
+      const done = async () => {
+        a.close()
+        b.close()
+        await Promise.all( closed )
+        alice.close()
+        bob.close()
+      }
+      return { a, b, done }
+    }
+
+    /**
+     * Send `count` packets of `payloadsize` from alice to leg A, one frame
+     * (one timestamp) per `perframe` packets, paced `batch` per 5ms.
+     * @param { object } alice
+     * @param { object } a
+     * @param { number } count
+     * @param { number } payloadsize
+     * @param { number } [ perframe ]
+     * @param { number } [ batch ]
+     * @returns { Promise< void > }
+     */
+    async function blast( alice, a, count, payloadsize, perframe = 100, batch = 10 ) {
+      for( let i = 0; count > i; i += batch ) {
+        for( let j = i; Math.min( count, i + batch ) > j; j++ )
+          alice.send( rtppacket( { sn: j, ts: 3000 * Math.floor( j / perframe ), payloadsize } ), a.local.port, "127.0.0.1" )
+        await wait( 5 )
+      }
+    }
+
+    it( "drops and counts a source over its bitrate cap, forwards one within it", async function() {
+      const alice = await bindsocket()
+      const bob = await bindsocket()
+      let received = 0
+      bob.on( "message", () => received++ )
+      /* 80 kbit/s, 10KB deep: ~8 near-MTU packets at once, then ~1 per 100ms */
+      const { a, b, done } = await limitedpair( alice, bob, { "bitrate": 80000, "burst": 10000 } )
+
+      /* within the cap: 5 x 1012 bytes */
+      await blast( alice, a, 5, 1000 )
+      await wait( 300 )
+      expect( received ).to.equal( 5 )
+      expect( a.livestats().in.ratedropped ).to.equal( 0 )
+
+      /* 40KB in ~20ms: far over. The bucket refills at 10KB/s, so more
+         than 25 drops holds until the blast takes ~500ms */
+      received = 0
+      await blast( alice, a, 40, 1000 )
+      await wait( 300 )
+      const s = a.livestats()
+      expect( s.relaylimits ).to.deep.equal( { "bitrate": 80000, "burst": 10000, "packetrate": 1000, "framerate": 30, "maxfs": 3600 } )
+      expect( s.in.accepted ).to.equal( 45 )
+      expect( s.in.ratedropped ).to.be.above( 25 )
+      expect( received ).to.equal( 40 - s.in.ratedropped )
+      expect( b.livestats().out.count ).to.equal( 5 + received )
+      expect( s.in.framedropped ).to.equal( 0 )
+      expect( s.in.oversizedropped ).to.equal( 0 )
+
+      let closestats
+      a.em.on( "close", ( d ) => { closestats = d.stats } )
+      await done()
+      expect( closestats.in.ratedropped ).to.equal( s.in.ratedropped )
+      expect( closestats.relaylimits ).to.deep.equal( s.relaylimits )
+    } )
+
+    it( "applies the default limits when relaylimits is absent", async function() {
+      const alice = await bindsocket()
+      const bob = await bindsocket()
+      let received = 0
+      bob.on( "message", () => received++ )
+      const { a, done } = await limitedpair( alice, bob, undefined )
+
+      expect( a.livestats().relaylimits ).to.deep.equal(
+        { "bitrate": 2000000, "burst": 250000, "packetrate": 1000, "framerate": 30, "maxfs": 3600 } )
+
+      /* ~390KB in ~40ms against a 250KB bucket refilling at 250KB/s. The
+         bucket refills while the blast is sent, so the send is kept short:
+         more than 30 drops holds until it takes ~390ms, ~10x slower than it
+         runs, which a loaded CI runner does not reach */
+      await blast( alice, a, 320, 1188, 320, 40 )
+      await wait( 500 )
+      const s = a.livestats()
+      expect( s.in.ratedropped ).to.be.above( 30 )
+      expect( received ).to.equal( s.in.accepted - s.in.ratedropped )
+      await done()
+    } )
+
+    it( "relaylimits { bitrate: 0 } turns the bitrate cap off", async function() {
+      const alice = await bindsocket()
+      const bob = await bindsocket()
+      let received = 0
+      bob.on( "message", () => received++ )
+      const { a, done } = await limitedpair( alice, bob, { "bitrate": 0 } )
+
+      expect( a.livestats().relaylimits ).to.deep.equal(
+        { "bitrate": 0, "burst": 0, "packetrate": 1000, "framerate": 30, "maxfs": 3600 } )
+
+      /* the same ~390KB burst the default cap cuts */
+      await blast( alice, a, 320, 1188, 320, 40 )
+      await wait( 500 )
+      const s = a.livestats()
+      expect( s.in.ratedropped ).to.equal( 0 )
+      expect( s.in.accepted ).to.be.above( 280 ) /* > 250KB + refill got through */
+      expect( received ).to.equal( s.in.accepted )
+      await done()
+    } )
+
+    it( "a relaylimits fraction that rounds to 0 takes the default, not unlimited", async function() {
+      const alice = await bindsocket()
+      const bob = await bindsocket()
+      const { a, done } = await limitedpair( alice, bob,
+        { "bitrate": 0.4, "packetrate": 1e-9, "framerate": 0.49, "maxfs": 2.6, "burst": -3 } )
+
+      expect( a.livestats().relaylimits ).to.deep.equal(
+        { "bitrate": 2000000, "burst": 250000, "packetrate": 1000, "framerate": 30, "maxfs": 3 } )
+      await done()
+    } )
+
+    it( "a huge relaylimits value reads back as the largest exact integer, not negative", async function() {
+      const alice = await bindsocket()
+      const bob = await bindsocket()
+      const { a, done } = await limitedpair( alice, bob, { "bitrate": 1e30, "maxfs": Number.MAX_SAFE_INTEGER } )
+
+      expect( a.livestats().relaylimits ).to.deep.equal(
+        { "bitrate": Number.MAX_SAFE_INTEGER, "burst": Math.floor( Number.MAX_SAFE_INTEGER / 8 ), "packetrate": 1000, "framerate": 30, "maxfs": Number.MAX_SAFE_INTEGER } )
+      await done()
+    } )
+
+    /**
+     * A VP8 RTP payload (RFC 7741 descriptor + RFC 6386 keyframe header).
+     * @param { number } w
+     * @param { number } h
+     * @returns { Buffer }
+     */
+    function vp8keyframe( w, h ) {
+      const p = Buffer.alloc( 14 + 200, 0xaa )
+      Buffer.from( [ 0x90, 0x80, 0x92, 0x34, 0x50, 0x2a, 0x01, 0x9d, 0x01, 0x2a ] ).copy( p )
+      p.writeUInt16LE( w, 10 )
+      p.writeUInt16LE( h, 12 )
+      return p
+    }
+
+    it( "refuses a VP8 stream whose keyframe is over max-fs until one within it", async function() {
+      const alice = await bindsocket()
+      const bob = await bindsocket()
+      const received = []
+      bob.on( "message", ( m ) => received.push( Buffer.from( m ) ) )
+      const { a, done } = await limitedpair( alice, bob, undefined, { "vp8": 96 } )
+
+      const send = async ( sn, ts, payload ) => {
+        const hdr = rtppacket( { sn, ts, payloadsize: 0 } )
+        alice.send( Buffer.concat( [ hdr, payload ] ), a.local.port, "127.0.0.1" )
+        await wait( 20 )
+      }
+      const inter = Buffer.from( [ 0x90, 0x80, 0x92, 0x34, 0x31, 0x02, 0x00, 0x11 ] )
+      /* 1920x1080 (8160 macroblocks): the keyframe and what follows it are dropped */
+      await send( 1, 3000, vp8keyframe( 1920, 1080 ) )
+      await send( 2, 6000, inter )
+      /* portrait 720x1280 (3600 macroblocks): through, and the stream with it */
+      await send( 3, 9000, vp8keyframe( 720, 1280 ) )
+      await send( 4, 12000, inter )
+      await wait( 200 )
+
+      const s = a.livestats()
+      expect( s.in.oversizedropped ).to.equal( 2 )
+      expect( received.map( ( m ) => m.readUInt32BE( 4 ) ) ).to.deep.equal( [ 9000, 12000 ] )
+      await done()
+    } )
   } )
 } )
