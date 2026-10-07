@@ -48,6 +48,27 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
     state.tick_count += 1;
     poll_dtls_handshake(state);
 
+    // Relay mode (video): media never touches this pipeline — recv_loop
+    // forwards it directly (see channel/relay.rs). The tick's remaining
+    // jobs are the DTLS poll above and the idle/hard timeouts below. Idle
+    // is detected from the delta of `RelayShared::liveness()` (accepted RTP
+    // + accepted RTCP), since the jitter buffer stays empty by design. RTCP
+    // counts so camera-off (RTP stops, RTCP continues) is not idle; raw
+    // arrivals do not, so a leg that never keys times out instead of
+    // looking healthy on ciphertext it cannot read. Periodic RTCP is skipped: the relay send task owns
+    // the leg's outbound SRTCP (a second context under the same key would
+    // collide on SRTCP indices and trip the peer's replay protection).
+    if let Some(relay) = &state.relay {
+        let now_live = relay.liveness();
+        if now_live != state.last_relay_liveness {
+            state.last_relay_liveness = now_live;
+            state.ticks_without_rtp = 0;
+        } else if state.direction.recv {
+            state.ticks_without_rtp += 1;
+        }
+        return check_idle_timeout(state);
+    }
+
     // Match C++ projectrtpchannel::handletick: tsout += G711PAYLOADBYTES
     // (160) at the start of every tick, *unconditionally*. The outbound
     // RTP timestamp is a media clock — if we let it stall during a
@@ -701,6 +722,49 @@ mod tests {
             recv: true,
         };
         (state, peer_sock, peer_addr)
+    }
+
+    /// Relay idle rule: only authenticated traffic (accepted RTP or RTCP)
+    /// keeps a relay leg alive. RTCP alone must (camera off); raw arrivals,
+    /// pre-key drops and decrypt failures must not (a leg that never keyed).
+    #[tokio::test]
+    async fn relay_idle_counts_accepted_rtp_and_rtcp_only() {
+        use crate::channel::relay::RelayShared;
+        let (mut state, _peer_sock, peer_addr) = fresh_state().await;
+        let mut subs = crate::channel::actor::Subsystems::default();
+        state.set_remote_addr(peer_addr);
+        state.remote_confirmed = true;
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let relay = std::sync::Arc::new(RelayShared::new(1, tx, true, 96));
+        state.relay = Some(relay.clone());
+
+        // RTCP only (camera off): the leg is alive.
+        state.ticks_without_rtp = IDLE_TICK_LIMIT - 1;
+        relay.rtcp_in.fetch_add(1, Ordering::Relaxed);
+        assert!(matches!(
+            run(&mut state, &mut subs).await,
+            TickOutcome::Continue
+        ));
+        assert_eq!(state.ticks_without_rtp, 0);
+
+        // Accepted RTP: alive.
+        state.ticks_without_rtp = IDLE_TICK_LIMIT - 1;
+        relay.accepted.fetch_add(1, Ordering::Relaxed);
+        assert!(matches!(
+            run(&mut state, &mut subs).await,
+            TickOutcome::Continue
+        ));
+
+        // Arrivals we could not authenticate: idle — the leg times out.
+        state.ticks_without_rtp = IDLE_TICK_LIMIT - 1;
+        state.in_count.fetch_add(5, Ordering::Relaxed);
+        relay.in_count.fetch_add(5, Ordering::Relaxed);
+        relay.prekey_dropped.fetch_add(3, Ordering::Relaxed);
+        relay.decrypt_failed.fetch_add(2, Ordering::Relaxed);
+        assert!(matches!(
+            run(&mut state, &mut subs).await,
+            TickOutcome::Stop
+        ));
     }
 
     #[tokio::test]

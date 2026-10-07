@@ -24,6 +24,7 @@ use super::dtls_session::{remote_srtp_params, SrtpKeyingMaterial};
 use super::rtcp::{self, ReportBlock, RtcpItem};
 use super::rtcp_stats::{RemoteReport, RxStats};
 use super::rtp;
+use webrtc_srtp::protection_profile::ProtectionProfile;
 
 pub struct RtcpLoopConfig {
     pub sock: Arc<UdpSocket>,
@@ -56,9 +57,11 @@ async fn run(cfg: RtcpLoopConfig) {
                 match result {
                     Ok((n, _peer)) => {
                         maybe_build_decrypt(&cfg.key_rx, &mut srtcp_decrypt);
+                        let profile = cfg.key_rx.borrow().as_ref().map(|k| k.profile);
                         handle_rtcp(
                             &buf[..n],
                             srtcp_decrypt.as_mut(),
+                            profile,
                             &cfg.rx_stats,
                             &cfg.remote_report,
                             cfg.local_ssrc,
@@ -89,12 +92,49 @@ pub fn maybe_build_decrypt(
     }
 }
 
+/// The shortest datagram that can be SRTCP under `profile`: RTCP header and
+/// sender SSRC (8), the E flag + SRTCP index (4) and the auth tag.
+pub fn srtcp_min_len(profile: ProtectionProfile) -> usize {
+    8 + 4 + profile.rtcp_auth_tag_len() + profile.aead_auth_tag_len()
+}
+
+/// `ctx.decrypt_rtcp`, but safe on any input, and only ever authenticated:
+///
+/// - webrtc-srtp slices the trailer before checking the length, so a
+///   datagram shorter than an SRTCP packet (four bytes will do) panics -
+///   killing the socket's receive task, i.e. the channel's media, from one
+///   unauthenticated packet. Anything that short (or with no profile to judge
+///   it by) cannot authenticate, so it is dropped.
+/// - For AES-CM, webrtc-srtp returns a packet whose E (encrypted) flag is
+///   clear as plaintext WITHOUT checking its auth tag, so anyone could pass
+///   forged RTCP off as authenticated (moving a secure relay leg's media, or
+///   feeding it keyframe requests). RFC 3711 authenticates either way, and
+///   browsers always encrypt SRTCP, so E=0 is dropped here.
+pub fn decrypt_rtcp_checked(
+    ctx: &mut webrtc_srtp::context::Context,
+    pkt: &[u8],
+    profile: Option<ProtectionProfile>,
+) -> Option<bytes::Bytes> {
+    let profile = profile?;
+    if pkt.len() < srtcp_min_len(profile) {
+        return None;
+    }
+    // the E flag is the top bit of the word holding the SRTCP index, just
+    // before the auth tag (AES-CM) or at the very end (AEAD)
+    let eword = pkt.len() - profile.rtcp_auth_tag_len() - 4;
+    if pkt[eword] & 0x80 == 0 {
+        return None;
+    }
+    ctx.decrypt_rtcp(pkt).ok()
+}
+
 /// Decrypt (if a context is present) then parse and fold an inbound RTCP
 /// datagram into the shared accounting. Shared by this dedicated P+1 loop and,
 /// under rtcp-mux (RFC 5761), by `recv_loop` reading off the RTP port.
 pub fn handle_rtcp(
     pkt: &[u8],
     decrypt: Option<&mut webrtc_srtp::context::Context>,
+    profile: Option<ProtectionProfile>,
     rx_stats: &PLMutex<RxStats>,
     remote_report: &PLMutex<RemoteReport>,
     local_ssrc: u32,
@@ -102,12 +142,24 @@ pub fn handle_rtcp(
     match decrypt {
         // Auth failure / malformed SRTCP → decrypt errors, packet dropped.
         Some(ctx) => {
-            if let Ok(plain) = ctx.decrypt_rtcp(pkt) {
+            if let Some(plain) = decrypt_rtcp_checked(ctx, pkt, profile) {
                 parse_and_fold(&plain, rx_stats, remote_report, local_ssrc);
             }
         }
         None => parse_and_fold(pkt, rx_stats, remote_report, local_ssrc),
     }
+}
+
+/// Fold an ALREADY-DECRYPTED compound into the accounting. For callers that
+/// decrypt once and hand the plaintext to more than one consumer, rather than
+/// paying for a second `decrypt_rtcp` of the same datagram via `handle_rtcp`.
+pub fn handle_rtcp_plain(
+    plain: &[u8],
+    rx_stats: &PLMutex<RxStats>,
+    remote_report: &PLMutex<RemoteReport>,
+    local_ssrc: u32,
+) {
+    parse_and_fold(plain, rx_stats, remote_report, local_ssrc);
 }
 
 fn parse_and_fold(

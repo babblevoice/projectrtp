@@ -67,6 +67,13 @@ pub struct ChannelState {
 
     pub tick_count: u64,
     pub ticks_without_rtp: u64,
+    /// Relay mode (video): media bypasses the tick pipeline entirely — see
+    /// channel/relay.rs. The tick still runs for DTLS polling and timeouts.
+    pub relay: Option<Arc<super::relay::RelayShared>>,
+    /// Snapshot of `RelayShared::liveness()` at the previous tick — relay
+    /// channels never fill the jitter buffer, so idle detection reads the
+    /// counter delta instead of "did the tick pop anything".
+    pub last_relay_liveness: u64,
 
     pub in_count: Arc<AtomicU64>,
     pub in_dropped: u64,
@@ -141,6 +148,8 @@ impl ChannelState {
             remote_pt: 0,
             tick_count: 0,
             ticks_without_rtp: 0,
+            relay: None,
+            last_relay_liveness: 0,
             in_count: Arc::new(AtomicU64::new(0)),
             in_dropped: 0,
             out_count: 0,

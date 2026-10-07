@@ -213,8 +213,9 @@ impl WavReader {
             self.file.read_exact(&mut buf).await.map_err(io_err)?;
         }
         let mut out = Vec::with_capacity(to_read / 2);
-        for chunk in buf.chunks_exact(2) {
-            out.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+        let (samples, _) = buf.as_chunks::<2>();
+        for pair in samples {
+            out.push(i16::from_le_bytes(*pair));
         }
         Ok(out)
     }

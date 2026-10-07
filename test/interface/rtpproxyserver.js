@@ -700,6 +700,186 @@ describe( "rtpproxy server", function() {
     
 
   } )
+  it( "livestats over the node protocol", async function() {
+
+    /* callmanager-side: poll a relay leg that lives on a remote node, the
+       "registered but no media flowing" detector for video */
+    const ourport = getnextport()
+    prtp.server.clearnodes()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    const ournode = await prtp.node.connect( ourport, "127.0.0.1" )
+
+    const events = []
+    const chnl = await prtp.openchannel( { "relay": true }, ( e ) => events.push( e ) )
+    expect( chnl.connection ).to.be.an( "object" ) /* proxied, not local */
+
+    const [ s1, s2 ] = await Promise.all( [ chnl.livestats(), chnl.livestats() ] )
+    for( const s of [ s1, s2 ] ) {
+      expect( s.relay ).to.be.true
+      expect( s.in ).to.include( { count: 0, accepted: 0, rtcp: 0, decryptfailed: 0, prekey: 0 } )
+      expect( s.out ).to.include( { count: 0, dropped: 0 } )
+    }
+    /* polling is not a channel event */
+    expect( events.filter( ( e ) => "livestats" === e.action ) ).to.have.lengthOf( 0 )
+    expect( chnl.history.filter( ( m ) => "livestats" === m.channel || "livestats" === m.action ) ).to.have.lengthOf( 0 )
+
+    await chnl.close()
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    ournode.destroy()
+    p.destroy()
+  } )
+
+  it( "relaylimits reach a relay leg opened on a remote node", async function() {
+
+    /* the abuse limits are enforced in the node's native relay, so they
+       must survive the node protocol - and a proxied leg opened without
+       them must still get the defaults */
+    const ourport = getnextport()
+    prtp.server.clearnodes()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    const ournode = await prtp.node.connect( ourport, "127.0.0.1" )
+
+    const limited = await prtp.openchannel( { "relay": true, "relaylimits": { "bitrate": 500000, "framerate": 15, "maxfs": 0 } } )
+    const defaulted = await prtp.openchannel( { "relay": true } )
+    expect( limited.connection ).to.be.an( "object" ) /* proxied, not local */
+
+    const l = await limited.livestats()
+    expect( l.relaylimits ).to.deep.equal( { "bitrate": 500000, "burst": 62500, "packetrate": 1000, "framerate": 15, "maxfs": 0 } )
+    expect( l.in ).to.include( { "ratedropped": 0, "framedropped": 0, "oversizedropped": 0 } )
+    const d = await defaulted.livestats()
+    expect( d.relaylimits ).to.deep.equal( { "bitrate": 2000000, "burst": 250000, "packetrate": 1000, "framerate": 30, "maxfs": 3600 } )
+
+    await limited.close()
+    await defaulted.close()
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    ournode.destroy()
+    p.destroy()
+  } )
+
+  it( "livestats carries a relay leg's stream mapping over the node protocol", async function() {
+
+    const dgram = require( "dgram" )
+    const bind = () => new Promise( ( resolve ) => {
+      const s = dgram.createSocket( "udp4" )
+      s.bind( 0, "127.0.0.1", () => resolve( s ) )
+    } )
+
+    const ourport = getnextport()
+    prtp.server.clearnodes()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    const ournode = await prtp.node.connect( ourport, "127.0.0.1" )
+
+    const alice = await bind()
+    const bob = await bind()
+    const a = await prtp.openchannel( { "relay": true, "remote": { "address": "127.0.0.1", "port": alice.address().port, "codec": 96 } } )
+    const b = await prtp.openchannel( { "relay": true, "remote": { "address": "127.0.0.1", "port": bob.address().port, "codec": 100 } } )
+    expect( a.connection ).to.be.an( "object" ) /* proxied, not local */
+    await a.mix( b )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+
+    const rtp = Buffer.alloc( 112 )
+    rtp[ 0 ] = 0x80
+    rtp[ 1 ] = 96
+    rtp.writeUInt32BE( 0xa11ce, 8 )
+    alice.send( rtp, a.local.port, "127.0.0.1" )
+    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 200 ) } )
+
+    const s = await b.livestats()
+    expect( s.streams ).to.deep.equal( [ { "source": a.uuid, "ssrc": b.local.ssrc, "sourcessrc": 0xa11ce, "pt": 100 } ] )
+    expect( ( await a.livestats() ).streams ).to.deep.equal( [] )
+
+    await a.close()
+    await b.close()
+    alice.close()
+    bob.close()
+    ournode.destroy()
+    p.destroy()
+  } )
+
+  it( "livestats rejects when the node never answers", async function() {
+
+    const n = new mocknode()
+    n.setmessagehandler( "open", ( msg ) => {
+      n.sendmessage( { "action": "open", "id": msg.id, "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec1ff", "channel": { "port": 10002, "address": "192.168.0.141" } } )
+    } )
+    let asked
+    n.setmessagehandler( "livestats", ( msg ) => asked = msg )
+    n.setmessagehandler( "close", ( msg ) => n.sendmessage( { "action": "close", "id": msg.id, "uuid": msg.uuid } ) )
+
+    const ourport = getnextport()
+    prtp.server.clearnodes()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    await n.connect( ourport )
+    const chnl = await prtp.openchannel()
+
+    let err
+    try { await chnl.livestats( 200 ) } catch( e ) { err = e }
+    expect( err ).to.be.an( "error" )
+    expect( asked ).to.include( { "channel": "livestats", "id": chnl.id, "uuid": chnl.uuid } )
+
+    await chnl.close()
+    n.destroy()
+    p.destroy()
+  } )
+
+  it( "concurrent livestats calls each get their own reply", async function() {
+
+    /* every call used to register em.once( "livestats" ), so the first
+       reply resolved all outstanding calls with the same answer */
+    const n = new mocknode()
+    n.setmessagehandler( "open", ( msg ) => {
+      n.sendmessage( { "action": "open", "id": msg.id, "uuid": "7dfc35d9-eafe-4d8b-8880-c48f528ec1ff", "channel": { "port": 10002, "address": "192.168.0.141" } } )
+    } )
+    const asked = []
+    n.setmessagehandler( "livestats", ( msg ) => asked.push( msg ) )
+    n.setmessagehandler( "close", ( msg ) => n.sendmessage( { "action": "close", "id": msg.id, "uuid": msg.uuid } ) )
+
+    const ourport = getnextport()
+    prtp.server.clearnodes()
+    const p = await prtp.proxy.listen( undefined, "127.0.0.1", ourport )
+    await n.connect( ourport )
+    const chnl = await prtp.openchannel()
+
+    const reply = ( req, count, echo = true ) => n.sendmessage( {
+      "action": "livestats", "id": chnl.id, "uuid": chnl.uuid,
+      ...( echo ? { "reqid": req.reqid } : {} ),
+      "livestats": { "relay": true, "in": { count }, "out": { "count": 0 } } } )
+    const waitasked = async ( k ) => { while( asked.length < k ) await new Promise( ( r ) => setTimeout( r, 5 ) ) }
+
+    /* answered out of order: each caller still gets its own */
+    const first = chnl.livestats()
+    const second = chnl.livestats()
+    await waitasked( 2 )
+    expect( asked[ 0 ].reqid ).to.not.equal( asked[ 1 ].reqid )
+    reply( asked[ 1 ], 2 )
+    reply( asked[ 0 ], 1 )
+    expect( ( await first ).in.count ).to.equal( 1 )
+    expect( ( await second ).in.count ).to.equal( 2 )
+
+    /* a late reply to a call that timed out is not handed to the next one */
+    let err
+    try { await chnl.livestats( 50 ) } catch( e ) { err = e }
+    expect( err ).to.be.an( "error" )
+    const third = chnl.livestats()
+    await waitasked( 4 )
+    reply( asked[ 2 ], 3 )
+    reply( asked[ 3 ], 4 )
+    expect( ( await third ).in.count ).to.equal( 4 )
+
+    /* a node that predates reqid: replies arrive in request order */
+    const fourth = chnl.livestats()
+    const fifth = chnl.livestats()
+    await waitasked( 6 )
+    reply( asked[ 4 ], 5, false )
+    reply( asked[ 5 ], 6, false )
+    expect( ( await fourth ).in.count ).to.equal( 5 )
+    expect( ( await fifth ).in.count ).to.equal( 6 )
+
+    await chnl.close()
+    n.destroy()
+    p.destroy()
+  } )
+
   it( "Ensure connection stays open with 0 channel in listen mode", async () => {
 
     const ourport = getnextport()

@@ -66,6 +66,9 @@ pub struct ChannelStats {
     pub out_count: u64,
     /// `None` until the channel has RTCP data (received RTP or a peer report).
     pub rtcp: Option<RtcpSummary>,
+    /// Relay (video) legs only — the leg's full counter set, surfaced as the
+    /// extra `in.*` / `out.*` fields and `relay: true` in close stats.
+    pub relay: Option<super::relay::RelayCounters>,
 }
 
 impl ChannelStats {
@@ -135,12 +138,18 @@ pub fn build_channel_stats(state: &ChannelState) -> ChannelStats {
         0
     };
 
+    // Relay channels send via their relay task, not the tick — fold those
+    // counters in so close stats stay meaningful in both modes.
+    let relay = state.relay.as_ref().map(|r| r.snapshot());
+    let (relay_out, relay_dropped) = relay.map(|r| (r.out_count, r.dropped)).unwrap_or((0, 0));
+
     ChannelStats {
         in_count,
-        in_dropped: state.in_dropped + state.jitter.lock().dropped,
+        in_dropped: state.in_dropped + state.jitter.lock().dropped + relay_dropped,
         in_skip,
-        out_count: state.out_count,
+        out_count: state.out_count + relay_out,
         rtcp,
+        relay,
     }
 }
 
@@ -202,6 +211,16 @@ pub struct SpawnConfig {
     pub port_reservation: Option<crate::portpool::PortReservation>,
     /// Our own ICE password — used for STUN Binding Request integrity checks.
     pub local_icepwd: String,
+    /// `Some` for relay-mode (video) channels — see channel/relay.rs. The
+    /// receiver half feeds this channel's send task; the shared face and the
+    /// peer slot are also held by the facade's ChannelObject for `mix()`.
+    pub relay: Option<RelaySpawn>,
+}
+
+/// Relay wiring handed from the facade into the spawn path.
+pub struct RelaySpawn {
+    pub shared: Arc<super::relay::RelayShared>,
+    pub data_rx: mpsc::Receiver<super::relay::RelayFrame>,
 }
 
 #[cfg(test)]
@@ -230,6 +249,10 @@ pub fn spawn_with_sockets(
     *state.local_icepwd.lock() = cfg.local_icepwd;
 
     let cancel = CancellationToken::new();
+    let relay_spawn = cfg.relay;
+    if let Some(rs) = &relay_spawn {
+        state.relay = Some(rs.shared.clone());
+    }
 
     // DTLS keying material is published here once the handshake completes so
     // the inbound RTCP readers can build their SRTCP decrypt context (Tier 2).
@@ -254,7 +277,26 @@ pub fn spawn_with_sockets(
         dtls_tx: state.dtls_inbound_tx.clone(),
         key_rx: srtp_key_rx.clone(),
         cancel: cancel.clone(),
+        relay: relay_spawn
+            .as_ref()
+            .map(|rs| super::recv_loop::RelayRecv::new(rs.shared.clone())),
     });
+
+    // Relay-mode send task — owns the leg's outbound SRTP/SRTCP crypto and
+    // forwards whatever the peer's recv_loop feeds it. Shares the recv
+    // cancellation token so the close path stops all three loops at once.
+    if let Some(rs) = relay_spawn {
+        super::relay::spawn_send_task(super::relay::RelaySendConfig {
+            shared: rs.shared,
+            data_rx: rs.data_rx,
+            sock: state.rtp_sock.clone(),
+            remote_addr: state.remote_addr.clone(),
+            ssrc: state.ssrc,
+            rx_stats: state.rx_stats.clone(),
+            key_rx: srtp_key_rx.clone(),
+            cancel: cancel.clone(),
+        });
+    }
 
     // Spawn the inbound RTCP reader on the P+1 control socket. It shares the
     // recv_loop cancellation token, so the close path stops both at once.
@@ -639,6 +681,12 @@ async fn run(
     // Cancel the recv_loop before collecting stats.
     if let Some(cancel) = state.recv_cancel.take() {
         cancel.cancel();
+    }
+    // Relay: leave the group whichever way the channel closes (JS close,
+    // idle timeout) so no peer keeps forwarding into a dead leg or holding
+    // its source state — and the group's Arc cycle is broken.
+    if let Some(relay) = &state.relay {
+        relay.leave_group();
     }
     let stats = build_channel_stats(state);
     state.close_info = Some(CloseInfo {
@@ -1119,6 +1167,7 @@ mod tests {
             events: sink,
             port_reservation: None,
             local_icepwd: String::new(),
+            relay: None,
         })
         .await
         .unwrap();
@@ -1147,6 +1196,7 @@ mod tests {
             events: sink.clone(),
             port_reservation: None,
             local_icepwd: String::new(),
+            relay: None,
         })
         .await
         .unwrap();
@@ -1181,6 +1231,7 @@ mod tests {
             events: sink,
             port_reservation: None,
             local_icepwd: String::new(),
+            relay: None,
         })
         .await
         .unwrap();
@@ -1360,6 +1411,7 @@ mod tests {
             events: sink,
             port_reservation: None,
             local_icepwd: String::new(),
+            relay: None,
         })
         .await
         .unwrap();
@@ -1476,6 +1528,7 @@ mod tests {
             events: sink,
             port_reservation: None,
             local_icepwd: String::new(),
+            relay: None,
         })
         .await
         .unwrap();

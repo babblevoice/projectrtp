@@ -152,12 +152,10 @@ pub fn js_filter_lowfir(mut buf: Buffer) -> Result<bool> {
         return Err(Error::from_reason("buffer length must be even (BE int16)"));
     }
     let mut filter = Lowpass3_4k16k::new();
-    for chunk in bytes.chunks_exact_mut(2) {
-        let v = i16::from_be_bytes([chunk[0], chunk[1]]);
-        let out = filter.execute(v);
-        let enc = out.to_be_bytes();
-        chunk[0] = enc[0];
-        chunk[1] = enc[1];
+    let (samples, _) = bytes.as_chunks_mut::<2>();
+    for pair in samples {
+        let v = i16::from_be_bytes(*pair);
+        *pair = filter.execute(v).to_be_bytes();
     }
     Ok(true)
 }

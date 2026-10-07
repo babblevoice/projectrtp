@@ -238,6 +238,10 @@ pub struct ChannelObject {
     /// we don't want a contended std mutex between every 20 ms frame.
     write_senders:
         parking_lot::Mutex<std::collections::HashMap<u64, tokio::sync::mpsc::Sender<Vec<u8>>>>,
+    /// Relay mode (video): this channel's shared face — `Some` when opened
+    /// with `{ relay: true }`. Also carries its relay group membership,
+    /// which `mix()` / `unmix()` manage. See channel/relay.rs.
+    relay: Option<Arc<super::relay::RelayShared>>,
 }
 
 // The `#[napi]` proc macro on an impl block needs to expand before the
@@ -342,7 +346,10 @@ impl ChannelObject {
     }
 
     /// Reconfigure the remote end for outbound RTP. JS calls
-    /// `channel.remote({ address, port, codec })`. Synchronous so the test's
+    /// `channel.remote({ address, port, codec })`. On a relay leg `codec` is
+    /// the leg's primary video PT and an optional `codecs: { <label>: pt }`
+    /// declares further codecs; together they replace the leg's payload-type
+    /// map (see `relay::PtMap`). Synchronous so the test's
     /// `channel.remote(...)` sits on the same tick as `channel.echo()`.
     /// Returns true when the params were valid enough to enqueue a Remote
     /// command (address + port parseable). DTLS tests assert the return
@@ -369,6 +376,14 @@ impl ChannelObject {
             return false;
         };
         let sa = SocketAddr::new(ip, port_n as u16);
+        // Relay: keep the send task's view of the negotiated PTs and the
+        // fail-closed secure flag in step with the latest remote().
+        if let Some(r) = &self.relay {
+            r.set_pts(super::relay::PtMap::new(codec, parse_codecs(&params)));
+            if dtls.is_some() {
+                r.secure.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
         let (ack, _) = tokio::sync::oneshot::channel();
         self.handle
             .cmd
@@ -626,6 +641,60 @@ impl ChannelObject {
             .is_ok()
     }
 
+    /// Live per-channel media-flow counters — readable at any time, unlike
+    /// the close-event stats. This is the "registered but no media flowing"
+    /// detector: a relay leg that is open with `in.accepted` + `in.rtcp` not
+    /// moving is exactly the silent-failure state that used to be invisible
+    /// until teardown (`in.count` is raw, pre-decrypt arrivals — it moves on
+    /// a leg that never keyed; `in.prekey` / `in.decryptfailed` say why).
+    /// `streams` is the leg's current outbound stream mapping, read-only:
+    /// `[{ source, ssrc, sourcessrc, pt }]` — the source channel's uuid, the
+    /// SSRC this leg forwards that stream under, the source's own SSRC, and
+    /// the payload type it goes out under (see `relay::Outbound`). A stream
+    /// appears once its first packet has been forwarded. Cheap (atomic loads
+    /// and two short uncontended locks), so callers may poll it.
+    #[napi]
+    pub fn livestats(&self, env: Env) -> Result<Object> {
+        let mut obj = env.create_object()?;
+        let c = self
+            .relay
+            .as_ref()
+            .map(|r| r.snapshot())
+            .unwrap_or_default();
+        let mut in_o = env.create_object()?;
+        let mut out_o = env.create_object()?;
+        set_relay_counters(&env, &mut in_o, &mut out_o, &c)?;
+        out_o.set_named_property("count", env.create_int64(c.out_count as i64)?)?;
+        in_o.set_named_property("count", env.create_int64(c.in_count as i64)?)?;
+        obj.set_named_property("in", in_o)?;
+        obj.set_named_property("out", out_o)?;
+        obj.set_named_property("relay", env.get_boolean(self.relay.is_some())?)?;
+        // The abuse limits the leg's inbound is held to (effective values),
+        // beside the `in.ratedropped` / `framedropped` / `oversizedropped`
+        // they explain.
+        if self.relay.is_some() {
+            obj.set_named_property("relaylimits", relay_limits_object(&env, &c.limits)?)?;
+        }
+        // The outbound streams this leg forwards — one per source stream:
+        // `{ source: <source channel uuid>, ssrc, sourcessrc, pt }`. What a
+        // signalling layer announces (a=ssrc / msid) for a group of 3+.
+        let streams = self.relay.as_ref().map(|r| r.streams()).unwrap_or_default();
+        let mut arr = env.create_array_with_length(streams.len())?;
+        for (i, st) in streams.iter().enumerate() {
+            let mut o = env.create_object()?;
+            o.set_named_property("source", env.create_string(&st.source)?)?;
+            o.set_named_property("ssrc", env.create_uint32(st.ssrc)?)?;
+            o.set_named_property("sourcessrc", env.create_uint32(st.source_ssrc)?)?;
+            match st.pt {
+                Some(pt) => o.set_named_property("pt", env.create_uint32(pt.into())?)?,
+                None => o.set_named_property("pt", env.get_null()?)?,
+            }
+            arr.set_element(i as u32, o)?;
+        }
+        obj.set_named_property("streams", arr)?;
+        Ok(obj)
+    }
+
     /// Place both channels in a shared mix group. The channels' state and
     /// subsystems migrate into the mix actor (which owns the tick for all
     /// members in lockstep — see `channel/mixer.rs`). Subsequent `mix(c)`
@@ -633,6 +702,19 @@ impl ChannelObject {
     /// are already in *different* groups (unsupported merge).
     #[napi]
     pub fn mix(&self, other: &ChannelObject) -> bool {
+        // Relay channels never migrate into the audio mixer — "mix" for relay
+        // legs puts them in one relay group (same group rules as audio: a
+        // later mix extends the group, different groups refuse to merge),
+        // so each leg's recv_loop fans out to every other member's send
+        // task. A relay leg can only group with another relay leg; mixing
+        // relay with audio is a caller error and returns false. On join
+        // every member is asked for a keyframe so the joiner gets a picture
+        // promptly. Lock ordering lives in `relay::join`.
+        match (&self.relay, &other.relay) {
+            (Some(a), Some(b)) => return super::relay::join(a, b),
+            (None, None) => {}
+            _ => return false,
+        }
         // Deadlock-avoidance: always lock in ascending channel-id order.
         let (mut self_guard, mut other_guard) = if self.handle.id < other.handle.id {
             (
@@ -689,6 +771,12 @@ impl ChannelObject {
 
     #[napi]
     pub fn unmix(&self, _other: Option<&ChannelObject>) -> bool {
+        // Relay: leave the group — both directions stop at once for every
+        // remaining member, and they release the SSRC they used for us.
+        if let Some(r) = &self.relay {
+            r.leave_group();
+            return true;
+        }
         *self.mix_slot.lock().unwrap() = None;
         let (ack, _) = tokio::sync::oneshot::channel();
         let _ = self
@@ -697,6 +785,83 @@ impl ChannelObject {
             .try_send(super::commands::Command::LeaveMix { ack });
         true
     }
+}
+
+/// The relay-only counters shared by `livestats()` and close stats, written
+/// into the caller's `in` / `out` objects (`count` is left to the caller —
+/// close stats already carry it). `in.accepted + in.rtcp` is what the idle
+/// detector watches: a monitor should treat that pair not moving as "no
+/// media flowing", and `in.prekey` / `in.decryptfailed` rising as "packets
+/// arrive but the leg never keyed / keys are wrong". `out.ptdropped` counts
+/// packets not forwarded to this leg because their payload type maps to no
+/// codec it negotiated (see `relay::PtMap`).
+fn set_relay_counters(
+    env: &Env,
+    in_o: &mut Object,
+    out_o: &mut Object,
+    c: &super::relay::RelayCounters,
+) -> Result<()> {
+    in_o.set_named_property("accepted", env.create_int64(c.accepted as i64)?)?;
+    in_o.set_named_property("rtcp", env.create_int64(c.rtcp_in as i64)?)?;
+    in_o.set_named_property("decryptfailed", env.create_int64(c.decrypt_failed as i64)?)?;
+    in_o.set_named_property("prekey", env.create_int64(c.prekey_dropped as i64)?)?;
+    in_o.set_named_property("ratedropped", env.create_int64(c.rate_dropped as i64)?)?;
+    in_o.set_named_property("framedropped", env.create_int64(c.frame_dropped as i64)?)?;
+    in_o.set_named_property(
+        "oversizedropped",
+        env.create_int64(c.oversize_dropped as i64)?,
+    )?;
+    out_o.set_named_property("dropped", env.create_int64(c.dropped as i64)?)?;
+    out_o.set_named_property("ptdropped", env.create_int64(c.pt_dropped as i64)?)?;
+    Ok(())
+}
+
+/// A relay leg's effective abuse limits as the `relaylimits` object of
+/// livestats() and close stats — the shape `openchannel` takes, with `burst`
+/// resolved (0 = unlimited throughout).
+fn relay_limits_object(env: &Env, l: &super::relay_limits::RelayLimits) -> Result<Object> {
+    let mut o = env.create_object()?;
+    o.set_named_property("bitrate", env.create_int64(l.bitrate as i64)?)?;
+    o.set_named_property("burst", env.create_int64(l.burst as i64)?)?;
+    o.set_named_property("packetrate", env.create_int64(l.packetrate as i64)?)?;
+    o.set_named_property("framerate", env.create_int64(l.framerate as i64)?)?;
+    o.set_named_property("maxfs", env.create_int64(l.maxfs as i64)?)?;
+    Ok(o)
+}
+
+/// `openchannel({ relay: true, relaylimits })` — see relay_limits.rs. Every
+/// field is optional and a missing one takes `RelayLimits::DEFAULT`, as does
+/// the whole object when absent: a relay leg is protected whether or not the
+/// caller remembers to ask. `0` is unlimited. A value that is not a finite,
+/// non-negative number also takes the default — failing safe, not open.
+fn extract_relay_limits(params: &Object) -> super::relay_limits::RelayLimits {
+    let mut l = super::relay_limits::RelayLimits::DEFAULT;
+    let Ok(o) = params.get_named_property::<Object>("relaylimits") else {
+        return l;
+    };
+    let field = |name: &str| -> Option<u64> {
+        let v = o.get_named_property::<napi::JsUnknown>(name).ok()?;
+        if v.get_type().ok()? != napi::ValueType::Number {
+            return None;
+        }
+        super::relay_limits::limit_from_number(v.coerce_to_number().ok()?.get_double().ok()?)
+    };
+    if let Some(v) = field("bitrate") {
+        l.bitrate = v;
+    }
+    if let Some(v) = field("burst") {
+        l.burst = v;
+    }
+    if let Some(v) = field("packetrate") {
+        l.packetrate = v;
+    }
+    if let Some(v) = field("framerate") {
+        l.framerate = v;
+    }
+    if let Some(v) = field("maxfs") {
+        l.maxfs = v;
+    }
+    l
 }
 
 #[cfg_attr(not(test), napi(object))]
@@ -1030,6 +1195,36 @@ fn extract_remote_pt(params: &Object) -> u8 {
     codec
 }
 
+/// `remote.codecs` — a relay leg's named codecs, `{ <label>: pt }` (see
+/// `relay::PtMap`). Entries that are not a number are skipped; a missing or
+/// non-object `codecs` is none.
+fn parse_codecs(remote: &Object) -> Vec<(String, u32)> {
+    let Ok(codecs) = remote.get_named_property::<Object>("codecs") else {
+        return Vec::new();
+    };
+    let Ok(names) = codecs.get_property_names() else {
+        return Vec::new();
+    };
+    let n = names.get_array_length().unwrap_or(0);
+    let mut out = Vec::new();
+    for i in 0..n.min(super::relay::MAX_NAMED_CODECS as u32) {
+        let Ok(name) = names.get_element::<napi::JsString>(i) else {
+            continue;
+        };
+        let Some(name) = name
+            .into_utf8()
+            .ok()
+            .and_then(|u| u.as_str().ok().map(str::to_owned))
+        else {
+            continue;
+        };
+        if let Ok(pt) = codecs.get_named_property::<u32>(&name) {
+            out.push((name, pt));
+        }
+    }
+    out
+}
+
 /// Read `params.remote.ilbcpt` — the dynamic wire PT for iLBC. Returns
 /// `None` when not set; callers default to 97.
 fn extract_ilbc_pt(params: &Object) -> Option<u8> {
@@ -1125,6 +1320,12 @@ fn extract_remote_dtls(params: &Object) -> Option<super::commands::RemoteDtls> {
 pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<ChannelObject> {
     let remote_addr = extract_remote_addr(&params);
     let remote_pt = extract_remote_pt(&params);
+    // Relay mode (video): `openchannel({ relay: true, remote: {...} })`.
+    let relay_mode = params
+        .get_named_property::<bool>("relay")
+        .ok()
+        .unwrap_or(false);
+    let relay_limits = extract_relay_limits(&params);
     let rfc2833_pt = extract_rfc2833_pt(&params);
     let ilbc_pt = extract_ilbc_pt(&params).unwrap_or(97);
     let override_local_icepwd = extract_local_icepwd(&params);
@@ -1180,6 +1381,11 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
                     tick_o.set_named_property("count", env.create_int64(0)?)?;
                     tick_o.set_named_property("meanus", env.create_double(0.0)?)?;
                     tick_o.set_named_property("maxus", env.create_double(0.0)?)?;
+                    if let Some(c) = &stats.relay {
+                        set_relay_counters(&env, &mut in_o, &mut out_o, c)?;
+                        s.set_named_property("relay", env.get_boolean(true)?)?;
+                        s.set_named_property("relaylimits", relay_limits_object(&env, &c.limits)?)?;
+                    }
                     s.set_named_property("in", in_o)?;
                     s.set_named_property("out", out_o)?;
                     s.set_named_property("tick", tick_o)?;
@@ -1268,6 +1474,38 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
     // negotiate the value in SDP). Falls back to a fresh random string.
     let local_icepwd = override_local_icepwd.unwrap_or_else(rand_icepwd);
 
+    // Relay wiring — the queue feeds this channel's send task; the shared
+    // face also lives on the ChannelObject so `mix()` can group legs and
+    // `livestats()` can read the counters.
+    let (relay_shared, relay_spawn) = if relay_mode {
+        let (data_tx, data_rx) = tokio::sync::mpsc::channel(super::relay::RELAY_QUEUE_DEPTH);
+        let mut shared = super::relay::RelayShared::new(
+            id,
+            data_tx,
+            initial_remote_dtls.is_some(),
+            remote_pt as u32,
+        )
+        .with_limits(relay_limits);
+        // index.js passes the JS channel's uuid, so `livestats().streams`
+        // names each source the way callers (and the node protocol) do.
+        if let Ok(uuid) = params.get_named_property::<String>("uuid") {
+            shared = shared.with_label(uuid);
+        }
+        let shared = Arc::new(shared);
+        if let Ok(remote) = params.get_named_property::<Object>("remote") {
+            shared.set_pts(super::relay::PtMap::new(
+                remote_pt as u32,
+                parse_codecs(&remote),
+            ));
+        }
+        (
+            Some(shared.clone()),
+            Some(actor::RelaySpawn { shared, data_rx }),
+        )
+    } else {
+        (None, None)
+    };
+
     let handle = actor::spawn_with_sockets(
         SpawnConfig {
             id,
@@ -1276,6 +1514,7 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
             events: sink,
             port_reservation,
             local_icepwd: local_icepwd.clone(),
+            relay: relay_spawn,
         },
         rtp_sock,
         rtcp_sock,
@@ -1330,6 +1569,7 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
         ilbc_pt,
         mix_slot: std::sync::Mutex::new(None),
         write_senders: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        relay: relay_shared,
     })
 }
 

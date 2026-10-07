@@ -106,34 +106,40 @@ fn verify_fingerprint(pk: &[u8], attr_off: usize) -> bool {
     crc == got
 }
 
-fn walk_attributes(pk: &mut [u8], remote_key: &[u8]) -> bool {
+/// Validate every MESSAGE-INTEGRITY / FINGERPRINT attribute present.
+/// `Some(authenticated)` when the message is well-formed and nothing present
+/// failed — `authenticated` says whether a MESSAGE-INTEGRITY was actually
+/// there and verified; `None` on any failure.
+fn walk_attributes(pk: &mut [u8], remote_key: &[u8]) -> Option<bool> {
     if remote_key.is_empty() {
-        return false;
+        return None;
     }
     let total = STUN_HEADER_LEN + message_length(pk) as usize;
     if total > pk.len() {
-        return false;
+        return None;
     }
 
+    let mut authenticated = false;
     let mut off = STUN_HEADER_LEN;
     while off + 4 <= total {
         let attr_type = read_u16(pk, off);
         let attr_len = read_u16(pk, off + 2) as usize;
         if off + 4 + attr_len > total {
-            return false;
+            return None;
         }
 
         match attr_type {
             0x0008 => {
                 // MESSAGE-INTEGRITY
-                if !verify_integrity(pk, off, remote_key) {
-                    return false;
+                if attr_len != 20 || !verify_integrity(pk, off, remote_key) {
+                    return None;
                 }
+                authenticated = true;
             }
             0x8028
                 // FINGERPRINT
                 if !verify_fingerprint(pk, off) => {
-                    return false;
+                    return None;
                 }
             // USERNAME / PRIORITY / USE-CANDIDATE / ICE-CONTROLLING /
             // GOOG-NETWORK-INFO — accept without validation.
@@ -143,7 +149,41 @@ fn walk_attributes(pk: &mut [u8], remote_key: &[u8]) -> bool {
         let padding = (4 - (attr_len % 4)) % 4;
         off += 4 + attr_len + padding;
     }
-    true
+    Some(authenticated)
+}
+
+/// The 96-bit transaction ID of a STUN message (caller has checked
+/// `is_stun`).
+pub fn transaction_id(pk: &[u8]) -> [u8; 12] {
+    let mut id = [0u8; 12];
+    id.copy_from_slice(&pk[8..STUN_HEADER_LEN]);
+    id
+}
+
+/// Does this request nominate its pair — carry USE-CANDIDATE (RFC 8445
+/// §7.1.2) *inside* the part MESSAGE-INTEGRITY covers? An attribute after
+/// MESSAGE-INTEGRITY is unauthenticated (RFC 5389 §15.4: ignored, bar
+/// FINGERPRINT), so one appended to a captured signed ping must not count.
+/// Integrity itself is the caller's job (`handle_checked(.., true)`); a
+/// message without MESSAGE-INTEGRITY returns false here.
+pub fn nominates(pk: &[u8]) -> bool {
+    let total = STUN_HEADER_LEN + message_length(pk) as usize;
+    if total > pk.len() {
+        return false;
+    }
+    let mut use_candidate = false;
+    let mut off = STUN_HEADER_LEN;
+    while off + 4 <= total {
+        let attr_type = read_u16(pk, off);
+        let attr_len = read_u16(pk, off + 2) as usize;
+        match attr_type {
+            0x0025 => use_candidate = true,
+            0x0008 => return use_candidate,
+            _ => {}
+        }
+        off += 4 + attr_len + (4 - (attr_len % 4)) % 4;
+    }
+    false
 }
 
 // Writes an XOR-MAPPED-ADDRESS attribute for `endpoint` at `attr_off` in `response`.
@@ -230,13 +270,33 @@ fn create_binding_response(
 }
 
 /// Handle an inbound packet. Returns the number of bytes written to `response`
-/// (0 if no response should be sent or validation failed).
+/// (0 if no response should be sent or validation failed). Test-only: the
+/// recv loop calls `handle_checked`, which says whether integrity is required.
+#[cfg(test)]
 pub fn handle(
     pk: &mut [u8],
     response: &mut [u8],
     endpoint: SocketAddr,
     local_key: &[u8],
     remote_key: &[u8],
+) -> usize {
+    handle_checked(pk, response, endpoint, local_key, remote_key, false)
+}
+
+/// `handle`, optionally insisting on authentication: with
+/// `require_integrity` a Binding Request is answered only when it carries a
+/// MESSAGE-INTEGRITY that verifies against `remote_key` — a bare request (no
+/// MESSAGE-INTEGRITY at all) is otherwise accepted, which is fine for
+/// answering but means a response is NOT proof the sender knows the ICE
+/// password. Callers that act on the sender's address (latching a secure
+/// leg's remote) must pass `true`.
+pub fn handle_checked(
+    pk: &mut [u8],
+    response: &mut [u8],
+    endpoint: SocketAddr,
+    local_key: &[u8],
+    remote_key: &[u8],
+    require_integrity: bool,
 ) -> usize {
     if !is_stun(pk) {
         return 0;
@@ -247,8 +307,10 @@ pub fn handle(
 
     if message_class(pk) == 0 {
         // Binding Request
-        if !walk_attributes(pk, remote_key) {
-            return 0;
+        match walk_attributes(pk, remote_key) {
+            Some(true) => {}
+            Some(false) if !require_integrity => {}
+            _ => return 0,
         }
         create_binding_response(pk, response, endpoint, local_key)
     } else {
@@ -325,6 +387,52 @@ mod tests {
         // Fingerprint self-check.
         let fp_off = n - 8;
         assert!(verify_fingerprint(&resp[..n], fp_off));
+    }
+
+    /// A bare Binding Request (no MESSAGE-INTEGRITY) proves nothing about
+    /// the sender. Plain `handle` still answers it (unchanged behaviour);
+    /// `handle_checked(.., true)` must not.
+    #[test]
+    fn checked_handle_requires_message_integrity() {
+        let mut bare = vec![0u8; STUN_HEADER_LEN];
+        write_u16(&mut bare, 0, 0x0001);
+        write_u32(&mut bare, 4, MAGIC_COOKIE);
+        assert!(is_stun(&bare));
+        let mut resp = [0u8; 256];
+        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 5), 4242));
+        assert!(handle(&mut bare.clone(), &mut resp, addr, b"k", b"k") > 0);
+        assert_eq!(
+            handle_checked(&mut bare, &mut resp, addr, b"k", b"k", true),
+            0,
+            "bare STUN answered as if authenticated"
+        );
+        let mut signed = build_request(b"k");
+        assert!(handle_checked(&mut signed, &mut resp, addr, b"k", b"k", true) > 0);
+        let mut wrong = build_request(b"other");
+        assert_eq!(
+            handle_checked(&mut wrong, &mut resp, addr, b"k", b"k", true),
+            0
+        );
+    }
+
+    /// USE-CANDIDATE counts only when MESSAGE-INTEGRITY covers it.
+    #[test]
+    fn nominates_only_when_use_candidate_is_signed() {
+        assert!(!nominates(&build_request(b"k")));
+        // USE-CANDIDATE (zero-length) before MESSAGE-INTEGRITY.
+        let mut uc = vec![0u8; STUN_HEADER_LEN];
+        write_u16(&mut uc, 0, 0x0001);
+        write_u32(&mut uc, 4, MAGIC_COOKIE);
+        uc.extend_from_slice(&[0x00, 0x25, 0, 0, 0x00, 0x08, 0, 20]);
+        uc.extend_from_slice(&[0u8; 20]);
+        set_message_length(&mut uc, 28);
+        assert!(nominates(&uc));
+        // Appended after MESSAGE-INTEGRITY: unauthenticated, ignored.
+        let mut late = build_request(b"k");
+        late.truncate(STUN_HEADER_LEN + 24);
+        late.extend_from_slice(&[0x00, 0x25, 0, 0]);
+        set_message_length(&mut late, 28);
+        assert!(!nominates(&late));
     }
 
     #[test]
