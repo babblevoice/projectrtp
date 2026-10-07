@@ -16,7 +16,8 @@
 //   encoder, which is the spike the depth exists to admit);
 // * packetrate — a token bucket of packets, one second deep.
 // A packet either bucket cannot pay for is dropped (`in.ratedropped`) and
-// charged to neither.
+// charged to neither. This is checked before the per-stream limits, so a
+// packet over the rate is never parsed.
 //
 // Per source stream (SSRC):
 // * framerate — a "frame" is a distinct RTP timestamp. Frames are metered by
@@ -321,12 +322,21 @@ impl InboundGuard {
         if pkt.len() < super::rtp::RTP_FIXED_HEADER_LEN {
             return Verdict::Forward; // the recv loop never hands us one
         }
+        // Rate first, without spending: the checks below parse the payload,
+        // and a flood must not buy that work with packets it has no budget
+        // to forward anyway.
+        let size = pkt.len() as f64;
+        let bytes_ok = self.bytes.as_mut().is_none_or(|b| b.can(size, now));
+        let packets_ok = self.packets.as_mut().is_none_or(|b| b.can(1.0, now));
+        if !(bytes_ok && packets_ok) {
+            return Verdict::Rate;
+        }
         let limits = self.limits;
         let per_stream = limits.framerate > 0 || (limits.maxfs > 0 && fmt.is_some());
         if per_stream {
             let s = self.stream(super::rtp::ssrc(pkt), now);
-            // Resolution first: a stream we are refusing should not spend
-            // frame or rate budget.
+            // Resolution before frame rate: a stream we are refusing should
+            // not spend frame budget (nor rate budget — taken last).
             if let (Some(fmt), true) = (fmt, limits.maxfs > 0) {
                 if let Some(dims) = video_dims::rtp_payload(pkt)
                     .and_then(|p| video_dims::packet_dims(fmt, p, limits.maxfs))
@@ -342,12 +352,6 @@ impl InboundGuard {
                     return Verdict::Frame;
                 }
             }
-        }
-        let size = pkt.len() as f64;
-        let bytes_ok = self.bytes.as_mut().is_none_or(|b| b.can(size, now));
-        let packets_ok = self.packets.as_mut().is_none_or(|b| b.can(1.0, now));
-        if !(bytes_ok && packets_ok) {
-            return Verdict::Rate;
         }
         if let Some(b) = self.bytes.as_mut() {
             b.take(size);
@@ -720,6 +724,23 @@ mod tests {
             assert_eq!(g.check(&pkt(2, f, &[]), None, t(0)), Verdict::Forward);
         }
         assert_eq!(g.check(&pkt(1, 99, &[]), None, t(0)), Verdict::Frame);
+    }
+
+    /// A packet over the leg's rate is refused before its payload is read:
+    /// it is dropped either way, so it leaves no mark on its stream.
+    #[test]
+    fn a_packet_over_the_rate_is_not_parsed() {
+        let mut g = InboundGuard::new(RelayLimits {
+            packetrate: 1,
+            ..RelayLimits::DEFAULT
+        });
+        let vp8 = Some(VideoFormat::Vp8);
+        let inter = pkt(5, 0, &vp8_payload(false, true, 0, 0));
+        assert_eq!(g.check(&inter, vp8, t(0)), Verdict::Forward);
+        let big = pkt(5, 3000, &vp8_payload(true, true, 1920, 1080));
+        assert_eq!(g.check(&big, vp8, t(1)), Verdict::Rate);
+        let inter = pkt(5, 6000, &vp8_payload(false, true, 0, 0));
+        assert_eq!(g.check(&inter, vp8, t(1_500_000)), Verdict::Forward);
     }
 
     #[test]

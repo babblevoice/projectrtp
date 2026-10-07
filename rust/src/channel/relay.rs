@@ -31,7 +31,7 @@
 //
 // Lock order (deadlock safety): a leg's `group` slot, then the group's
 // member list; when two slots are held (`join`) they are taken in
-// ascending leg-id order. `retired`, `out_routes`, `pts`, `nacks`, `nack_limit` and the
+// ascending leg-id order. `retired`, `out_routes`, `pts`, `nacks`, `nack_limit`, `nack_budget` and the
 // recv loop's `RelayRecv::guard` are leaves — nothing is locked while holding them. The per-packet path never holds a slot while
 // taking another lock: it clones the group handle and releases the slot.
 //
@@ -67,7 +67,7 @@ use tokio::sync::{mpsc, watch, Notify};
 use tokio_util::sync::CancellationToken;
 
 use super::dtls_session::{local_srtp_params, SrtpKeyingMaterial};
-use super::relay_limits::RelayLimits;
+use super::relay_limits::{RelayLimits, TokenBucket};
 use super::rtcp_stats::RxStats;
 use super::rtp::RtpPacket;
 use super::video_dims::VideoFormat;
@@ -94,6 +94,20 @@ pub const MAX_NACK_FCI: usize = 32;
 /// RTT: a genuine re-request after the retransmission itself was lost still
 /// goes through.
 pub const NACK_DEDUPE_WINDOW: Duration = Duration::from_millis(100);
+
+/// Sequence numbers one leg's remote may NACK per second (a token bucket,
+/// one second deep), all its streams together. Inbound RTCP is not held to
+/// the leg's `RelayLimits`, and each compound a receiver sends costs the
+/// source a NACK and up to 17 retransmissions per entry — so a receiver
+/// cycling through sequence numbers (which also defeats `NackLimiter`, whose
+/// window only catches repeats) could keep every source it watches resending
+/// flat out. An honest receiver losing a fifth of a 1000 pps stream, and
+/// asking twice for each, stays under this.
+pub const NACK_SEQ_RATE: f64 = 500.0;
+
+/// Depth of that bucket: two compounds of `MAX_NACK_FCI` full entries, so a
+/// burst of loss is asked for at once.
+pub const NACK_SEQ_BURST: f64 = (MAX_NACK_FCI * 17 * 2) as f64;
 
 /// Minimum spacing between keyframe requests sent to our remote. Browsers
 /// re-request on their own cadence; anything the far end sends faster than
@@ -297,6 +311,8 @@ pub struct RelayShared {
     nacks: PLMutex<Vec<NackReq>>,
     /// Recently requested `(source ssrc, seq)` pairs — see `NackLimiter`.
     nack_limit: PLMutex<NackLimiter>,
+    /// What OUR remote may still NACK — see `NACK_SEQ_RATE`.
+    nack_budget: PLMutex<TokenBucket>,
     pub nack_wake: Notify,
     /// Inbound RTP datagrams seen by recv_loop, counted BEFORE decryption.
     /// Duplicated from `ChannelState.in_count` so the JS-facing live stats
@@ -317,8 +333,10 @@ pub struct RelayShared {
     /// Secure leg, keys present, but SRTP/SRTCP auth or decrypt failed (bad
     /// MAC, replay, wrong keys) — dropped.
     pub decrypt_failed: AtomicU64,
-    /// Secure leg, RTP/RTCP arrived before keying material existed — dropped
-    /// (fail closed). A leg stuck here never completed DTLS.
+    /// RTP/RTCP that arrived before it could be authenticated — on a secure
+    /// leg before keying material existed, on any leg before it was given a
+    /// remote (see `configured`) — dropped (fail closed). A leg stuck here
+    /// never completed DTLS, or never had `remote()` called.
     pub prekey_dropped: AtomicU64,
     /// Packets actually forwarded out of this leg by the send task.
     pub out_count: AtomicU64,
@@ -347,6 +365,20 @@ pub struct RelayShared {
     /// ...because its stream's latest keyframe / SPS was over max-fs (or
     /// unreadable).
     pub oversize_dropped: AtomicU64,
+    /// NACKed sequence numbers from our remote not passed on to their source
+    /// because the remote was over `NACK_SEQ_RATE`.
+    pub nack_dropped: AtomicU64,
+    /// False until the leg has been given a remote (at open, or by the first
+    /// `remote()`). Only then is it known whether the leg is DTLS-SRTP, so
+    /// until then it neither accepts nor sends media or feedback and its
+    /// remote address moves only on a signed STUN request: a leg opened bare
+    /// and mixed before `remote({ dtls })` would otherwise latch onto the
+    /// first datagram to reach its port and send that address the group's
+    /// media in the clear.
+    configured: AtomicBool,
+    /// Set when the channel closes — a closed leg can not be mixed again
+    /// (see `join`).
+    closed: AtomicBool,
 }
 
 impl RelayShared {
@@ -364,6 +396,7 @@ impl RelayShared {
             out_routes: PLMutex::new(Vec::new()),
             nacks: PLMutex::new(Vec::new()),
             nack_limit: PLMutex::new(NackLimiter::default()),
+            nack_budget: PLMutex::new(TokenBucket::new(NACK_SEQ_RATE, NACK_SEQ_BURST)),
             nack_wake: Notify::new(),
             in_count: AtomicU64::new(0),
             accepted: AtomicU64::new(0),
@@ -379,7 +412,35 @@ impl RelayShared {
             rate_dropped: AtomicU64::new(0),
             frame_dropped: AtomicU64::new(0),
             oversize_dropped: AtomicU64::new(0),
+            nack_dropped: AtomicU64::new(0),
+            configured: AtomicBool::new(true),
+            closed: AtomicBool::new(false),
         }
+    }
+
+    /// A leg opened without a remote: nothing is known about it until
+    /// `set_configured` (see `configured`).
+    pub fn awaiting_remote(self) -> Self {
+        self.configured.store(false, Ordering::Release);
+        self
+    }
+
+    /// The leg has been given its remote (see `configured`). Call after the
+    /// `secure` flag is settled, so no packet sees a configured clear leg
+    /// that is about to become a secure one.
+    pub fn set_configured(&self) {
+        self.configured.store(true, Ordering::Release);
+    }
+
+    /// Has the leg been given a remote yet? See `configured`.
+    pub fn is_configured(&self) -> bool {
+        self.configured.load(Ordering::Acquire)
+    }
+
+    /// The channel is closing: leave the group for good.
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.leave_group();
     }
 
     /// Hold inbound RTP to `limits` instead of `RelayLimits::DEFAULT`.
@@ -559,6 +620,23 @@ impl RelayShared {
                 }
             }
         }
+        // Hold our remote to its NACK budget: whole entries while they fit.
+        {
+            let mut budget = self.nack_budget.lock();
+            let now = Instant::now();
+            for (_, req) in &mut per_src {
+                req.fci.retain(|&(_, blp)| {
+                    let seqs = 1 + blp.count_ones();
+                    let ok = budget.admit(f64::from(seqs), now);
+                    if !ok {
+                        self.nack_dropped
+                            .fetch_add(u64::from(seqs), Ordering::Relaxed);
+                    }
+                    ok
+                });
+            }
+        }
+        per_src.retain(|(_, req)| !req.fci.is_empty());
         if per_src.is_empty() {
             return;
         }
@@ -637,6 +715,7 @@ impl RelayShared {
             rate_dropped: self.rate_dropped.load(Ordering::Relaxed),
             frame_dropped: self.frame_dropped.load(Ordering::Relaxed),
             oversize_dropped: self.oversize_dropped.load(Ordering::Relaxed),
+            nack_dropped: self.nack_dropped.load(Ordering::Relaxed),
             limits: self.limits,
         }
     }
@@ -709,6 +788,7 @@ pub struct RelayCounters {
     pub rate_dropped: u64,
     pub frame_dropped: u64,
     pub oversize_dropped: u64,
+    pub nack_dropped: u64,
     /// The effective limits (not a counter; carried so close stats can
     /// report them alongside the drops they explain).
     pub limits: RelayLimits,
@@ -717,8 +797,10 @@ pub struct RelayCounters {
 /// `mix(a, b)` for relay legs — the audio mix's group rules: both
 /// ungrouped → a new group of two; one grouped → the other joins it; same
 /// group → no-op; different groups → false (merging is unsupported, as for
-/// audio). On success every member is asked for a keyframe, so the joiner
-/// gets a picture from each existing source and they get one from it.
+/// audio). A leg whose channel has closed is refused too: its send task is
+/// gone, so it would sit in the group as a member nothing ever removes. On
+/// success every member is asked for a keyframe, so the joiner gets a picture
+/// from each existing source and they get one from it.
 pub fn join(a: &Arc<RelayShared>, b: &Arc<RelayShared>) -> bool {
     if a.id == b.id {
         return true; // mix(self, self); locking one slot twice would deadlock
@@ -727,6 +809,11 @@ pub fn join(a: &Arc<RelayShared>, b: &Arc<RelayShared>) -> bool {
     let members = {
         let mut lo_slot = lo.group.lock();
         let mut hi_slot = hi.group.lock();
+        // Checked under the slots `close` takes to leave: a close racing
+        // this either is refused here or leaves the group it was added to.
+        if lo.closed.load(Ordering::Acquire) || hi.closed.load(Ordering::Acquire) {
+            return false;
+        }
         let group = match (lo_slot.as_ref(), hi_slot.as_ref()) {
             (None, None) => Arc::new(PLMutex::new(vec![lo.clone(), hi.clone()])),
             (Some(g), None) => {
@@ -861,6 +948,9 @@ async fn forward(
     frame: &mut RelayFrame,
 ) {
     let pkt = &mut frame.pkt;
+    if !cfg.shared.is_configured() {
+        return; // no remote() yet — not known whether this leg is secure
+    }
     let Some(addr) = *cfg.remote_addr.lock() else {
         return; // remote not yet confirmed — nowhere to send
     };
@@ -1312,6 +1402,9 @@ async fn send_nack(
     encrypt: &mut Option<webrtc_srtp::context::Context>,
     req: &NackReq,
 ) -> bool {
+    if !cfg.shared.is_configured() {
+        return false;
+    }
     let Some(addr) = *cfg.remote_addr.lock() else {
         return false;
     };
@@ -1339,6 +1432,9 @@ async fn send_pli(
     cfg: &mut RelaySendConfig,
     encrypt: &mut Option<webrtc_srtp::context::Context>,
 ) -> bool {
+    if !cfg.shared.is_configured() {
+        return false;
+    }
     let Some(addr) = *cfg.remote_addr.lock() else {
         return false;
     };
@@ -2335,5 +2431,47 @@ mod tests {
         assert!(!wants_keyframe(&[0x80, 201, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2]));
         // Short garbage → no.
         assert!(!wants_keyframe(&[0x81, 206]));
+    }
+
+    /// A closed leg's send task is gone and nothing would ever take it out
+    /// of a group again, so `mix()` with one is refused.
+    #[test]
+    fn closed_leg_cannot_be_mixed_again() {
+        let ((a, _ra), (b, _rb), (c, _rc)) = (leg(1), leg(2), leg(3));
+        assert!(join(&a, &b));
+        b.close();
+        assert!(!a.has_member(2));
+        assert!(!join(&a, &b));
+        assert!(!join(&b, &c));
+        assert!(!a.has_member(2) && !c.has_member(2));
+        assert!(join(&a, &c));
+    }
+
+    /// The dedupe window only catches repeats: a receiver NACKing ever-new
+    /// sequence numbers is held to its budget instead.
+    #[test]
+    fn nacks_from_one_remote_are_held_to_a_budget() {
+        let ((a, _ra), (b, _rb)) = (leg(1), leg(2));
+        assert!(join(&a, &b));
+        let mut out = Outbound::new(0xAAAA);
+        out.stamp(&a, 2, 0xB1, 0, 96, t(0)).unwrap();
+        let (mut asked, mut passed) = (0u64, 0u64);
+        for i in 0..200u16 {
+            a.relay_nacks(&[(0xAAAA, vec![(i * 17, 0xFFFF)])]);
+            asked += 17;
+            for req in b.nacks.lock().drain(..) {
+                passed += req
+                    .fci
+                    .iter()
+                    .map(|(_, blp)| 1 + u64::from(blp.count_ones()))
+                    .sum::<u64>();
+            }
+        }
+        let burst = NACK_SEQ_BURST as u64;
+        assert!(
+            passed >= burst - 17 && passed <= burst + 100,
+            "{passed} sequence numbers relayed"
+        );
+        assert_eq!(a.snapshot().nack_dropped, asked - passed);
     }
 }
