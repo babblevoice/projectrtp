@@ -686,7 +686,7 @@ async fn run(
     // idle timeout) so no peer keeps forwarding into a dead leg or holding
     // its source state — and the group's Arc cycle is broken.
     if let Some(relay) = &state.relay {
-        relay.leave_group();
+        relay.close();
     }
     let stats = build_channel_stats(state);
     state.close_info = Some(CloseInfo {

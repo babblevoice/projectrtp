@@ -363,11 +363,15 @@ async fn handle_packet(
     // Symmetric RTP: send back to wherever the far end sends from. On a
     // secure relay leg only an *authenticated* packet may move the address
     // (see `latch`) — the latch calls below; everything else latches here,
-    // unchanged.
+    // unchanged. A relay leg not yet given a remote is guarded too: whether
+    // it is secure is not known until `remote()`, so it is held to the
+    // stricter rule (and takes no media at all — below). `configured` is
+    // read before `secure`: `remote()` settles them in the other order.
+    let configured = cfg.relay.as_ref().is_none_or(|r| r.own.is_configured());
     let guarded = cfg
         .relay
         .as_ref()
-        .is_some_and(|r| r.own.secure.load(Ordering::Relaxed));
+        .is_some_and(|r| !configured || r.own.secure.load(Ordering::Relaxed));
     if !guarded {
         latch(cfg, peer);
     }
@@ -422,12 +426,24 @@ async fn handle_packet(
     // DTLS — feed to DTLSConn if active.
     if (20..=63).contains(&first) {
         // The handshake needs an address to answer; once keyed, DTLS is no
-        // longer allowed to steer where media goes.
-        if guarded && cfg.key_rx.borrow().is_none() {
+        // longer allowed to steer where media goes. (Before `remote()` there
+        // is no handshake to answer.)
+        if guarded && configured && cfg.key_rx.borrow().is_none() {
             latch(cfg, peer);
         }
         if let Some(tx) = cfg.dtls_tx.lock().clone() {
             let _ = tx.try_send(pkt.to_vec());
+        }
+        return;
+    }
+
+    // Relay only: until the leg has a remote nothing but signed STUN is
+    // acted on. RTP and RTCP here would be taken as a clear leg's — forwarded
+    // to the group, and scanned for keyframe requests and NACKs — from
+    // whoever found the port.
+    if !configured {
+        if let Some(relay_cfg) = &cfg.relay {
+            relay_cfg.own.prekey_dropped.fetch_add(1, Ordering::Relaxed);
         }
         return;
     }
@@ -1569,6 +1585,59 @@ mod tests {
             assert_eq!(forwarded, 3);
             let c = own.snapshot();
             assert_eq!((c.rate_dropped, c.oversize_dropped, c.accepted), (2, 1, 6));
+        }
+
+        /// A relay leg opened without a remote is not yet known to be
+        /// secure. It used to behave as a clear leg until `remote({ dtls })`:
+        /// the first datagram to reach its port latched its remote and was
+        /// forwarded to the group, and the group's media went back to that
+        /// address unencrypted. Until it has a remote it takes nothing but a
+        /// signed STUN request.
+        #[tokio::test]
+        async fn leg_awaiting_remote_takes_only_signed_stun() {
+            let mut r = rig().await;
+            let (own_tx, _own_rx) = mpsc::channel(4);
+            let (peer_tx, mut peer_rx) = mpsc::channel(4);
+            let own = Arc::new(RelayShared::new(11, own_tx, false, 96).awaiting_remote());
+            let peer = Arc::new(RelayShared::new(12, peer_tx, false, 96));
+            assert!(relay::join(&own, &peer));
+            let _ = pli_requested(&peer).await;
+            r.cfg.relay = Some(RelayRecv::new(own.clone()));
+            *r.cfg.local_icepwd.lock() = "icepwd-secret".into();
+            let real: SocketAddr = "127.0.0.1:9".parse().unwrap();
+            let spoof: SocketAddr = "127.0.0.1:6666".parse().unwrap();
+            let (mut rtcp_ctx, mut rtp_ctx, mut gates) = (None, None, RelayGates::default());
+            let remote = || *r.cfg.remote_addr.lock();
+
+            let rtp = vec![0x80u8, 96, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0x55];
+            let pli = vec![0x81u8, 206, 0, 2, 0, 0, 0, 0x55, 0, 0, 0, 0x66];
+            for pkt in [&rtp, &pli, &stun_request(None, 1, false)] {
+                handle_packet(&r.cfg, pkt, spoof, &mut rtcp_ctx, &mut rtp_ctx, &mut gates).await;
+                assert_eq!(remote(), None, "latched before remote()");
+            }
+            assert!(peer_rx.try_recv().is_err(), "forwarded before remote()");
+            assert!(!pli_requested(&peer).await, "feedback acted on");
+            assert_eq!(own.snapshot().prekey_dropped, 2);
+            assert_eq!(own.snapshot().accepted, 0);
+
+            // the browser's own connectivity check still finds us
+            let signed = stun_request(Some(PWD), 2, false);
+            handle_packet(
+                &r.cfg,
+                &signed,
+                real,
+                &mut rtcp_ctx,
+                &mut rtp_ctx,
+                &mut gates,
+            )
+            .await;
+            assert_eq!(remote(), Some(real));
+
+            // remote() without dtls: a clear leg, as before
+            own.set_configured();
+            handle_packet(&r.cfg, &rtp, spoof, &mut rtcp_ctx, &mut rtp_ctx, &mut gates).await;
+            assert_eq!(remote(), Some(spoof));
+            assert!(peer_rx.try_recv().is_ok());
         }
     }
 
