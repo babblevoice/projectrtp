@@ -247,6 +247,9 @@ async fn send_leg(src: &mut Member, dst: &mut Member) {
     // out_ts is advanced once per tick in process_inbound (mirrors
     // C++ incrtsout). Don't double-advance here.
 
+    // Capture tap (outbound) for mixed audio relayed to this peer.
+    dst.state.capture(super::pcap::PcapDirection::Out, &pkt);
+
     let send_ok = if let Some(ref mut ctx) = dst.state.srtp_encrypt {
         match ctx.encrypt_rtp(pkt.as_slice()) {
             Ok(encrypted) => dst
@@ -355,6 +358,9 @@ impl Member {
                 }
                 Err(_) => return None,
             }
+        }
+        if let Some(ref pk) = popped {
+            self.state.capture(super::pcap::PcapDirection::In, pk);
         }
         popped
     }
@@ -1170,6 +1176,9 @@ async fn send_rtp(state: &mut ChannelState, pkt: &RtpPacket, remote: SocketAddr)
     if state.secure_not_ready() {
         return;
     }
+    // Capture tap (outbound), before encryption below.
+    state.capture(super::pcap::PcapDirection::Out, pkt);
+
     // Payload octets (excludes the RTP header) — the RTCP SR octet count.
     let octets = pkt.payload_len() as u64;
     if let Some(ref mut ctx) = state.srtp_encrypt {
@@ -1267,6 +1276,49 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
             });
             let _ = ack.send(());
         }
+        Command::Pcap { cfg, ack } => {
+            // Same semantics as the local actor: one capture per channel, and
+            // arming again replaces the current one. A channel can be mixed
+            // and unmixed mid-call, so capture has to work in both modes or
+            // it would silently stop the moment a call joined a conference.
+            if let Some(mut old) = m.state.pcap.take() {
+                let _ = old.finish();
+                m.events.post(Event::Pcap {
+                    reason: "replaced".into(),
+                    file: old.path().to_string_lossy().into_owned(),
+                    filesize: old.bytes(),
+                    packets: old.packets(),
+                    skipped: old.skipped(),
+                });
+            }
+            match super::pcap::PcapWriter::create(&cfg) {
+                Ok(w) => m.state.pcap = Some(w),
+                Err(e) => {
+                    m.events.post(Event::Pcap {
+                        reason: format!("open-failed: {e}"),
+                        file: cfg.file.to_string_lossy().into_owned(),
+                        filesize: 0,
+                        packets: 0,
+                        skipped: 0,
+                    });
+                }
+            }
+            let _ = ack.send(());
+        }
+
+        Command::PcapFinish => {
+            if let Some(mut cap) = m.state.pcap.take() {
+                let _ = cap.finish();
+                m.events.post(Event::Pcap {
+                    reason: "requested".into(),
+                    file: cap.path().to_string_lossy().into_owned(),
+                    filesize: cap.bytes(),
+                    packets: cap.packets(),
+                    skipped: cap.skipped(),
+                });
+            }
+        }
+
         Command::Record { cfg, ack } => {
             // Record at the channel's native rate (16k for G.722, else 8k).
             let mut cfg = cfg;
