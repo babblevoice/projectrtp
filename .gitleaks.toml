@@ -1,0 +1,22 @@
+# Gitleaks settings for this repository: Gitleaks's default rules, less the
+# false alarms allowlisted below.
+#
+# CI reads this file from the default branch, never from the branch it checks,
+# so a branch cannot allowlist its own secret. A new rule takes effect once it
+# is merged: land it in a PR of its own, before the change that needs it.
+#
+# Allowlist only what is not a secret, and as narrowly as it will go: one
+# rule, one file, or one exact value. A real secret is never allowlisted; it is
+# rotated, and the code reads it from where our secrets are kept instead.
+# The guide, the CI workflow and this common part: babblevoice/secret-scanning.
+
+title = "babblevoice/projectrtp"
+
+[extend]
+useDefault = true
+
+# Common to every babblevoice repository.
+[[allowlists]]
+description = "AWS Secrets Manager ARNs (AWSSECRETARN): the name of a secret, not the secret"
+regexTarget = "line"
+regexes = ['''arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+''']
