@@ -22,9 +22,9 @@ WORKDIR /src/rust
 ENV RUSTFLAGS="-C target-feature=-crt-static"
 RUN cargo build --release                                                                                                                                                                   
                                                                                                                                                                                               
-FROM alpine:3.22 AS test
+FROM node:26-alpine3.24 AS test
 WORKDIR /usr/src/projectrtp
-RUN apk add --no-cache nodejs npm ca-certificates libstdc++ spandsp3
+RUN apk add --no-cache ca-certificates libstdc++ spandsp3
 # Copy libilbc out of the builder stage — Alpine doesn't have a package
 # for it, and the Rust cdylib needs the .so at Node-load time. spandsp
 # is a packaged runtime (above), so no manual copy needed.
@@ -34,9 +34,9 @@ COPY --from=rust-builder /src/rust/target/release/libprojectrtp.so ./build/Relea
 RUN npm ci --ignore-scripts   # native lib comes from the rust-builder stage; no build scripts needed                                                                                                                    
 CMD [ "./node_modules/mocha/bin/_mocha", "test/interface/*.js", "test/unit/*.js", "--exit" ]                                                                                                
                                                                                                                                                                                               
-FROM alpine:3.22 AS app
+FROM node:26-alpine3.24 AS app
 WORKDIR /app
-RUN apk add --no-cache nodejs npm ca-certificates libstdc++ spandsp3
+RUN apk add --no-cache ca-certificates libstdc++ spandsp3
 COPY --from=rust-builder /usr/local/lib/libilbc.so* /usr/lib/
 COPY --from=rust-builder /src/rust/target/release/libprojectrtp.so /app/build/Release/projectrtp.node
 COPY index.js package.json package-lock.json /app/                                                                                                                                                            

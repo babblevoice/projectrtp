@@ -106,8 +106,19 @@ impl Drop for PortReservation {
 mod tests {
     use super::*;
 
+    /// POOL is process-global and each test re-inits it; cargo runs tests
+    /// on parallel threads, so without this one test's `init` lands in the
+    /// middle of the other's acquire/count and it sees the wrong pool.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        // A panicking test poisons the lock; the pool is re-inited anyway.
+        SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn init_populates_only_even_ports() {
+        let _serial = serial();
         init(10_000, 10_010);
         let mut acquired = Vec::new();
         while let Some(p) = acquire() {
@@ -118,6 +129,7 @@ mod tests {
 
     #[test]
     fn reservation_drop_returns_port() {
+        let _serial = serial();
         init(20_000, 20_004);
         assert_eq!(available_count(), 2);
         let r = PortReservation::new(acquire().unwrap());
