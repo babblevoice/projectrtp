@@ -599,7 +599,14 @@ impl RelayShared {
     /// to nobody, and every remaining member is told we are gone as a source
     /// so its send task can release the SSRC it used for us.
     pub fn leave_group(&self) {
-        let Some(group) = self.group.lock().take() else {
+        // The slot stays locked until we are out of the member list. Giving
+        // it up first let a `join` land in between: it saw an empty slot,
+        // added us to the group we were leaving and pointed the slot back at
+        // it, and the `retain` below then took us out again — a leg that
+        // believes it is grouped but forwards to, and is forwarded to by,
+        // nobody. Slot then member list is the module's lock order.
+        let mut slot = self.group.lock();
+        let Some(group) = slot.take() else {
             return;
         };
         let mut members = group.lock();
