@@ -186,11 +186,12 @@ class proxy {
  * @property { function } direction
  * @property { function } livestats - live media-flow counters (a Promise on a proxied channel):
  *   { relay, in: { count, accepted, rtcp, decryptfailed, prekey, ratedropped, framedropped,
- *   oversizedropped }, out: { count, dropped, ptdropped }, relaylimits: { bitrate, burst, packetrate,
+ *   oversizedropped, nackdropped }, out: { count, dropped, ptdropped }, relaylimits: { bitrate, burst, packetrate,
  *   framerate, maxfs }, streams: [ { source, ssrc, sourcessrc, pt } ] }. On a relay leg
  *   in.ratedropped / in.framedropped / in.oversizedropped count authenticated inbound RTP refused by
  *   the leg's relaylimits (a subset of in.accepted - never forwarded), and relaylimits are the
- *   limits in force (burst resolved; see openchannel). Close stats of a relay leg carry the same
+ *   limits in force (burst resolved; see openchannel). in.nackdropped counts sequence numbers the
+ *   leg's remote NACKed that were not passed on to their source because it asked for too many (500/s). Close stats of a relay leg carry the same
  *   in.* / out.* counters and relaylimits. On a relay leg `streams` is its current outbound
  *   stream mapping, read-only: one entry per stream it forwards - `source` the uuid of the channel the
  *   stream comes from, `ssrc` the SSRC this leg sends it under (the leg's own local.ssrc for the first
@@ -230,7 +231,9 @@ class proxy {
  * @param { string } properties.remote.dtls.setup - "active" or "passive"
  * @param { boolean } [ properties.remote.rtcpmux = false ] - RFC 5761 rtcp-mux: carry RTCP over the RTP port/5-tuple instead of the separate P+1 control port. Set from the SDP `a=rtcp-mux` attribute.
  * @param { boolean } [ properties.relay = false ] - open a tick-free relay (video) leg: RTP is
- *   forwarded to the other legs it is mix()ed with, never decoded
+ *   forwarded to the other legs it is mix()ed with, never decoded. A relay leg opened without a
+ *   remote takes and sends no media until its first remote() - only then is it known whether the leg
+ *   is DTLS-SRTP - and a closed relay leg cannot be mix()ed (mix returns false)
  * @param { Object } [ properties.relaylimits ] - relay legs only: abuse limits on the RTP this leg's
  *   remote sends, enforced before it is forwarded (SDP limits only bind an honest browser). Every
  *   field is optional: a missing field - or the whole object - takes its default, so a relay leg is

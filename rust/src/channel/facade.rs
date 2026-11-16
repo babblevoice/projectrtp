@@ -383,6 +383,7 @@ impl ChannelObject {
             if dtls.is_some() {
                 r.secure.store(true, std::sync::atomic::Ordering::Relaxed);
             }
+            r.set_configured();
         }
         let (ack, _) = tokio::sync::oneshot::channel();
         self.handle
@@ -811,6 +812,7 @@ fn set_relay_counters(
         "oversizedropped",
         env.create_int64(c.oversize_dropped as i64)?,
     )?;
+    in_o.set_named_property("nackdropped", env.create_int64(c.nack_dropped as i64)?)?;
     out_o.set_named_property("dropped", env.create_int64(c.dropped as i64)?)?;
     out_o.set_named_property("ptdropped", env.create_int64(c.pt_dropped as i64)?)?;
     Ok(())
@@ -1486,6 +1488,11 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
             remote_pt as u32,
         )
         .with_limits(relay_limits);
+        // Opened bare: whether the leg is secure is not known until its
+        // first `remote()`, and until then it takes and sends nothing.
+        if remote_addr.is_none() && initial_remote_dtls.is_none() {
+            shared = shared.awaiting_remote();
+        }
         // index.js passes the JS channel's uuid, so `livestats().streams`
         // names each source the way callers (and the node protocol) do.
         if let Ok(uuid) = params.get_named_property::<String>("uuid") {
