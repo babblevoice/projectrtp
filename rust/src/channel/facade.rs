@@ -92,6 +92,10 @@ struct EventPayload {
     /// Packets a capture could not represent (an IPv6 leg). Non-zero means the
     /// file is deliberately short, rather than mysteriously so.
     skipped: Option<u64>,
+    /// Packets a capture dropped because its writer fell behind.
+    dropped: Option<u64>,
+    /// The OS error behind a capture's `open-failed` or `write-failed`.
+    error: Option<String>,
 }
 
 fn event_to_payload(ev: Event) -> EventPayload {
@@ -106,6 +110,8 @@ fn event_to_payload(ev: Event) -> EventPayload {
             filesize: None,
             packets: None,
             skipped: None,
+            dropped: None,
+            error: None,
         },
         Event::Play { state, reason } => EventPayload {
             action: "play",
@@ -125,6 +131,8 @@ fn event_to_payload(ev: Event) -> EventPayload {
             filesize: None,
             packets: None,
             skipped: None,
+            dropped: None,
+            error: None,
         },
         Event::Record {
             state,
@@ -155,14 +163,18 @@ fn event_to_payload(ev: Event) -> EventPayload {
                 filesize,
                 packets: None,
                 skipped: None,
+                dropped: None,
+                error: None,
             }
         }
         Event::Pcap {
             reason,
+            error,
             file,
             filesize,
             packets,
             skipped,
+            dropped,
         } => EventPayload {
             // Mirrors the record event's shape so babble-rtp can treat a
             // finished capture exactly like a finished recording - see
@@ -176,6 +188,8 @@ fn event_to_payload(ev: Event) -> EventPayload {
             filesize: Some(filesize),
             packets: Some(packets),
             skipped: Some(skipped),
+            dropped: Some(dropped),
+            error,
         },
         Event::Telephone { digit } => EventPayload {
             action: "telephone-event",
@@ -187,6 +201,8 @@ fn event_to_payload(ev: Event) -> EventPayload {
             filesize: None,
             packets: None,
             skipped: None,
+            dropped: None,
+            error: None,
         },
         Event::Mix { state } => EventPayload {
             // Tests read `d.event` for "start" / "finished", not `d.state`.
@@ -199,6 +215,8 @@ fn event_to_payload(ev: Event) -> EventPayload {
             filesize: None,
             packets: None,
             skipped: None,
+            dropped: None,
+            error: None,
         },
     }
 }
@@ -510,12 +528,13 @@ impl ChannelObject {
     /// - `{ finish: true }` — close the capture and emit its `pcap` event
     ///
     /// One capture per channel: starting again replaces the current one. The
-    /// file is libpcap format holding this channel's RTP wrapped in
-    /// synthesised IPv4/UDP headers, taken from the cleartext side of SRTP —
-    /// so a DTLS-SRTP leg is readable in Wireshark without keys.
+    /// file is libpcap format holding every datagram the channel's sockets
+    /// sent and received - RTP, RTCP, STUN, DTLS - as it was on the wire, so
+    /// a secure leg's media is ciphertext (see pcap.rs).
     ///
-    /// `maxsize` matters on a live platform: capture is armed by an operator
-    /// and an unbounded writer is a disk-space incident waiting to happen.
+    /// `maxsize` and `maxduration` default to `DEFAULT_MAX_BYTES` and
+    /// `DEFAULT_MAX_DURATION_MS`: capture is armed by an operator on a live
+    /// platform and is never unbounded.
     #[napi]
     pub fn pcap(&self, params: Object) -> bool {
         if params.get_named_property::<bool>("finish").ok() == Some(true) {
@@ -538,12 +557,14 @@ impl ChannelObject {
                 .get_named_property::<i64>("maxsize")
                 .ok()
                 .filter(|v| *v > 0)
-                .map(|v| v as u64),
+                .map_or(Some(super::pcap::DEFAULT_MAX_BYTES), |v| Some(v as u64)),
             max_duration_ms: params
                 .get_named_property::<i64>("maxduration")
                 .ok()
                 .filter(|v| *v > 0)
-                .map(|v| v as u64),
+                .map_or(Some(super::pcap::DEFAULT_MAX_DURATION_MS), |v| {
+                    Some(v as u64)
+                }),
             local_address: params
                 .get_named_property::<String>("localaddress")
                 .ok()
@@ -1456,6 +1477,12 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
                 }
                 if let Some(s) = ev.skipped {
                     obj.set_named_property("skipped", env.create_int64(s as i64)?)?;
+                }
+                if let Some(d) = ev.dropped {
+                    obj.set_named_property("dropped", env.create_int64(d as i64)?)?;
+                }
+                if let Some(e) = ev.error {
+                    obj.set_named_property("error", env.create_string(&e)?)?;
                 }
                 if let Some(stats) = ev.stats {
                     let mut s = env.create_object()?;

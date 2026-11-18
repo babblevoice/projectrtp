@@ -118,12 +118,14 @@ async fn send_compound(state: &mut ChannelState, compound: &[u8], remote: Socket
     } else {
         state.rtcp_sock.clone()
     };
+    // Through the capture tap, as it goes on the wire (SRTCP if secure).
+    let tap = state.pcap.clone();
     if let Some(ref mut ctx) = state.srtp_encrypt {
         if let Ok(protected) = ctx.encrypt_rtcp(compound) {
-            let _ = sock.send_to(&protected, remote).await;
+            let _ = tap.send_to(&sock, &protected, remote).await;
         }
     } else {
-        let _ = sock.send_to(compound, remote).await;
+        let _ = tap.send_to(&sock, compound, remote).await;
     }
 }
 

@@ -1,6 +1,11 @@
 /*
   Packet capture (MONITORING-20).
 
+  The capture is taken at the socket boundary: every datagram a channel's
+  sockets receive, as it arrives, and every datagram they send, as it leaves
+  (after SRTP). So these tests look for what was on the wire - RTP, RTCP,
+  DTLS - not for what the call sounded like.
+
   These tests decode what we wrote with this repo's own pcap reader
   (test/interface/pcap.js) rather than trusting the writer, which is also the
   point of writing LINKTYPE_ETHERNET: a capture taken from a live call can be
@@ -18,7 +23,7 @@ const tmpfile = ( name ) => `/tmp/projectrtp-pcap-${ name }-${ process.pid }.pca
 
 /**
  * Shannon entropy in bits per byte. Cipher output sits at ~8.0; G.711 audio
- * is far lower. Used to prove a capture is cleartext.
+ * is far lower. Used to prove a capture holds what was on the wire.
  * @param { Buffer } buf
  * @returns { number }
  */
@@ -34,6 +39,27 @@ function entropy( buf ) {
   }
   return h
 }
+
+/**
+ * Is this captured UDP payload RTCP? RFC 5761: RTCP packet types 192-223 sit
+ * where an RTP payload type would be 64-95, which RTP never uses.
+ * @param { Buffer } d
+ * @returns { boolean }
+ */
+const isrtcp = ( d ) => 2 === d[ 0 ] >> 6 && 64 <= ( d[ 1 ] & 0x7f ) && 95 >= ( d[ 1 ] & 0x7f )
+
+/**
+ * @param { Buffer } d
+ * @returns { boolean }
+ */
+const isrtp = ( d ) => 2 === d[ 0 ] >> 6 && !isrtcp( d )
+
+/**
+ * The frames of a capture that carry RTP.
+ * @param { Array< object > } frames
+ * @returns { Array< object > }
+ */
+const rtpframes = ( frames ) => frames.filter( ( f ) => isrtp( f.ipv4.udp.data ) )
 
 /**
  * @param { number } sn
@@ -104,20 +130,25 @@ describe( "pcap", function() {
 
     expect( armed ).to.be.true
     expect( event.reason ).to.equal( "requested" )
-    expect( event.packets ).to.equal( 100 )
+    expect( event.error ).to.be.undefined
     expect( event.skipped ).to.equal( 0 )
+    expect( event.dropped ).to.equal( 0 )
 
-    const frames = await readpcap( file )
-    expect( frames ).to.be.an( "array" )
-    expect( frames.length ).to.equal( 100 )
+    const allframes = await readpcap( file )
+    expect( allframes ).to.be.an( "array" )
+    expect( allframes.length ).to.equal( event.packets )
 
     /* every frame must decode as IPv4/UDP - a link type or header mistake
        shows up here as undefined rather than as a wrong value */
-    frames.forEach( ( f ) => {
+    allframes.forEach( ( f ) => {
       expect( f.ethertype ).to.equal( "0800" )
       expect( f.ipv4.protocol ).to.equal( 17 )
-      expect( f.ipv4.udp.data.length ).to.equal( 172 )
     } )
+
+    /* 50 in and 50 echoed out; anything else is RTCP */
+    const frames = rtpframes( allframes )
+    expect( frames.length ).to.equal( 100 )
+    frames.forEach( ( f ) => { expect( f.ipv4.udp.data.length ).to.equal( 172 ) } )
 
     /* both directions present */
     const flows = new Set( frames.map( ( f ) => `${ f.ipv4.udp.srcport }->${ f.ipv4.udp.dstport }` ) )
@@ -204,10 +235,22 @@ describe( "pcap", function() {
     /* no limit, so nothing to report until the channel closes */
     expect( beforeclose ).to.be.false
     expect( event.reason ).to.equal( "channelclosed" )
-    expect( event.packets ).to.equal( 100 )
 
     const frames = await readpcap( file )
-    expect( frames.length ).to.equal( 100 )
+    expect( frames.length ).to.equal( event.packets )
+    expect( rtpframes( frames ).length ).to.equal( 100 )
+
+    /* the capture is closed after the RTCP BYE goes, so the file shows the
+       stream being ended */
+    const rtcp = frames.filter( ( f ) => isrtcp( f.ipv4.udp.data ) )
+    const bye = rtcp.some( ( f ) => {
+      const d = f.ipv4.udp.data
+      for( let off = 0; off + 4 <= d.length; off += ( d.readUInt16BE( off + 2 ) + 1 ) * 4 ) {
+        if( 203 === d[ off + 1 ] ) return true
+      }
+      return false
+    } )
+    expect( bye, "an RTCP BYE in the capture" ).to.be.true
 
     await fs.promises.unlink( file ).catch( () => {} )
   } )
@@ -219,8 +262,11 @@ describe( "pcap", function() {
 
     const { armed, event } = await capture( "/proc/nope/cannot.pcap" )
 
+    /* a fixed reason, with the OS error beside it rather than inside it */
     expect( armed ).to.be.true
-    expect( event.reason ).to.have.string( "open-failed" )
+    expect( event.reason ).to.equal( "open-failed" )
+    expect( event.event ).to.equal( "finished.open-failed" )
+    expect( event.error ).to.be.a( "string" ).and.not.be.empty
     expect( event.packets ).to.equal( 0 )
   } )
 
@@ -239,8 +285,8 @@ describe( "pcap", function() {
     this.timeout( 8000 )
     this.slow( 4000 )
 
-    /* Real calls are bridged, not echoed - the mixer has its own taps and is
-       the path that actually matters in production. */
+    /* Real calls are bridged, not echoed - the mixer sends on its own path,
+       and that path matters most in production. */
     const filea = tmpfile( "mixa" )
     const fileb = tmpfile( "mixb" )
 
@@ -282,8 +328,8 @@ describe( "pcap", function() {
 
     /* the leg being fed must see inbound; the far leg must see the relayed
        audio the mixer sent it, so both files carry traffic */
-    const framesa = await readpcap( filea )
-    const framesb = await readpcap( fileb )
+    const framesa = rtpframes( await readpcap( filea ) )
+    const framesb = rtpframes( await readpcap( fileb ) )
     expect( framesa.length ).to.be.above( 40 )
     expect( framesb.length ).to.be.above( 40 )
 
@@ -294,15 +340,17 @@ describe( "pcap", function() {
     await fs.promises.unlink( fileb ).catch( () => {} )
   } )
 
-  it( "captures a dtls-srtp leg as cleartext", async function() {
+  it( "captures a dtls-srtp leg as it was on the wire", async function() {
 
     this.timeout( 10000 )
     this.slow( 6000 )
 
-    /* The capture taps sit inside the crypto boundary - inbound after
-       decryption, outbound before encryption - so an encrypted call must
-       capture as plain rtp with no key material to hand over. Proven by
-       entropy: cipher output is ~8 bits/byte, g711 audio is far below that. */
+    /* The taps sit at the socket, outside the crypto boundary, so a secure
+       leg captures as SRTP: the handshake that keyed it, then media whose
+       payload is ciphertext (~8 bits/byte, against far less for g711) and
+       carries the auth tag. So a capture holds no call audio or digits. The
+       RTP header stays in the clear, which is what Wireshark's loss and
+       jitter analysis reads. */
     const file = tmpfile( "dtls" )
     projectrtp.tone.generate( "400+450*0.5/0/400+450*0.5/0:400/200/400/2000", "/tmp/pcapringing.wav" )
 
@@ -347,17 +395,170 @@ describe( "pcap", function() {
     expect( closeevent.stats.in.count ).to.be.above( 70 )
     expect( closeevent.stats.in.skip ).to.equal( 0 )
 
-    const frames = await readpcap( file )
+    const allframes = await readpcap( file )
+
+    /* the DTLS handshake (content types 20-63) is in the file */
+    const dtls = allframes.filter( ( f ) => 20 <= f.ipv4.udp.data[ 0 ] && 63 >= f.ipv4.udp.data[ 0 ] )
+    expect( dtls.length ).to.be.above( 0 )
+
+    const frames = rtpframes( allframes )
     expect( frames.length ).to.be.above( 70 )
 
-    /* no srtp auth tag - the wire form is 10 bytes longer */
-    frames.forEach( ( f ) => { expect( f.ipv4.udp.data.length ).to.equal( 172 ) } )
+    /* the srtp auth tag (80 bits) makes the wire form 10 bytes longer */
+    frames.forEach( ( f ) => { expect( f.ipv4.udp.data.length ).to.equal( 182 ) } )
 
-    const payload = Buffer.concat( frames.map( ( f ) => f.ipv4.udp.data.subarray( 12 ) ) )
-    expect( entropy( payload ) ).to.be.below( 7,
-      "captured payload looks like ciphertext - the tap is on the wrong side of srtp" )
+    const payload = Buffer.concat( frames.map( ( f ) => f.ipv4.udp.data.subarray( 12, 172 ) ) )
+    expect( entropy( payload ) ).to.be.above( 7,
+      "captured payload looks like cleartext - the tap is inside the srtp boundary" )
+
+    /* and the header Wireshark analyses is readable: one stream, in order */
+    const inbound = frames.filter( ( f ) => f.ipv4.udp.dstport === channelb.local.port )
+    expect( new Set( inbound.map( ( f ) => f.ipv4.udp.data.readUInt32BE( 8 ) ) ).size ).to.equal( 1 )
+    const sns = inbound.map( ( f ) => f.ipv4.udp.data.readUInt16BE( 2 ) )
+    for( let i = 1; i < sns.length; i++ ) expect( ( sns[ i ] - sns[ i - 1 ] + 65536 ) % 65536 ).to.equal( 1 )
 
     await fs.promises.unlink( file ).catch( () => {} )
     await fs.promises.unlink( "/tmp/pcapringing.wav" ).catch( () => {} )
+  } )
+
+  it( "captures packets as they arrive, before the jitter buffer drops any", async function() {
+
+    this.timeout( 6000 )
+    this.slow( 3000 )
+
+    /* every packet sent twice: the jitter buffer drops each duplicate, but
+       they were on the wire, so the capture must have them */
+    const file = tmpfile( "dupes" )
+    const server = dgram.createSocket( "udp4" )
+    server.on( "message", () => {} )
+    await new Promise( ( r ) => { server.bind( r ) } )
+
+    const events = []
+    const channel = await projectrtp.openchannel( {
+      "remote": { "address": "127.0.0.1", "port": server.address().port, "codec": 0 }
+    }, ( d ) => { events.push( d ) } )
+    expect( channel.pcap( { "file": file } ) ).to.be.true
+
+    for( let i = 0; 30 > i; i++ ) {
+      sendpk( i, channel.local.port, server )
+      sendpk( i, channel.local.port, server )
+    }
+    await new Promise( ( r ) => { setTimeout( r, 900 ) } )
+    const peerport = server.address().port
+    channel.close()
+    await new Promise( ( r ) => { setTimeout( r, 300 ) } )
+    server.close()
+
+    const inbound = rtpframes( await readpcap( file ) )
+      .filter( ( f ) => f.ipv4.udp.dstport === channel.local.port )
+    expect( inbound.length ).to.equal( 60 )
+
+    /* from the peer's real address and port */
+    inbound.forEach( ( f ) => {
+      expect( f.ipv4.src ).to.equal( "127.0.0.1" )
+      expect( f.ipv4.udp.srcport ).to.equal( peerport )
+    } )
+
+    await fs.promises.unlink( file ).catch( () => {} )
+  } )
+
+  it( "captures rtcp that arrives on the control port", async function() {
+
+    this.timeout( 6000 )
+    this.slow( 3000 )
+
+    const file = tmpfile( "rtcp" )
+    const server = dgram.createSocket( "udp4" )
+    server.on( "message", () => {} )
+    await new Promise( ( r ) => { server.bind( r ) } )
+
+    const channel = await projectrtp.openchannel( {
+      "remote": { "address": "127.0.0.1", "port": server.address().port, "codec": 0 }
+    }, () => {} )
+    expect( channel.pcap( { "file": file } ) ).to.be.true
+
+    /* a receiver report, to the RTP port + 1 */
+    const rr = Buffer.alloc( 8 )
+    rr[ 0 ] = 0x80
+    rr[ 1 ] = 201
+    rr.writeUInt16BE( 1, 2 )
+    rr.writeUInt32BE( 0x12345678, 4 )
+    server.send( rr, channel.local.port + 1, "127.0.0.1" )
+
+    await new Promise( ( r ) => { setTimeout( r, 300 ) } )
+    channel.close()
+    await new Promise( ( r ) => { setTimeout( r, 300 ) } )
+    server.close()
+
+    const frames = await readpcap( file )
+    const received = frames.filter( ( f ) =>
+      f.ipv4.udp.dstport === channel.local.port + 1 && isrtcp( f.ipv4.udp.data ) )
+    expect( received.length ).to.equal( 1 )
+    expect( received[ 0 ].ipv4.udp.data.readUInt32BE( 4 ) ).to.equal( 0x12345678 )
+
+    await fs.promises.unlink( file ).catch( () => {} )
+  } )
+
+  it( "captures a relay (video) leg, both directions", async function() {
+
+    this.timeout( 6000 )
+    this.slow( 3000 )
+
+    /* relay legs forward without the tick, so they were the path a capture
+       taken inside the tick could not see */
+    const file = tmpfile( "relay" )
+    const bind = () => new Promise( ( r ) => {
+      const sock = dgram.createSocket( "udp4" )
+      sock.on( "message", () => {} )
+      sock.bind( 0, "127.0.0.1", () => r( sock ) )
+    } )
+    const alice = await bind()
+    const bob = await bind()
+
+    const events = []
+    const a = await projectrtp.openchannel(
+      { "relay": true, "forcelocal": true, "remote": { "address": "127.0.0.1", "port": alice.address().port, "codec": 96 } },
+      ( d ) => { events.push( d ) } )
+    const b = await projectrtp.openchannel(
+      { "relay": true, "forcelocal": true, "remote": { "address": "127.0.0.1", "port": bob.address().port, "codec": 96 } },
+      () => {} )
+    expect( a.mix( b ) ).to.be.true
+    expect( a.pcap( { "file": file } ) ).to.be.true
+
+    /* alice sends into leg a, which forwards to bob through leg b; bob sends
+       into leg b, which forwards to alice through leg a */
+    const video = ( sn ) => {
+      const p = Buffer.alloc( 12 + 1000 ).fill( sn & 0xff )
+      p[ 0 ] = 0x80
+      p[ 1 ] = 96
+      p.writeUInt16BE( sn, 2 )
+      p.writeUInt32BE( sn * 3000, 4 )
+      p.writeUInt32BE( 0x11223344, 8 )
+      return p
+    }
+    for( let i = 0; 10 > i; i++ ) {
+      alice.send( video( i ), a.local.port, "127.0.0.1" )
+      bob.send( video( 100 + i ), b.local.port, "127.0.0.1" )
+    }
+    await new Promise( ( r ) => { setTimeout( r, 300 ) } )
+    const aliceport = alice.address().port
+
+    a.close()
+    b.close()
+    await new Promise( ( r ) => { setTimeout( r, 300 ) } )
+    alice.close()
+    bob.close()
+
+    const pcap = events.find( ( e ) => "pcap" === e.action )
+    expect( pcap.packets ).to.be.above( 0 )
+
+    const frames = rtpframes( await readpcap( file ) )
+    const fromalice = frames.filter( ( f ) => f.ipv4.udp.srcport === aliceport )
+    const toalice = frames.filter( ( f ) => f.ipv4.udp.dstport === aliceport )
+    expect( fromalice.length ).to.equal( 10 )
+    expect( toalice.length ).to.equal( 10 )
+    fromalice.forEach( ( f ) => { expect( f.ipv4.udp.data.length ).to.equal( 1012 ) } )
+
+    await fs.promises.unlink( file ).catch( () => {} )
   } )
 } )

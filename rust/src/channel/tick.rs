@@ -95,13 +95,6 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
             break;
         };
         popped_any = true;
-        // Capture tap (inbound). Deliberately before the DTMF branch: a
-        // capture is meant to show everything that was on the wire, and
-        // rfc2833 digits are usually exactly what someone is chasing. This is
-        // the cleartext side of SRTP - `pop_and_decrypt_inbound` has already
-        // decrypted - which is the whole reason capture lives here and not in
-        // a tcpdump sidecar.
-        state.capture(super::pcap::PcapDirection::In, &pk);
         if pk.payload_type() == state.rfc2833_pt {
             classify_dtmf_inbound(state, subs, &pk).await;
             continue;
@@ -635,21 +628,29 @@ async fn send_rtp(state: &mut ChannelState, pkt: &RtpPacket, remote: SocketAddr)
     if state.secure_not_ready() {
         return;
     }
-    // Capture tap (outbound). Before `encrypt_rtp` below, so the file holds
-    // cleartext. send_rtp is the single funnel for player, echo and dtmf, so
-    // one tap here covers every outbound path.
-    state.capture(super::pcap::PcapDirection::Out, pkt);
-
     // Payload octets (excludes the RTP header) — the RTCP SR octet count.
+    // Sent through the capture tap, which records the datagram exactly as it
+    // goes on the wire - after encryption. send_rtp is the single funnel for
+    // player, echo and dtmf, so this covers every outbound path.
     let octets = pkt.payload_len() as u64;
     if let Some(ref mut ctx) = state.srtp_encrypt {
         if let Ok(encrypted) = ctx.encrypt_rtp(pkt.as_slice()) {
-            if state.rtp_sock.send_to(&encrypted, remote).await.is_ok() {
+            if state
+                .pcap
+                .send_to(&state.rtp_sock, &encrypted, remote)
+                .await
+                .is_ok()
+            {
                 state.out_count += 1;
                 state.out_octets += octets;
             }
         }
-    } else if state.rtp_sock.send_to(pkt.as_slice(), remote).await.is_ok() {
+    } else if state
+        .pcap
+        .send_to(&state.rtp_sock, pkt.as_slice(), remote)
+        .await
+        .is_ok()
+    {
         state.out_count += 1;
         state.out_octets += octets;
     }

@@ -170,13 +170,21 @@ pub enum Event {
         filesize: Option<u64>,
     },
     /// A packet capture finished — carries the file so babble-rtp can ship it
-    /// off the node, exactly as it does for a finished recording.
+    /// off the node, exactly as it does for a finished recording. Posted by the
+    /// capture's writer thread (see pcap.rs).
     Pcap {
+        /// One of a fixed set: `requested`, `replaced`, `channelclosed`,
+        /// `maxsize`, `maxduration`, `open-failed`, `write-failed`.
         reason: String,
+        /// The OS error behind `open-failed` or `write-failed`.
+        error: Option<String>,
         file: String,
         filesize: u64,
         packets: u64,
+        /// Datagrams not written because the leg was IPv6.
         skipped: u64,
+        /// Datagrams not written because the writer fell behind.
+        dropped: u64,
     },
     Telephone {
         digit: char,
@@ -289,6 +297,7 @@ pub fn spawn_with_sockets(
         relay: relay_spawn
             .as_ref()
             .map(|rs| super::recv_loop::RelayRecv::new(rs.shared.clone())),
+        pcap: state.pcap.clone(),
     });
 
     // Relay-mode send task — owns the leg's outbound SRTP/SRTCP crypto and
@@ -304,6 +313,7 @@ pub fn spawn_with_sockets(
             rx_stats: state.rx_stats.clone(),
             key_rx: srtp_key_rx.clone(),
             cancel: cancel.clone(),
+            pcap: state.pcap.clone(),
         });
     }
 
@@ -316,6 +326,7 @@ pub fn spawn_with_sockets(
         local_ssrc: state.ssrc,
         key_rx: srtp_key_rx,
         cancel: cancel.clone(),
+        pcap: state.pcap.clone(),
     });
 
     state.recv_cancel = Some(cancel);
@@ -651,16 +662,6 @@ async fn run(
             filesize: Some(size),
         });
     }
-    if let Some(mut cap) = state.pcap.take() {
-        let _ = cap.finish();
-        events.post(Event::Pcap {
-            reason: "channelclosed".into(),
-            file: cap.path().to_string_lossy().into_owned(),
-            filesize: cap.bytes(),
-            packets: cap.packets(),
-            skipped: cap.skipped(),
-        });
-    }
     // Drop readers — their mpsc senders close, forwarder tasks exit, JS
     // `Readable.push(null)` fires `end`. No event emitted here: the
     // JS-side Readable already signals `end`/`close` to userland.
@@ -706,6 +707,12 @@ async fn run(
     // its source state — and the group's Arc cycle is broken.
     if let Some(relay) = &state.relay {
         relay.close();
+    }
+    // Packet capture: finished only now, so the BYE above is in the file, and
+    // waited for, so its `pcap` event reaches JS before `close` does. The
+    // wait is bounded: a writer stuck on a dead disk must not hold the close.
+    if let Some(done) = state.pcap.finish("channelclosed") {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), done).await;
     }
     let stats = build_channel_stats(state);
     state.close_info = Some(CloseInfo {
@@ -868,6 +875,7 @@ async fn handle_command_local(
                     crate::dtls::get_certificate(),
                     state.remote_addr.clone(),
                     expected_fp,
+                    state.pcap.clone(),
                 );
                 state.dtls_result_rx = Some(h.result_rx);
                 state.dtls_handshake_abort = Some(h.abort);
@@ -1035,48 +1043,17 @@ async fn handle_command_local(
         }
 
         Command::Pcap { cfg, ack } => {
-            // Replace any capture already running: one per channel keeps the
-            // arm/disarm lifecycle in the control plane unambiguous.
-            if let Some(mut old) = state.pcap.take() {
-                let _ = old.finish();
-                events.post(Event::Pcap {
-                    reason: "replaced".into(),
-                    file: old.path().to_string_lossy().into_owned(),
-                    filesize: old.bytes(),
-                    packets: old.packets(),
-                    skipped: old.skipped(),
-                });
-            }
-            match super::pcap::PcapWriter::create(&cfg) {
-                Ok(w) => state.pcap = Some(w),
-                Err(e) => {
-                    // Capture is diagnostic: a bad path must never fail the
-                    // call, so report it as an event and carry on - matching
-                    // how a recorder that cannot open its file behaves.
-                    events.post(Event::Pcap {
-                        reason: format!("open-failed: {e}"),
-                        file: cfg.file.to_string_lossy().into_owned(),
-                        filesize: 0,
-                        packets: 0,
-                        skipped: 0,
-                    });
-                }
-            }
+            // One capture per channel: arming again replaces the current one
+            // (which finishes with `replaced`). A path that cannot be opened is
+            // reported by the writer as `open-failed` - capture is diagnostic
+            // and must never fail the call.
+            state.pcap.start(cfg, events.clone());
             let _ = ack.send(());
             LocalOutcome::Continue
         }
 
         Command::PcapFinish => {
-            if let Some(mut cap) = state.pcap.take() {
-                let _ = cap.finish();
-                events.post(Event::Pcap {
-                    reason: "requested".into(),
-                    file: cap.path().to_string_lossy().into_owned(),
-                    filesize: cap.bytes(),
-                    packets: cap.packets(),
-                    skipped: cap.skipped(),
-                });
-            }
+            state.pcap.finish("requested");
             LocalOutcome::Continue
         }
 

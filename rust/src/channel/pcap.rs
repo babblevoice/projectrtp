@@ -1,35 +1,77 @@
-// Packet capture — writes a channel's RTP to a libpcap file.
+// Packet capture — writes what a channel's sockets put on and take off the
+// wire to a libpcap file.
 //
 // The sibling of `recorder.rs`: the recorder writes what the call *sounded*
 // like, this writes what was actually *on the wire*. Same shape deliberately —
-// armed by a command, owned by the channel actor, closed on finish or channel
-// close, and announced to JS with the finished path so babble-rtp can ship it
-// off the node exactly as it already ships a wav.
+// armed by a command, closed on finish, a limit or channel close, and
+// announced to JS with the finished path so babble-rtp can ship it off the
+// node exactly as it already ships a wav.
+//
+// The taps sit at the socket boundary (`PcapTap`), on every socket a channel
+// owns:
+//
+//   - inbound, in `recv_loop` and `rtcp_loop`, the moment `recv_from` returns:
+//     stamped with its arrival time and the peer's real source address, before
+//     the jitter buffer reorders or drops anything;
+//   - outbound, at every `send_to`, after SRTP/SRTCP protection: RTP from the
+//     tick, the mixer and the relay, RTCP reports and BYE, relay NACK and
+//     PLI, STUN responses and the DTLS handshake.
+//
+// So the file is a record of the wire: RTP, RTCP, STUN and DTLS, audio and
+// relay (video) legs alike, with the arrival jitter and bursts left in. On a
+// secure leg the payload is ciphertext, so a capture holds no call audio and
+// no DTMF digits. That costs network diagnosis nothing: SRTP encrypts only the
+// payload, and the sequence number, timestamp, SSRC and payload type Wireshark
+// analyses stay in the clear. Listening to a call is what `record()` is for.
 //
 // Why this belongs in projectrtp rather than a tcpdump sidecar:
 //
-//   - projectrtp owns the socket, so capture is scoped to one channel by
+//   - projectrtp owns the sockets, so capture is scoped to one channel by
 //     construction. A port-filtered tcpdump has to guess which ports belong to
 //     the call and races channel teardown/reuse.
-//   - it holds the SRTP keys, so we can write *cleartext* media. A sidecar on
-//     the wire captures ciphertext that nobody can open later.
 //   - no NET_RAW capability, no extra container, nothing to co-schedule.
 //
-// We tap two points in the tick (see tick.rs): inbound immediately after
-// `pop_and_decrypt_inbound`, and outbound at the top of `send_rtp` before
-// `encrypt_rtp`. Both are the cleartext side of the crypto boundary.
+// The taps run on the media path, so they only copy the datagram into a
+// bounded queue. A thread of the capture's own does the file I/O and owns the
+// limits, so a slow disk never stalls a channel, and `maxduration` is kept
+// even on a channel that has gone silent. A full queue drops the packet and
+// counts it (`dropped`) rather than block.
 //
-// The captured bytes are the real RTP, but the IP/UDP headers around them are
-// synthesised from the channel's own addresses — we never see the peer's
-// framing. That is what a capture consumer needs (Wireshark decodes the RTP,
-// "Play Streams" works, the flow reads correctly) without pretending to
-// reproduce headers we do not have.
+// The captured bytes are the real datagrams, but the IP/UDP headers around
+// them are synthesised from the addresses the socket reported — we never see
+// the kernel's framing. That is what a capture consumer needs (Wireshark
+// decodes the RTP, the flow reads correctly) without pretending to reproduce
+// headers we do not have.
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self as stdmpsc, RecvTimeoutError, SyncSender, TrySendError};
+use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use parking_lot::Mutex as PLMutex;
+use tokio::net::UdpSocket;
+
+use super::actor::{Event, EventSink};
+
+/// `maxsize` when the caller gives none. A capture is armed by an operator on
+/// a live platform, so it is never unbounded. Both legs of a G.711 call, with
+/// RTCP, come to about 100 MB an hour; this is the 50 MB babble-sip already
+/// asks for.
+pub const DEFAULT_MAX_BYTES: u64 = 50 * 1024 * 1024;
+/// `maxduration` when the caller gives none: an hour, as babble-sip asks for.
+pub const DEFAULT_MAX_DURATION_MS: u64 = 60 * 60 * 1000;
+/// Datagrams a capture may have queued for its writer. A channel moves about
+/// 100 a second, so this is many seconds of a stalled disk before a packet is
+/// dropped.
+const QUEUE_DEPTH: usize = 4096;
+/// The file holds whole datagrams - ICE usernames, RTCP CNAMEs, and on a leg
+/// that is not encrypted the call audio itself - so only its owner may read it.
+const FILE_MODE: u32 = 0o600;
 
 /// libpcap file magic, microsecond timestamps, written little-endian.
 const PCAP_MAGIC: u32 = 0xa1b2_c3d4;
@@ -60,36 +102,37 @@ const IPPROTO_UDP: u8 = 17;
 const IP_TTL: u8 = 64;
 
 /// Which way a captured packet was travelling. Only used to decide which of
-/// the channel's addresses is the source.
+/// the two addresses is the source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PcapDirection {
-    /// Received from the peer — written after SRTP decryption.
+    /// Received from the peer, as it arrived.
     In,
-    /// Sent to the peer — written before SRTP encryption.
+    /// Sent to the peer, as it left - after SRTP/SRTCP protection.
     Out,
 }
 
 #[derive(Debug, Clone)]
 pub struct PcapConfig {
     pub file: PathBuf,
-    /// Stop capturing once the file reaches this size. Capture is armed by an
-    /// operator on a live platform, so an unbounded writer is a disk-space
-    /// incident waiting to happen.
+    /// Stop capturing once the file reaches this size. The facade defaults it
+    /// to `DEFAULT_MAX_BYTES`; `None` (unlimited) is for this module's tests.
     pub max_bytes: Option<u64>,
     /// Address to record as our own end. The RTP sockets bind to 0.0.0.0, so
     /// without this every capture shows one side as "0.0.0.0", which reads as
     /// a broken capture. Callers pass the address they advertised in SDP —
     /// the one the far end is actually sending to.
     pub local_address: Option<Ipv4Addr>,
-    /// Stop capturing after this many milliseconds of wall clock.
+    /// Stop capturing after this many milliseconds of wall clock, whether or
+    /// not packets are still arriving. The facade defaults it to
+    /// `DEFAULT_MAX_DURATION_MS`.
     pub max_duration_ms: Option<u64>,
 }
 
-/// Writes RTP packets to a libpcap file, wrapped in synthesised IPv4/UDP
-/// headers.
+/// Writes datagrams to a libpcap file, wrapped in synthesised IPv4/UDP
+/// headers. Used only on a capture's writer thread (see `PcapTap`): its file
+/// I/O blocks.
 pub struct PcapWriter {
     file: BufWriter<File>,
-    path: PathBuf,
     max_bytes: Option<u64>,
     local_address: Option<Ipv4Addr>,
     max_duration_ms: Option<u64>,
@@ -108,14 +151,24 @@ pub struct PcapWriter {
 }
 
 impl PcapWriter {
-    /// Create the file and write the libpcap global header.
+    /// Create the file, readable by its owner only, and write the libpcap
+    /// global header.
     pub fn create(cfg: &PcapConfig) -> io::Result<Self> {
         if let Some(parent) = cfg.file.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent)?;
             }
         }
-        let mut file = BufWriter::new(File::create(&cfg.file)?);
+        let f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(FILE_MODE)
+            .open(&cfg.file)?;
+        // `mode` only applies to a file this call creates; one left over at the
+        // same path keeps its old permissions unless they are set again.
+        f.set_permissions(std::fs::Permissions::from_mode(FILE_MODE))?;
+        let mut file = BufWriter::new(f);
         let mut header = Vec::with_capacity(24);
         header.extend_from_slice(&PCAP_MAGIC.to_le_bytes());
         header.extend_from_slice(&PCAP_VERSION_MAJOR.to_le_bytes());
@@ -128,7 +181,6 @@ impl PcapWriter {
 
         Ok(Self {
             file,
-            path: cfg.file.clone(),
             max_bytes: cfg.max_bytes,
             local_address: cfg.local_address,
             max_duration_ms: cfg.max_duration_ms,
@@ -140,10 +192,6 @@ impl PcapWriter {
             finished: false,
             stop_reason: None,
         })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     pub fn packets(&self) -> u64 {
@@ -181,18 +229,32 @@ impl PcapWriter {
         None
     }
 
-    /// Write one RTP packet. `local` and `remote` are the channel's own
-    /// addresses; `direction` picks which is the source.
-    ///
-    /// Returns `true` while the capture is still open. A `false` return means
-    /// a limit was reached and the caller should finish the capture — it is
-    /// not an error.
+    /// Write one datagram, stamped now. See `write_packet_at`.
+    #[cfg(test)]
     pub fn write_packet(
         &mut self,
         direction: PcapDirection,
         local: SocketAddr,
         remote: SocketAddr,
         payload: &[u8],
+    ) -> io::Result<bool> {
+        self.write_packet_at(direction, local, remote, payload, SystemTime::now())
+    }
+
+    /// Write one datagram, stamped `at` - when it arrived or was sent, not
+    /// when the writer got to it. `local` is our socket's address and
+    /// `remote` the peer's; `direction` picks which is the source.
+    ///
+    /// Returns `true` while the capture is still open. A `false` return means
+    /// a limit was reached and the caller should finish the capture — it is
+    /// not an error.
+    pub fn write_packet_at(
+        &mut self,
+        direction: PcapDirection,
+        local: SocketAddr,
+        remote: SocketAddr,
+        payload: &[u8],
+        at: SystemTime,
     ) -> io::Result<bool> {
         if self.finished {
             return Ok(false);
@@ -246,9 +308,7 @@ impl PcapWriter {
         );
         self.ip_id = self.ip_id.wrapping_add(1);
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
+        let now = at.duration_since(UNIX_EPOCH).unwrap_or_default();
         let mut record = Vec::with_capacity(16 + frame.len());
         record.extend_from_slice(&(now.as_secs() as u32).to_le_bytes());
         record.extend_from_slice(&now.subsec_micros().to_le_bytes());
@@ -276,6 +336,288 @@ impl PcapWriter {
 impl Drop for PcapWriter {
     fn drop(&mut self) {
         let _ = self.finish();
+    }
+}
+
+/// One datagram on its way to a capture's writer thread.
+struct Captured {
+    at: SystemTime,
+    direction: PcapDirection,
+    local: SocketAddr,
+    remote: SocketAddr,
+    data: Vec<u8>,
+}
+
+/// Why a capture was finished from outside, and who is waiting for its event.
+type FinishRequest = (&'static str, Option<tokio::sync::oneshot::Sender<()>>);
+
+/// What a running capture shares with its writer thread besides the queue.
+#[derive(Default)]
+struct Control {
+    /// Datagrams the taps dropped because the queue was full.
+    dropped: AtomicU64,
+    /// Set by `PcapTap::finish` before it drops the queue's sender: why the
+    /// capture is closing, and who is waiting for its event to be posted.
+    finish: PLMutex<Option<FinishRequest>>,
+}
+
+/// The capture currently armed on a channel.
+struct Armed {
+    /// Tells this capture apart from one that replaced it, so a writer that
+    /// stops on its own disarms only itself.
+    id: u64,
+    tx: SyncSender<Captured>,
+    control: Arc<Control>,
+}
+
+#[derive(Default)]
+struct TapInner {
+    /// Read without the lock on every datagram, so an unarmed channel pays
+    /// one relaxed load per packet and nothing else.
+    armed: AtomicBool,
+    current: PLMutex<Option<Armed>>,
+    next_id: AtomicU64,
+}
+
+/// A channel's capture point. Every task that owns one of the channel's
+/// sockets - the tick and mixer through `ChannelState`, `recv_loop`,
+/// `rtcp_loop`, the relay send task, the DTLS transport - holds a clone, and
+/// calls `received` for each datagram it reads and `send_to` for each it
+/// sends. Cheap to clone; does nothing while no capture is armed.
+#[derive(Clone, Default)]
+pub struct PcapTap(Arc<TapInner>);
+
+impl std::fmt::Debug for PcapTap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PcapTap")
+            .field("armed", &self.is_armed())
+            .finish()
+    }
+}
+
+impl PcapTap {
+    pub fn is_armed(&self) -> bool {
+        self.0.armed.load(Ordering::Relaxed)
+    }
+
+    /// Record a datagram `sock` just received from `from`. Call it the moment
+    /// `recv_from` returns, before anything looks at the packet.
+    pub fn received(&self, sock: &UdpSocket, from: SocketAddr, data: &[u8]) {
+        if !self.is_armed() {
+            return;
+        }
+        let at = SystemTime::now();
+        if let Ok(local) = sock.local_addr() {
+            self.push(at, PcapDirection::In, local, from, data);
+        }
+    }
+
+    /// Send `data` to `to` on `sock`, and record it if it went. Used in place
+    /// of `sock.send_to` everywhere a channel sends, with the bytes exactly
+    /// as they go on the wire.
+    pub async fn send_to(
+        &self,
+        sock: &UdpSocket,
+        data: &[u8],
+        to: SocketAddr,
+    ) -> io::Result<usize> {
+        let sent = sock.send_to(data, to).await;
+        if sent.is_ok() && self.is_armed() {
+            let at = SystemTime::now();
+            if let Ok(local) = sock.local_addr() {
+                self.push(at, PcapDirection::Out, local, to, data);
+            }
+        }
+        sent
+    }
+
+    fn push(
+        &self,
+        at: SystemTime,
+        direction: PcapDirection,
+        local: SocketAddr,
+        remote: SocketAddr,
+        data: &[u8],
+    ) {
+        let current = self.0.current.lock();
+        let Some(armed) = current.as_ref() else {
+            return;
+        };
+        let pkt = Captured {
+            at,
+            direction,
+            local,
+            remote,
+            data: data.to_vec(),
+        };
+        match armed.tx.try_send(pkt) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                armed.control.dropped.fetch_add(1, Ordering::Relaxed);
+            }
+            // The writer stopped on a limit or an error and is disarming.
+            Err(TrySendError::Disconnected(_)) => {}
+        }
+    }
+
+    /// Arm a capture, replacing any already running (which finishes with
+    /// `replaced`). The file is opened on the capture's own thread, so a
+    /// path that cannot be opened is reported by an `open-failed` event,
+    /// never by failing the call.
+    pub fn start(&self, cfg: PcapConfig, events: Arc<dyn EventSink>) {
+        self.finish("replaced");
+
+        let id = self.0.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let (tx, rx) = stdmpsc::sync_channel(QUEUE_DEPTH);
+        let control = Arc::new(Control::default());
+        *self.0.current.lock() = Some(Armed {
+            id,
+            tx,
+            control: control.clone(),
+        });
+        self.0.armed.store(true, Ordering::Relaxed);
+
+        let tap = Arc::downgrade(&self.0);
+        let file = cfg.file.to_string_lossy().into_owned();
+        let thread_events = events.clone();
+        // A thread rather than spawn_blocking: it lives as long as the
+        // capture, which would hold a blocking-pool thread just the same.
+        let spawned = std::thread::Builder::new()
+            .name("pcap-writer".into())
+            .spawn(move || writer_thread(cfg, rx, control, thread_events, tap, id));
+        if let Err(e) = spawned {
+            disarm(&Arc::downgrade(&self.0), id);
+            events.post(Event::Pcap {
+                reason: "open-failed".into(),
+                error: Some(e.to_string()),
+                file,
+                filesize: 0,
+                packets: 0,
+                skipped: 0,
+                dropped: 0,
+            });
+        }
+    }
+
+    /// Close the running capture, if there is one, with `reason`. Its writer
+    /// writes out whatever is still queued, then posts the `pcap` event; the
+    /// receiver resolves once it has. `None` when nothing was armed - or the
+    /// capture had already stopped on its own, and said so.
+    pub fn finish(&self, reason: &'static str) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        let armed = {
+            let mut current = self.0.current.lock();
+            self.0.armed.store(false, Ordering::Relaxed);
+            current.take()
+        }?;
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        *armed.control.finish.lock() = Some((reason, Some(done_tx)));
+        // Dropping the sender is the signal: the writer drains the queue, then
+        // sees the disconnect and reads why from `control`.
+        drop(armed);
+        Some(done_rx)
+    }
+}
+
+/// Disarm capture `id`, if it is still the one armed - a writer that stopped
+/// on a limit must not disarm a capture that has since replaced it.
+fn disarm(tap: &Weak<TapInner>, id: u64) {
+    let Some(tap) = tap.upgrade() else {
+        return;
+    };
+    let mut current = tap.current.lock();
+    if current.as_ref().is_some_and(|a| a.id == id) {
+        tap.armed.store(false, Ordering::Relaxed);
+        *current = None;
+    }
+}
+
+/// A capture's own thread: opens the file, writes what the taps queue, keeps
+/// the limits, and posts the one `pcap` event the capture ends with.
+fn writer_thread(
+    cfg: PcapConfig,
+    rx: stdmpsc::Receiver<Captured>,
+    control: Arc<Control>,
+    events: Arc<dyn EventSink>,
+    tap: Weak<TapInner>,
+    id: u64,
+) {
+    let file = cfg.file.to_string_lossy().into_owned();
+    let deadline = cfg
+        .max_duration_ms
+        .map(|ms| Instant::now() + Duration::from_millis(ms));
+
+    let (stopped, error, mut writer) = match PcapWriter::create(&cfg) {
+        Ok(mut w) => {
+            let (stopped, error) = write_until_stopped(&mut w, &rx, deadline);
+            (stopped, error, Some(w))
+        }
+        Err(e) => (Some("open-failed"), Some(e.to_string()), None),
+    };
+    // Stopped on its own (a limit, or an error): stop the taps queueing for
+    // it now, before the file is flushed.
+    if stopped.is_some() {
+        disarm(&tap, id);
+    }
+    drop(rx);
+
+    let mut stopped = stopped;
+    let mut error = error;
+    if let Some(w) = writer.as_mut() {
+        if let Err(e) = w.finish() {
+            if error.is_none() {
+                stopped = Some("write-failed");
+                error = Some(e.to_string());
+            }
+        }
+    }
+
+    let requested = control.finish.lock().take();
+    let reason = stopped
+        .or(requested.as_ref().map(|(r, _)| *r))
+        .unwrap_or("channelclosed");
+    events.post(Event::Pcap {
+        reason: reason.into(),
+        error,
+        file,
+        filesize: writer.as_ref().map_or(0, |w| w.bytes()),
+        packets: writer.as_ref().map_or(0, |w| w.packets()),
+        skipped: writer.as_ref().map_or(0, |w| w.skipped()),
+        dropped: control.dropped.load(Ordering::Relaxed),
+    });
+    if let Some((_, Some(done))) = requested {
+        let _ = done.send(());
+    }
+}
+
+/// Write queued datagrams until the capture is finished from outside (the
+/// queue disconnects: `None`), or stops itself on a limit or an error.
+fn write_until_stopped(
+    w: &mut PcapWriter,
+    rx: &stdmpsc::Receiver<Captured>,
+    deadline: Option<Instant>,
+) -> (Option<&'static str>, Option<String>) {
+    loop {
+        let next = match deadline {
+            Some(d) => {
+                let now = Instant::now();
+                if now >= d {
+                    return (Some("maxduration"), None);
+                }
+                rx.recv_timeout(d - now)
+            }
+            None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+        };
+        match next {
+            Ok(p) => match w.write_packet_at(p.direction, p.local, p.remote, &p.data, p.at) {
+                Ok(true) => {}
+                Ok(false) => return (Some(w.stop_reason().unwrap_or("maxsize")), None),
+                Err(e) => return (Some("write-failed"), Some(e.to_string())),
+            },
+            // The deadline passed with nothing arriving: a silent channel
+            // still stops on time.
+            Err(RecvTimeoutError::Timeout) => return (Some("maxduration"), None),
+            Err(RecvTimeoutError::Disconnected) => return (None, None),
+        }
     }
 }
 
@@ -352,6 +694,7 @@ fn ipv4_checksum(header: &[u8]) -> u16 {
 mod tests {
     use super::*;
     use std::io::Read;
+    use std::path::Path;
 
     fn tmpfile(name: &str) -> PathBuf {
         let mut p = std::env::temp_dir();
@@ -655,6 +998,278 @@ mod tests {
         assert!(!w
             .write_packet(PcapDirection::In, local, remote, &[1])
             .unwrap());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- the tap and its writer thread ----
+
+    struct Sink(tokio::sync::mpsc::UnboundedSender<Event>);
+    impl EventSink for Sink {
+        fn post(&self, ev: Event) {
+            let _ = self.0.send(ev);
+        }
+    }
+
+    fn sink() -> (
+        Arc<dyn EventSink>,
+        tokio::sync::mpsc::UnboundedReceiver<Event>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (Arc::new(Sink(tx)), rx)
+    }
+
+    async fn next_event(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Event>) -> Event {
+        tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("a pcap event within 3s")
+            .expect("sink open")
+    }
+
+    async fn pair() -> (UdpSocket, UdpSocket) {
+        let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        (a, b)
+    }
+
+    /// Every record in a capture file: (secs, usecs, src ip:port, dst ip:port, udp payload).
+    type Record = (u32, u32, SocketAddr, SocketAddr, Vec<u8>);
+    fn records(path: &Path) -> Vec<Record> {
+        let bytes = read(path);
+        let mut out = Vec::new();
+        let mut at = 24;
+        while at + 16 <= bytes.len() {
+            let secs = u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+            let usecs = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap());
+            let incl = u32::from_le_bytes(bytes[at + 8..at + 12].try_into().unwrap()) as usize;
+            let frame = &bytes[at + 16..at + 16 + incl];
+            let ip = &frame[ETHER_HEADER_LEN..];
+            let udp = &ip[IPV4_HEADER_LEN..];
+            let addr = |o: &[u8], p: &[u8]| {
+                SocketAddr::new(
+                    Ipv4Addr::new(o[0], o[1], o[2], o[3]).into(),
+                    u16::from_be_bytes([p[0], p[1]]),
+                )
+            };
+            out.push((
+                secs,
+                usecs,
+                addr(&ip[12..16], &udp[0..2]),
+                addr(&ip[16..20], &udp[2..4]),
+                udp[UDP_HEADER_LEN..].to_vec(),
+            ));
+            at += 16 + incl;
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn an_unarmed_tap_sends_and_records_nothing() {
+        let (a, b) = pair().await;
+        let tap = PcapTap::default();
+        assert!(!tap.is_armed());
+        tap.send_to(&a, &[1, 2, 3], b.local_addr().unwrap())
+            .await
+            .unwrap();
+        let mut buf = [0u8; 16];
+        let (n, from) = b.recv_from(&mut buf).await.unwrap();
+        assert_eq!(&buf[..n], &[1, 2, 3], "the datagram still goes");
+        tap.received(&b, from, &buf[..n]);
+        assert!(tap.finish("requested").is_none(), "nothing was armed");
+    }
+
+    #[tokio::test]
+    async fn records_both_directions_with_the_real_addresses() {
+        let path = tmpfile("tap");
+        let (ours, theirs) = pair().await;
+        let (events, mut rx) = sink();
+        let tap = PcapTap::default();
+        tap.start(cfg(&path), events);
+        assert!(tap.is_armed());
+
+        // what we send, as it leaves
+        tap.send_to(&ours, b"out", theirs.local_addr().unwrap())
+            .await
+            .unwrap();
+        // what arrives, from wherever it really came from
+        theirs
+            .send_to(b"in", ours.local_addr().unwrap())
+            .await
+            .unwrap();
+        let mut buf = [0u8; 16];
+        let (n, from) = ours.recv_from(&mut buf).await.unwrap();
+        tap.received(&ours, from, &buf[..n]);
+
+        let done = tap.finish("requested").expect("armed");
+        tokio::time::timeout(Duration::from_secs(3), done)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!tap.is_armed());
+        match next_event(&mut rx).await {
+            Event::Pcap {
+                reason,
+                error,
+                packets,
+                dropped,
+                ..
+            } => {
+                assert_eq!(reason, "requested");
+                assert_eq!(error, None);
+                assert_eq!(packets, 2);
+                assert_eq!(dropped, 0);
+            }
+            other => panic!("unexpected event {other:?}"),
+        }
+
+        let recs = records(&path);
+        assert_eq!(recs.len(), 2);
+        let (o, t) = (ours.local_addr().unwrap(), theirs.local_addr().unwrap());
+        assert_eq!(
+            (recs[0].2, recs[0].3, recs[0].4.as_slice()),
+            (o, t, &b"out"[..])
+        );
+        assert_eq!(
+            (recs[1].2, recs[1].3, recs[1].4.as_slice()),
+            (t, o, &b"in"[..])
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn stamps_a_record_with_when_it_happened_not_when_it_was_written() {
+        let path = tmpfile("stamp");
+        let (local, remote) = addrs();
+        let mut w = PcapWriter::create(&cfg(&path)).unwrap();
+        let at = UNIX_EPOCH + Duration::new(1_700_000_000, 123_456_000);
+        w.write_packet_at(PcapDirection::In, local, remote, &[1], at)
+            .unwrap();
+        w.finish().unwrap();
+        let recs = records(&path);
+        assert_eq!((recs[0].0, recs[0].1), (1_700_000_000, 123_456));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn a_silent_capture_still_stops_at_maxduration() {
+        let path = tmpfile("silent");
+        let (events, mut rx) = sink();
+        let tap = PcapTap::default();
+        let mut c = cfg(&path);
+        c.max_duration_ms = Some(100);
+        tap.start(c, events);
+
+        // no packet ever arrives
+        match next_event(&mut rx).await {
+            Event::Pcap {
+                reason, packets, ..
+            } => {
+                assert_eq!(reason, "maxduration");
+                assert_eq!(packets, 0);
+            }
+            other => panic!("unexpected event {other:?}"),
+        }
+        assert!(!tap.is_armed(), "a capture that stopped disarms itself");
+        assert!(
+            tap.finish("requested").is_none(),
+            "and is not reported twice"
+        );
+        assert_eq!(read(&path).len(), 24, "a valid, empty capture");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn stopping_at_maxsize_disarms_and_reports_once() {
+        let path = tmpfile("tapmax");
+        let (ours, theirs) = pair().await;
+        let (events, mut rx) = sink();
+        let tap = PcapTap::default();
+        let mut c = cfg(&path);
+        c.max_bytes = Some(200);
+        tap.start(c, events);
+
+        for _ in 0..20 {
+            let _ = tap
+                .send_to(&ours, &[0u8; 60], theirs.local_addr().unwrap())
+                .await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        match next_event(&mut rx).await {
+            Event::Pcap {
+                reason,
+                filesize,
+                packets,
+                ..
+            } => {
+                assert_eq!(reason, "maxsize");
+                assert!(filesize <= 200);
+                assert!(packets > 0);
+            }
+            other => panic!("unexpected event {other:?}"),
+        }
+        assert!(!tap.is_armed());
+        assert!(tap.finish("requested").is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn a_file_that_cannot_be_opened_is_a_fixed_reason_and_an_error() {
+        let (events, mut rx) = sink();
+        let tap = PcapTap::default();
+        tap.start(cfg(Path::new("/proc/nope/cannot.pcap")), events);
+        match next_event(&mut rx).await {
+            Event::Pcap {
+                reason,
+                error,
+                packets,
+                ..
+            } => {
+                assert_eq!(reason, "open-failed", "no OS text in the reason");
+                assert!(error.is_some_and(|e| !e.is_empty()));
+                assert_eq!(packets, 0);
+            }
+            other => panic!("unexpected event {other:?}"),
+        }
+        assert!(!tap.is_armed());
+    }
+
+    #[tokio::test]
+    async fn arming_again_replaces_the_running_capture() {
+        let (first, second) = (tmpfile("first"), tmpfile("second"));
+        let (events, mut rx) = sink();
+        let tap = PcapTap::default();
+        tap.start(cfg(&first), events.clone());
+        tap.start(cfg(&second), events);
+        match next_event(&mut rx).await {
+            Event::Pcap { reason, file, .. } => {
+                assert_eq!(reason, "replaced");
+                assert_eq!(file, first.to_string_lossy());
+            }
+            other => panic!("unexpected event {other:?}"),
+        }
+        assert!(tap.is_armed(), "the new capture is running");
+        let done = tap.finish("channelclosed").unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(3), done).await;
+        match next_event(&mut rx).await {
+            Event::Pcap { reason, file, .. } => {
+                assert_eq!(reason, "channelclosed");
+                assert_eq!(file, second.to_string_lossy());
+            }
+            other => panic!("unexpected event {other:?}"),
+        }
+        let _ = std::fs::remove_file(&first);
+        let _ = std::fs::remove_file(&second);
+    }
+
+    #[test]
+    fn the_file_is_readable_by_its_owner_only() {
+        let path = tmpfile("mode");
+        // even when a file with looser permissions is already there
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let mut w = PcapWriter::create(&cfg(&path)).unwrap();
+        w.finish().unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
         let _ = std::fs::remove_file(&path);
     }
 }
