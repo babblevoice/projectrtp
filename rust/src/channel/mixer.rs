@@ -251,16 +251,16 @@ async fn send_leg(src: &mut Member, dst: &mut Member) {
         match ctx.encrypt_rtp(pkt.as_slice()) {
             Ok(encrypted) => dst
                 .state
-                .rtp_sock
-                .send_to(&encrypted, dest_addr)
+                .pcap
+                .send_to(&dst.state.rtp_sock, &encrypted, dest_addr)
                 .await
                 .is_ok(),
             Err(_) => false,
         }
     } else {
         dst.state
-            .rtp_sock
-            .send_to(pkt.as_slice(), dest_addr)
+            .pcap
+            .send_to(&dst.state.rtp_sock, pkt.as_slice(), dest_addr)
             .await
             .is_ok()
     };
@@ -1174,12 +1174,22 @@ async fn send_rtp(state: &mut ChannelState, pkt: &RtpPacket, remote: SocketAddr)
     let octets = pkt.payload_len() as u64;
     if let Some(ref mut ctx) = state.srtp_encrypt {
         if let Ok(encrypted) = ctx.encrypt_rtp(pkt.as_slice()) {
-            if state.rtp_sock.send_to(&encrypted, remote).await.is_ok() {
+            if state
+                .pcap
+                .send_to(&state.rtp_sock, &encrypted, remote)
+                .await
+                .is_ok()
+            {
                 state.out_count += 1;
                 state.out_octets += octets;
             }
         }
-    } else if state.rtp_sock.send_to(pkt.as_slice(), remote).await.is_ok() {
+    } else if state
+        .pcap
+        .send_to(&state.rtp_sock, pkt.as_slice(), remote)
+        .await
+        .is_ok()
+    {
         state.out_count += 1;
         state.out_octets += octets;
     }
@@ -1267,6 +1277,18 @@ async fn apply_forwarded(m: &mut Member, cmd: Command) {
             });
             let _ = ack.send(());
         }
+        Command::Pcap { cfg, ack } => {
+            // Same semantics as the local actor. The tap lives in the
+            // channel's state and is shared with its socket loops, so capture
+            // carries on unchanged as a channel is mixed and unmixed.
+            m.state.pcap.start(cfg, m.events.clone());
+            let _ = ack.send(());
+        }
+
+        Command::PcapFinish => {
+            m.state.pcap.finish("requested");
+        }
+
         Command::Record { cfg, ack } => {
             // Record at the channel's native rate (16k for G.722, else 8k).
             let mut cfg = cfg;

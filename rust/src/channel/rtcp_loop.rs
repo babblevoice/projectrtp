@@ -38,6 +38,8 @@ pub struct RtcpLoopConfig {
     /// case inbound RTCP is treated as cleartext.
     pub key_rx: watch::Receiver<Option<SrtpKeyingMaterial>>,
     pub cancel: CancellationToken,
+    /// The channel's capture point: each datagram is recorded as it arrives.
+    pub pcap: super::pcap::PcapTap,
 }
 
 pub fn spawn(cfg: RtcpLoopConfig) -> tokio::task::JoinHandle<()> {
@@ -55,7 +57,8 @@ async fn run(cfg: RtcpLoopConfig) {
             _ = cfg.cancel.cancelled() => break,
             result = cfg.sock.recv_from(&mut buf) => {
                 match result {
-                    Ok((n, _peer)) => {
+                    Ok((n, peer)) => {
+                        cfg.pcap.received(&cfg.sock, peer, &buf[..n]);
                         maybe_build_decrypt(&cfg.key_rx, &mut srtcp_decrypt);
                         let profile = cfg.key_rx.borrow().as_ref().map(|k| k.profile);
                         handle_rtcp(

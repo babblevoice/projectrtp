@@ -872,6 +872,9 @@ pub struct RelaySendConfig {
     /// DTLS keying material, published by the actor tick's handshake poll.
     pub key_rx: watch::Receiver<Option<SrtpKeyingMaterial>>,
     pub cancel: CancellationToken,
+    /// The channel's capture point: media, NACK and PLI are recorded as they
+    /// go on the wire. Inbound is recorded by the leg's recv_loop.
+    pub pcap: super::pcap::PcapTap,
 }
 
 pub fn spawn_send_task(cfg: RelaySendConfig) -> tokio::task::JoinHandle<()> {
@@ -1005,11 +1008,14 @@ async fn forward(
 
     let sent = if let Some(ctx) = encrypt.as_mut() {
         match ctx.encrypt_rtp(pkt.as_slice()) {
-            Ok(enc) => cfg.sock.send_to(&enc, addr).await.is_ok(),
+            Ok(enc) => cfg.pcap.send_to(&cfg.sock, &enc, addr).await.is_ok(),
             Err(_) => false,
         }
     } else {
-        cfg.sock.send_to(pkt.as_slice(), addr).await.is_ok()
+        cfg.pcap
+            .send_to(&cfg.sock, pkt.as_slice(), addr)
+            .await
+            .is_ok()
     };
     if sent {
         cfg.shared.out_count.fetch_add(1, Ordering::Relaxed);
@@ -1425,11 +1431,11 @@ async fn send_nack(
             return false;
         };
         match ctx.encrypt_rtcp(&nack) {
-            Ok(enc) => cfg.sock.send_to(&enc, addr).await.is_ok(),
+            Ok(enc) => cfg.pcap.send_to(&cfg.sock, &enc, addr).await.is_ok(),
             Err(_) => false,
         }
     } else {
-        cfg.sock.send_to(&nack, addr).await.is_ok()
+        cfg.pcap.send_to(&cfg.sock, &nack, addr).await.is_ok()
     }
 }
 
@@ -1457,11 +1463,11 @@ async fn send_pli(
             return false;
         };
         match ctx.encrypt_rtcp(&pli) {
-            Ok(enc) => cfg.sock.send_to(&enc, addr).await.is_ok(),
+            Ok(enc) => cfg.pcap.send_to(&cfg.sock, &enc, addr).await.is_ok(),
             Err(_) => false,
         }
     } else {
-        cfg.sock.send_to(&pli, addr).await.is_ok()
+        cfg.pcap.send_to(&cfg.sock, &pli, addr).await.is_ok()
     }
 }
 
