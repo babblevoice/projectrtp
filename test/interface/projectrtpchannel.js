@@ -99,7 +99,9 @@ describe( "rtpchannel", function() {
 
   it( "call create channel and check the structure of the returned object - server as listener", async function() {
 
-    const ourport = 45433
+    /* below the kernel's ephemeral range (32768-60999), where a client socket
+       the suite has open can hold the port and make listen() fail */
+    const ourport = 26910
     await projectrtp.server.listen( ourport, "127.0.0.1" )
     const ournode = await projectrtp.node.connect( ourport, "127.0.0.1" )
 
@@ -122,7 +124,7 @@ describe( "rtpchannel", function() {
 
   it( "call create channel and check the structure of the returned object - node as listener", async function() {
 
-    const ourport = 45432
+    const ourport = 26911 /* below the ephemeral range too: see 26910 above */
     projectrtp.server.clearnodes()
     projectrtp.server.addnode( { host: "127.0.0.1", port: ourport } )
 
