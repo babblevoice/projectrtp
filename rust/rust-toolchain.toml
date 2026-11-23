@@ -1,0 +1,7 @@
+# The Rust this crate is built with, everywhere: rustup reads this file, so a
+# local `npm run build` or `cargo` in rust/ uses it, and so does babble-rtp's
+# build of the addon from the npm package. The Dockerfile's rust-builder image
+# and suites.yml's `rust` job pin the same version, and that job fails when
+# the three differ. Move all three together, to the latest stable release.
+[toolchain]
+channel = "1.100.0"

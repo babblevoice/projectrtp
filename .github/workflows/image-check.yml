@@ -58,9 +58,9 @@ on:
       # projectrtp's: the package files `npm ci` reads; libilbc, a submodule
       # the build compiles, whose commit is the path `libilbc` and whose
       # source .gitmodules names; and the whole Rust crate, which the build
-      # compiles too, with the musl toolchain the Dockerfile pins. The suites
-      # build the crate with stable glibc Rust instead, so a change that
-      # breaks only the musl build (the pin is for one) shows here.
+      # compiles too, on the musl the image runs on. The suites build the
+      # crate on glibc, with the same Rust, so a change that breaks only the
+      # musl build shows here.
       - Dockerfile
       - .dockerignore
       - package.json
@@ -76,9 +76,9 @@ on:
       # projectrtp's: the package files `npm ci` reads; libilbc, a submodule
       # the build compiles, whose commit is the path `libilbc` and whose
       # source .gitmodules names; and the whole Rust crate, which the build
-      # compiles too, with the musl toolchain the Dockerfile pins. The suites
-      # build the crate with stable glibc Rust instead, so a change that
-      # breaks only the musl build (the pin is for one) shows here.
+      # compiles too, on the musl the image runs on. The suites build the
+      # crate on glibc, with the same Rust, so a change that breaks only the
+      # musl build shows here.
       - Dockerfile
       - .dockerignore
       - package.json

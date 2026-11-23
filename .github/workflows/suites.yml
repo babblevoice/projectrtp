@@ -47,9 +47,9 @@ jobs:
   #
   # `rust` is rust.yml's job as it was, but with no cargo cache: a cache a
   # pull request's run saved could be restored by a release's (release.yml
-  # says why it restores none). stable Rust on glibc, as rust.yml had: the
-  # musl rustls crash that pins the Dockerfile to 1.92 does not happen here.
-  # Uncached, it takes about ten minutes.
+  # says why it restores none). On glibc, with the Rust the Dockerfile pins
+  # (rust.yml took whatever stable was, so a new clippy could fail a release
+  # with nothing changed here). Uncached, it takes about ten minutes.
   rust:
     name: Rust (rustfmt, clippy, cargo test)
     runs-on: ubuntu-latest
@@ -77,9 +77,25 @@ jobs:
           sudo ldconfig
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
+
+      # One Rust everywhere: the Dockerfile's rust-builder image,
+      # rust/rust-toolchain.toml and this job name the same version, or the
+      # suites check a different compiler from the one the image is built
+      # with. rustc is asked from the repository's root, where no toolchain
+      # file applies, so it is the version installed above.
+      - name: The same Rust as the Dockerfile and rust-toolchain.toml
+        run: |
+          image=$(sed -n 's/^FROM rust:\([0-9][0-9.]*\)-alpine[0-9.]* AS rust-builder$/\1/p' Dockerfile)
+          file=$(sed -n 's/^channel = "\([^"]*\)"$/\1/p' rust/rust-toolchain.toml)
+          here=$(rustc --version | cut -d' ' -f2)
+          echo "Dockerfile: ${image:-none}; rust/rust-toolchain.toml: ${file:-none}; this job: ${here}"
+          if [ -z "$image" ] || [ "$image" != "$file" ] || [ "$file" != "$here" ]; then
+            echo "::error::The Rust versions differ. Pin the Dockerfile's rust-builder image, rust/rust-toolchain.toml and this job's rust-toolchain action to one version."
+            exit 1
+          fi
 
       - name: rustfmt
         working-directory: rust
@@ -98,7 +114,7 @@ jobs:
         run: cargo test --lib --locked
 
   # The Dockerfile's `test` stage: the addon built as the image builds it
-  # (musl, Rust 1.92), then test/interface and test/unit under mocha, as the
+  # (musl, the Dockerfile's Rust), then test/interface and test/unit under mocha, as the
   # README's Tests section runs them. No network: every spec talks to
   # 127.0.0.1. The build takes about seven minutes on a runner, and the
   # specs about seven more.

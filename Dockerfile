@@ -1,10 +1,13 @@
-# Pinned to 1.92 — rust 1.94.1 on musl ICEs during borrow-check of
-# rustls 0.23.38 (pulled in transitively by webrtc-dtls / webrtc-srtp).
-# Re-evaluate when we move to an rustls that avoids the offending pattern
-# or when a rustc 1.95+ musl image lands with the fix.
-FROM rust:1.92-alpine3.22 AS rust-builder
+# Rust 1.100.0, the latest stable release, pinned to the exact version. Rust
+# supports only its latest stable release (a new one every six weeks), so the
+# pin is moved on purpose, in three places at once: here,
+# rust/rust-toolchain.toml and suites.yml's `rust` job, which fails when they
+# differ. Alpine 3.24, as the stages below, so libilbc is built against the
+# musl it runs on. (This was 1.92 because 1.94.1 on musl crashed borrow-
+# checking rustls 0.23.38; 1.100.0 builds it.)
+FROM rust:1.100.0-alpine3.24 AS rust-builder
 WORKDIR /src
-# Alpine 3.22 doesn't ship an iLBC package, so we build the bundled WebRTC
+# Alpine doesn't ship an iLBC package, so we build the bundled WebRTC
 # libilbc source tree ourselves and install it into /usr/local. cmake +
 # build-base gets us g++/make; libstdc++ is already in the rust image via
 # the toolchain.
