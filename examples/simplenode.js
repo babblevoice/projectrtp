@@ -62,7 +62,7 @@ function createuktones( dir = "/tmp/" ) {
 async function connect() {
   let port = 9002
   let host = "127.0.0.1"
-  let pa = "127.0.0.1"
+  let pa
 
   /* Public Address */
   if( undefined !== process.env.PA ) { 

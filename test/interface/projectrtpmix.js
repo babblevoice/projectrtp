@@ -772,7 +772,7 @@ describe( "channel mix", function() {
     expect( channela.mix( channelb ) ).to.be.true
 
     const recfile = "/tmp/g722legrecording.wav"
-    try { await fs.unlink( recfile ) } catch( e ) { /* may not exist */ }
+    try { await fs.unlink( recfile ) } catch { /* may not exist */ }
 
     /* Record on the g722 leg, before any media flows (typical SIP ordering). */
     channelb.record( { "file": recfile } )

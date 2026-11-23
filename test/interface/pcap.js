@@ -27,8 +27,8 @@ module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
 
   let fileposition = 0
 
-  let ts_sec = 0
-  let ts_usec = 0
+  let ts_sec
+  let ts_usec
   let ts_firstether = -1
   let frame = 0
   const ipv4hosts = []
@@ -129,7 +129,6 @@ module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
         etherpacket.ipv4.checksum = "" + toHex( etherpacket.ipv4.data[ 10 ] ) + toHex( etherpacket.ipv4.data[ 11 ] )
         etherpacket.ipv4.src = "" + etherpacket.ipv4.data[ 12 ] + "." + etherpacket.ipv4.data[ 13 ] + "." + etherpacket.ipv4.data[ 14 ] + "." + etherpacket.ipv4.data[ 15 ]
         etherpacket.ipv4.dst = "" + etherpacket.ipv4.data[ 16 ] + "." + etherpacket.ipv4.data[ 17 ] + "." + etherpacket.ipv4.data[ 18 ] + "." + etherpacket.ipv4.data[ 19 ]
-        hostid = -1
         if ( -1 == ( hostid = ipv4hosts.indexOf( etherpacket.ipv4.src ) ) ) {
           etherpacket.ipv4.srchostid = ipv4hosts.length
           ipv4hosts.push( etherpacket.ipv4.src )

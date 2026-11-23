@@ -45,7 +45,7 @@ function sendpk( sn, sendtime, dstport, server, data = undefined, pt = 0, ssrc =
 
 async function createclient() {
   const client = dgram.createSocket( "udp4" )
-  client.on( "message", function( msg ) {
+  client.on( "message", function() {
   } )
 
   client.bind()

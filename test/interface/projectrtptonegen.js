@@ -15,7 +15,7 @@ describe( "tonegen", function() {
   this.afterEach( async () => {
     try{
       await fs.unlink( silentfilename )
-    } catch( e ) { /* silent */ }
+    } catch { /* silent */ }
     
   } )
 

@@ -113,7 +113,7 @@ describe( "playrecord", function() {
     } ) ).to.be.true
 
     /* send RTP packets throughout — these are what gets recorded */
-    for( let i = 0; i < 150; i++ ) {
+    for( let i = 0; 150 > i; i++ ) {
       sendpk( i, i, channel.local.port, server )
     }
 
@@ -242,7 +242,7 @@ describe( "playrecord", function() {
 
     /* send only silence */
     const silencebuf = Buffer.alloc( 8000 * 3, prtp.projectrtp.codecx.linear162pcmu( 0 ) )
-    for( let i = 0; i < 150; i++ ) {
+    for( let i = 0; 150 > i; i++ ) {
       sendpk( i, i, channel.local.port, server, silencebuf )
     }
 
@@ -549,7 +549,7 @@ describe( "playrecord", function() {
       }
     } ) ).to.be.true
 
-    for( let i = 0; i < 100; i++ ) {
+    for( let i = 0; 100 > i; i++ ) {
       sendpk( i, i, channel.local.port, server )
     }
 

@@ -65,7 +65,7 @@ function parse2833pk( packet ) {
     ssrc: packet.readUInt32BE( 8 ),
     event: {
       id: packet.readUInt8( 12 ),
-      eoe: ( packet.readUInt8( 13 ) & 0x80 ) == 0x80,
+      eoe: 0x80 == ( packet.readUInt8( 13 ) & 0x80 ),
       volume: packet.readUInt8( 13 ) & 0x7f,
       duration: packet.readUInt16BE( 14 ),
     }
@@ -391,7 +391,7 @@ describe( "dtmf", function() {
     const clientb = dgram.createSocket( "udp4" )
     const clientc = dgram.createSocket( "udp4" )
 
-    let dtmfpks = []
+    const dtmfpks = []
     clienta.on( "message", function( msg ) {
       const pk = parsepk( msg )
       if( 101 == pk.pt ) {
@@ -1449,7 +1449,7 @@ describe( "dtmf", function() {
       if( !packet.ipv4 || !packet.ipv4.udp ) return
       const u = packet.ipv4.udp
       const sendat = 1000 * packet.ts_sec_offset
-      if( sendat < 0 ) return
+      if( 0 > sendat ) return
       /* leg A audio: 3CX:9492 -> projectrtp:11634 */
       if( 9492 === u.srcport && 11634 === u.dstport ) {
         sendpayload( sendat, u.data, adstport, endpointa )

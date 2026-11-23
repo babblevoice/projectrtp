@@ -566,7 +566,7 @@ class projectrtp {
         const resolved = {
           direction:   opts.direction   || "in",
           format:      opts.format      || "l16",
-          samplerate:  ( opts.samplerate === 16000 ) ? 16000 : 8000,
+          samplerate:  ( 16000 === opts.samplerate ) ? 16000 : 8000,
           numchannels: ( 2 === opts.numchannels ) ? 2 : 1,
         }
 

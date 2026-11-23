@@ -42,7 +42,7 @@ function buildpk( sn, ssrc ) {
 }
 
 function percentile( sorted, q ) {
-  if ( sorted.length === 0 ) return 0
+  if ( 0 === sorted.length ) return 0
   const idx = Math.min( sorted.length - 1, Math.floor( sorted.length * q ) )
   return sorted[ idx ]
 }
@@ -87,14 +87,14 @@ async function main() {
       remote: { address: "127.0.0.1", port, codec: PT },
     }, () => {} )
 
-    if ( MODE === "echo" ) chan.echo()
+    if ( "echo" === MODE ) chan.echo()
 
     const chanIdx = i
     endpoint.on( "message", ( msg ) => {
-      if ( msg.length < 12 ) return
+      if ( 12 > msg.length ) return
       // In mix2 mode the odd-side endpoints echo back so A hears its
       // own audio — same round-trip shape as echo mode for latency.
-      if ( MODE === "mix2" && ( chanIdx % 2 === 1 ) ) {
+      if ( "mix2" === MODE && ( 1 === chanIdx % 2 ) ) {
         endpoint.send( msg, chan.local.port, "127.0.0.1" )
         return
       }
@@ -112,7 +112,7 @@ async function main() {
     channels.push( chan )
   }
 
-  if ( MODE === "mix2" ) {
+  if ( "mix2" === MODE ) {
     for ( let i = 0; i < CHANNELS; i += 2 ) {
       if ( i + 1 < CHANNELS ) channels[ i ].mix( channels[ i + 1 ] )
     }
@@ -134,11 +134,11 @@ async function main() {
   // the odd-indexed ones just echo, so sending them packets would be
   // redundant and would also mess with the latency measurement. In
   // echo / idle modes every channel originates.
-  const sendEvery = ( MODE === "mix2" ) ? 2 : 1
+  const sendEvery = ( "mix2" === MODE ) ? 2 : 1
 
   const sendTimer = setInterval( () => {
     const now = performance.now()
-    if ( MODE !== "idle" ) {
+    if ( "idle" !== MODE ) {
       for ( let i = 0; i < CHANNELS; i += sendEvery ) {
         const pkt = buildpk( sn, 0x10000000 + i )
         const key = `${i}:${sn & 0xffff}`
@@ -173,31 +173,31 @@ async function main() {
     const coreCount = os.cpus().length
 
     console.log()
-    console.log( `Config:` )
+    console.log( "Config:" )
     console.log( `  mode:         ${MODE}` )
     console.log( `  channels:     ${CHANNELS}` )
     console.log( `  duration:     ${DURATION_MS}ms (wall ${wallMs.toFixed( 0 )}ms)` )
     console.log( `  ptime:        ${PTIME_MS}ms` )
     console.log( `  cores:        ${coreCount}` )
     console.log()
-    console.log( `Throughput:` )
+    console.log( "Throughput:" )
     console.log( `  sent:         ${totalSent}` )
     console.log( `  received:     ${totalReceived}` )
     console.log( `  drop rate:    ${dropPct.toFixed( 3 )}%` )
     console.log()
-    console.log( `Echo latency (ms):` )
+    console.log( "Echo latency (ms):" )
     console.log( `  p50:          ${percentile( latencies, 0.50 ).toFixed( 2 )}` )
     console.log( `  p95:          ${percentile( latencies, 0.95 ).toFixed( 2 )}` )
     console.log( `  p99:          ${percentile( latencies, 0.99 ).toFixed( 2 )}` )
     console.log( `  max:          ${percentile( latencies, 1 ).toFixed( 2 )}` )
     console.log()
-    console.log( `CPU:` )
+    console.log( "CPU:" )
     console.log( `  user:         ${userMs.toFixed( 0 )}ms` )
     console.log( `  sys:          ${sysMs.toFixed( 0 )}ms` )
     console.log( `  cpu / wall:   ${( cpuMs / wallMs * 100 ).toFixed( 1 )}% (of 1 core)` )
     console.log( `  cpu / all:    ${( cpuMs / wallMs / coreCount * 100 ).toFixed( 1 )}% (of ${coreCount} cores)` )
     console.log()
-    console.log( `Memory:` )
+    console.log( "Memory:" )
     console.log( `  baseline rss: ${( baselineMem.rss / 1024 / 1024 ).toFixed( 1 )} MiB` )
     console.log( `  after-open:   ${( afterOpenMem.rss / 1024 / 1024 ).toFixed( 1 )} MiB` )
     console.log( `  peak:         ${( peakMem.rss / 1024 / 1024 ).toFixed( 1 )} MiB` )

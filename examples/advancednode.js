@@ -19,7 +19,7 @@ async function connect() {
 
   let port = 9002
   let host = "127.0.0.1"
-  let pa = "127.0.0.1"
+  let pa
 
   if( undefined !== process.env.PORT ) port = parseInt( process.env.PORT )
   if( undefined !== process.env.HOST ) host = process.env.HOST
