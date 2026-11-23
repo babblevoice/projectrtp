@@ -106,6 +106,10 @@ pub struct ChannelState {
     /// Publishes DTLS keying material to the inbound RTCP loop once the
     /// handshake completes, so it can build its SRTCP decrypt context.
     pub srtp_key_tx: Option<watch::Sender<Option<SrtpKeyingMaterial>>>,
+    /// This channel's packet capture point (Command::Pcap). Every task that
+    /// owns one of the channel's sockets holds a clone and records what it
+    /// sends and receives through it - see `pcap.rs`.
+    pub pcap: super::pcap::PcapTap,
 }
 
 impl ChannelState {
@@ -121,6 +125,7 @@ impl ChannelState {
             local_addr,
             remote_addr: Arc::new(PLMutex::new(None)),
             remote: None,
+            pcap: Default::default(),
             direction: Direction::default(),
             rtp_sock: Arc::new(rtp_sock),
             rtcp_sock: Arc::new(rtcp_sock),

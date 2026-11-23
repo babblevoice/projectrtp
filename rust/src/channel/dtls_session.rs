@@ -100,6 +100,9 @@ pub struct DtlsTransport {
     sock: Arc<tokio::net::UdpSocket>,
     local_addr: SocketAddr,
     remote_addr: Arc<PLMutex<Option<SocketAddr>>>,
+    /// The channel's capture point: handshake records are recorded as they
+    /// leave. Inbound ones are recorded by the recv_loop that feeds us.
+    pcap: super::pcap::PcapTap,
 }
 
 #[async_trait]
@@ -138,15 +141,15 @@ impl webrtc_util::Conn for DtlsTransport {
 
     async fn send(&self, buf: &[u8]) -> webrtc_util::Result<usize> {
         let remote = (*self.remote_addr.lock()).unwrap_or(self.local_addr);
-        self.sock
-            .send_to(buf, remote)
+        self.pcap
+            .send_to(&self.sock, buf, remote)
             .await
             .map_err(|e| webrtc_util::Error::Other(e.to_string()))
     }
 
     async fn send_to(&self, buf: &[u8], target: SocketAddr) -> webrtc_util::Result<usize> {
-        self.sock
-            .send_to(buf, target)
+        self.pcap
+            .send_to(&self.sock, buf, target)
             .await
             .map_err(|e| webrtc_util::Error::Other(e.to_string()))
     }
@@ -198,6 +201,7 @@ const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10
 ///
 /// After the handshake completes, the task exits and the tick resumes
 /// direct socket reads (by clearing `forwarded_rx`).
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_handshake(
     setup: DtlsSetup,
     local_addr: SocketAddr,
@@ -206,6 +210,7 @@ pub fn spawn_handshake(
     certificate: Certificate,
     remote_addr: Arc<PLMutex<Option<SocketAddr>>>,
     expected_fingerprint: Option<PeerFingerprint>,
+    pcap: super::pcap::PcapTap,
 ) -> HandshakeHandle {
     let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
@@ -214,6 +219,7 @@ pub fn spawn_handshake(
         sock,
         local_addr,
         remote_addr,
+        pcap,
     });
 
     let is_client = setup == DtlsSetup::Active;
@@ -416,6 +422,7 @@ mod tests {
             server_cert,
             server_remote,
             server_expects,
+            Default::default(),
         );
         let client_h = spawn_handshake(
             DtlsSetup::Active,
@@ -425,6 +432,7 @@ mod tests {
             client_cert,
             client_remote,
             client_expects,
+            Default::default(),
         );
 
         // A failed handshake still resolves the oneshot (with `None`); only a

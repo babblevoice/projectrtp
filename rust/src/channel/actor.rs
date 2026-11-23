@@ -169,6 +169,23 @@ pub enum Event {
         file: Option<String>,
         filesize: Option<u64>,
     },
+    /// A packet capture finished — carries the file so babble-rtp can ship it
+    /// off the node, exactly as it does for a finished recording. Posted by the
+    /// capture's writer thread (see pcap.rs).
+    Pcap {
+        /// One of a fixed set: `requested`, `replaced`, `channelclosed`,
+        /// `maxsize`, `maxduration`, `open-failed`, `write-failed`.
+        reason: String,
+        /// The OS error behind `open-failed` or `write-failed`.
+        error: Option<String>,
+        file: String,
+        filesize: u64,
+        packets: u64,
+        /// Datagrams not written because the leg was IPv6.
+        skipped: u64,
+        /// Datagrams not written because the writer fell behind.
+        dropped: u64,
+    },
     Telephone {
         digit: char,
     },
@@ -280,6 +297,7 @@ pub fn spawn_with_sockets(
         relay: relay_spawn
             .as_ref()
             .map(|rs| super::recv_loop::RelayRecv::new(rs.shared.clone())),
+        pcap: state.pcap.clone(),
     });
 
     // Relay-mode send task — owns the leg's outbound SRTP/SRTCP crypto and
@@ -295,6 +313,7 @@ pub fn spawn_with_sockets(
             rx_stats: state.rx_stats.clone(),
             key_rx: srtp_key_rx.clone(),
             cancel: cancel.clone(),
+            pcap: state.pcap.clone(),
         });
     }
 
@@ -307,6 +326,7 @@ pub fn spawn_with_sockets(
         local_ssrc: state.ssrc,
         key_rx: srtp_key_rx,
         cancel: cancel.clone(),
+        pcap: state.pcap.clone(),
     });
 
     state.recv_cancel = Some(cancel);
@@ -688,6 +708,12 @@ async fn run(
     if let Some(relay) = &state.relay {
         relay.close();
     }
+    // Packet capture: finished only now, so the BYE above is in the file, and
+    // waited for, so its `pcap` event reaches JS before `close` does. The
+    // wait is bounded: a writer stuck on a dead disk must not hold the close.
+    if let Some(done) = state.pcap.finish("channelclosed") {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), done).await;
+    }
     let stats = build_channel_stats(state);
     state.close_info = Some(CloseInfo {
         reason: reason.clone(),
@@ -849,6 +875,7 @@ async fn handle_command_local(
                     crate::dtls::get_certificate(),
                     state.remote_addr.clone(),
                     expected_fp,
+                    state.pcap.clone(),
                 );
                 state.dtls_result_rx = Some(h.result_rx);
                 state.dtls_handshake_abort = Some(h.abort);
@@ -1012,6 +1039,21 @@ async fn handle_command_local(
                     rec.resume();
                 }
             }
+            LocalOutcome::Continue
+        }
+
+        Command::Pcap { cfg, ack } => {
+            // One capture per channel: arming again replaces the current one
+            // (which finishes with `replaced`). A path that cannot be opened is
+            // reported by the writer as `open-failed` - capture is diagnostic
+            // and must never fail the call.
+            state.pcap.start(cfg, events.clone());
+            let _ = ack.send(());
+            LocalOutcome::Continue
+        }
+
+        Command::PcapFinish => {
+            state.pcap.finish("requested");
             LocalOutcome::Continue
         }
 

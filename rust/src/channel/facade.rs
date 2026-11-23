@@ -85,6 +85,17 @@ struct EventPayload {
     file: Option<String>,
     /// File size in bytes for record-finished events.
     filesize: Option<u64>,
+    /// Packets written to a finished capture. Distinct from `filesize`: a file
+    /// that is non-empty but holds no packets is the signature of a capture
+    /// armed on a leg that never carried media.
+    packets: Option<u64>,
+    /// Packets a capture could not represent (an IPv6 leg). Non-zero means the
+    /// file is deliberately short, rather than mysteriously so.
+    skipped: Option<u64>,
+    /// Packets a capture dropped because its writer fell behind.
+    dropped: Option<u64>,
+    /// The OS error behind a capture's `open-failed` or `write-failed`.
+    error: Option<String>,
 }
 
 fn event_to_payload(ev: Event) -> EventPayload {
@@ -97,6 +108,10 @@ fn event_to_payload(ev: Event) -> EventPayload {
             stats: Some(stats),
             file: None,
             filesize: None,
+            packets: None,
+            skipped: None,
+            dropped: None,
+            error: None,
         },
         Event::Play { state, reason } => EventPayload {
             action: "play",
@@ -114,6 +129,10 @@ fn event_to_payload(ev: Event) -> EventPayload {
             stats: None,
             file: None,
             filesize: None,
+            packets: None,
+            skipped: None,
+            dropped: None,
+            error: None,
         },
         Event::Record {
             state,
@@ -142,8 +161,36 @@ fn event_to_payload(ev: Event) -> EventPayload {
                 stats: None,
                 file,
                 filesize,
+                packets: None,
+                skipped: None,
+                dropped: None,
+                error: None,
             }
         }
+        Event::Pcap {
+            reason,
+            error,
+            file,
+            filesize,
+            packets,
+            skipped,
+            dropped,
+        } => EventPayload {
+            // Mirrors the record event's shape so babble-rtp can treat a
+            // finished capture exactly like a finished recording - see
+            // lib/node.js, which routes both to the same postprocess path.
+            action: "pcap",
+            event: Some(format!("finished.{reason}")),
+            reason: Some(reason),
+            state: None,
+            stats: None,
+            file: Some(file),
+            filesize: Some(filesize),
+            packets: Some(packets),
+            skipped: Some(skipped),
+            dropped: Some(dropped),
+            error,
+        },
         Event::Telephone { digit } => EventPayload {
             action: "telephone-event",
             reason: None,
@@ -152,6 +199,10 @@ fn event_to_payload(ev: Event) -> EventPayload {
             stats: None,
             file: None,
             filesize: None,
+            packets: None,
+            skipped: None,
+            dropped: None,
+            error: None,
         },
         Event::Mix { state } => EventPayload {
             // Tests read `d.event` for "start" / "finished", not `d.state`.
@@ -162,6 +213,10 @@ fn event_to_payload(ev: Event) -> EventPayload {
             stats: None,
             file: None,
             filesize: None,
+            packets: None,
+            skipped: None,
+            dropped: None,
+            error: None,
         },
     }
 }
@@ -465,6 +520,60 @@ impl ChannelObject {
         self.handle
             .cmd
             .try_send(super::commands::Command::Record { cfg, ack })
+            .is_ok()
+    }
+
+    /// Start (or finish) a packet capture on this channel. Shapes:
+    /// - `{ file, maxsize, maxduration }` — start capturing to `file`
+    /// - `{ finish: true }` — close the capture and emit its `pcap` event
+    ///
+    /// One capture per channel: starting again replaces the current one. The
+    /// file is libpcap format holding every datagram the channel's sockets
+    /// sent and received - RTP, RTCP, STUN, DTLS - as it was on the wire, so
+    /// a secure leg's media is ciphertext (see pcap.rs).
+    ///
+    /// `maxsize` and `maxduration` default to `DEFAULT_MAX_BYTES` and
+    /// `DEFAULT_MAX_DURATION_MS`: capture is armed by an operator on a live
+    /// platform and is never unbounded.
+    #[napi]
+    pub fn pcap(&self, params: Object) -> bool {
+        if params.get_named_property::<bool>("finish").ok() == Some(true) {
+            return self
+                .handle
+                .cmd
+                .try_send(super::commands::Command::PcapFinish)
+                .is_ok();
+        }
+        let Some(file) = params
+            .get_named_property::<String>("file")
+            .ok()
+            .filter(|s| !s.is_empty())
+        else {
+            return false;
+        };
+        let cfg = super::pcap::PcapConfig {
+            file: std::path::PathBuf::from(file),
+            max_bytes: params
+                .get_named_property::<i64>("maxsize")
+                .ok()
+                .filter(|v| *v > 0)
+                .map_or(Some(super::pcap::DEFAULT_MAX_BYTES), |v| Some(v as u64)),
+            max_duration_ms: params
+                .get_named_property::<i64>("maxduration")
+                .ok()
+                .filter(|v| *v > 0)
+                .map_or(Some(super::pcap::DEFAULT_MAX_DURATION_MS), |v| {
+                    Some(v as u64)
+                }),
+            local_address: params
+                .get_named_property::<String>("localaddress")
+                .ok()
+                .and_then(|s| s.parse().ok()),
+        };
+        let (ack, _) = tokio::sync::oneshot::channel();
+        self.handle
+            .cmd
+            .try_send(super::commands::Command::Pcap { cfg, ack })
             .is_ok()
     }
 
@@ -1362,6 +1471,18 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
                 }
                 if let Some(fs) = ev.filesize {
                     obj.set_named_property("filesize", env.create_int64(fs as i64)?)?;
+                }
+                if let Some(p) = ev.packets {
+                    obj.set_named_property("packets", env.create_int64(p as i64)?)?;
+                }
+                if let Some(s) = ev.skipped {
+                    obj.set_named_property("skipped", env.create_int64(s as i64)?)?;
+                }
+                if let Some(d) = ev.dropped {
+                    obj.set_named_property("dropped", env.create_int64(d as i64)?)?;
+                }
+                if let Some(e) = ev.error {
+                    obj.set_named_property("error", env.create_string(&e)?)?;
                 }
                 if let Some(stats) = ev.stats {
                     let mut s = env.create_object()?;

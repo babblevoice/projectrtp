@@ -321,6 +321,9 @@ pub struct RecvLoopConfig {
     pub cancel: CancellationToken,
     /// `Some` for relay-mode (video) channels — see channel/relay.rs.
     pub relay: Option<RelayRecv>,
+    /// The channel's capture point: every datagram is recorded as it arrives,
+    /// and STUN responses as they leave.
+    pub pcap: super::pcap::PcapTap,
 }
 
 pub fn spawn(cfg: RecvLoopConfig) -> tokio::task::JoinHandle<()> {
@@ -343,6 +346,7 @@ async fn run(cfg: RecvLoopConfig) {
             result = cfg.sock.recv_from(&mut buf) => {
                 match result {
                     Ok((n, peer)) => {
+                        cfg.pcap.received(&cfg.sock, peer, &buf[..n]);
                         handle_packet(&cfg, &buf[..n], peer, &mut srtcp_decrypt, &mut srtp_decrypt, &mut gates).await;
                     }
                     Err(_) => break,
@@ -418,7 +422,7 @@ async fn handle_packet(
                     }
                 }
             }
-            let _ = cfg.sock.send_to(&resp[..n], peer).await;
+            let _ = cfg.pcap.send_to(&cfg.sock, &resp[..n], peer).await;
         }
         return;
     }
@@ -780,6 +784,7 @@ mod tests {
                 key_rx,
                 cancel: CancellationToken::new(),
                 relay: Some(RelayRecv::new(own)),
+                pcap: Default::default(),
             };
             Rig { cfg, peer, key_tx }
         }

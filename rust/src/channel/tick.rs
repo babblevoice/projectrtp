@@ -629,15 +629,28 @@ async fn send_rtp(state: &mut ChannelState, pkt: &RtpPacket, remote: SocketAddr)
         return;
     }
     // Payload octets (excludes the RTP header) — the RTCP SR octet count.
+    // Sent through the capture tap, which records the datagram exactly as it
+    // goes on the wire - after encryption. send_rtp is the single funnel for
+    // player, echo and dtmf, so this covers every outbound path.
     let octets = pkt.payload_len() as u64;
     if let Some(ref mut ctx) = state.srtp_encrypt {
         if let Ok(encrypted) = ctx.encrypt_rtp(pkt.as_slice()) {
-            if state.rtp_sock.send_to(&encrypted, remote).await.is_ok() {
+            if state
+                .pcap
+                .send_to(&state.rtp_sock, &encrypted, remote)
+                .await
+                .is_ok()
+            {
                 state.out_count += 1;
                 state.out_octets += octets;
             }
         }
-    } else if state.rtp_sock.send_to(pkt.as_slice(), remote).await.is_ok() {
+    } else if state
+        .pcap
+        .send_to(&state.rtp_sock, pkt.as_slice(), remote)
+        .await
+        .is_ok()
+    {
         state.out_count += 1;
         state.out_octets += octets;
     }

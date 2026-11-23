@@ -354,6 +354,82 @@ channel.record( {
 } )
 ```
 
+### Packet capture — `channel.pcap`
+
+Write what the channel's sockets send and receive to a pcap file. This is the
+media half of a call capture: the SIP side is captured by drachtio's native HEP
+support, the media side here.
+
+The taps sit at the socket boundary, so the file is a record of the wire:
+
+- inbound, each datagram as it arrives — stamped with its arrival time and the
+  peer's real source address, before the jitter buffer reorders or drops
+  anything;
+- outbound, each datagram as it leaves — after SRTP/SRTCP protection;
+- RTP, RTCP (on the RTP port or the control port), STUN and the DTLS
+  handshake, on audio and relay (video) legs alike.
+
+On an SRTP or DTLS-SRTP leg the payload is therefore **ciphertext**: a capture
+holds no call audio and no DTMF digits. That costs network diagnosis nothing —
+SRTP encrypts only the payload, and the sequence number, timestamp, SSRC and
+payload type that Wireshark's loss, jitter and sequence analysis read stay in
+the clear. To hear a call, use `record()`.
+
+```js
+channel.pcap( {
+  "file": "/tmp/capture/pcap/<uuid>.pcap",
+  "maxsize": 5 * 1024 * 1024,  /* bytes, default 50 MB */
+  "maxduration": 60 * 1000     /* mS, default 1 hour */
+} )
+
+channel.pcap( { "finish": true } )   /* stop early; closing the channel also finishes */
+```
+
+file = &lt;string&gt; - filename to write. Required; without it the call returns false.
+maxsize = &lt;int&gt; - stop once the file would exceed this many bytes. Default 50 MB.
+maxduration = &lt;int&gt; - stop after this many mS, whether or not packets are still
+arriving. Default one hour. A capture is never unbounded.
+localaddress = &lt;string&gt; - address to record as our own end. Defaults to the
+address configured with `setaddress()`, i.e. the one advertised in SDP. The RTP
+sockets bind to 0.0.0.0, so without this a capture names one end "0.0.0.0" and
+reads as broken.
+
+Exactly one capture runs per channel; arming a second replaces the first
+(the replaced one is finished and reported with `reason: "replaced"`).
+
+Completion is reported as an event, whether it ended because it was asked to,
+hit a limit, or the channel closed. A capture that hits a limit, or cannot be
+written, is reported at that moment rather than when the channel closes, so the
+file can be collected while the call is still up. On channel close the `pcap`
+event comes before the `close` event, and the file includes the RTCP BYE:
+
+```js
+{
+  action: "pcap",
+  event: "finished.requested",   /* finished.<reason> */
+  reason: "requested",           /* requested | maxsize | maxduration | replaced | channelclosed | open-failed | write-failed */
+  error: "No such file or directory (os error 2)",  /* only with open-failed / write-failed */
+  file: "/tmp/capture/pcap/<uuid>.pcap",
+  filesize: 23024,
+  packets: 100,                  /* datagrams written */
+  skipped: 0,                    /* IPv6 datagrams, which are counted but not written */
+  dropped: 0                     /* datagrams dropped because the writer fell behind */
+}
+```
+
+The file is created readable by its owner only (0600). It is written on a
+thread of the capture's own, so a slow disk never stalls media: the taps only
+queue each datagram, and if the queue fills the datagram is dropped and
+counted in `dropped` rather than holding up the channel.
+
+Files are written as `LINKTYPE_ETHERNET` with synthetic locally-administered
+MACs (`02:00:00:00:00:0x`). Ethernet rather than `LINKTYPE_RAW` because it is
+what every tool reads, including this repo's own pcap decoder in
+`test/interface/pcap.js` — which means a capture taken from a live call can be
+replayed straight into the DTMF and codec tests. IP header checksums are
+computed; UDP checksums are left at 0 ("not computed"), which is valid over
+IPv4 and preferable to a wrong value.
+
 ### Live audio — `channel.createReadStream`
 
 Returns a standard Node `Readable` that emits decoded audio buffers as the channel receives / sends them. Use this to feed the audio into anything that takes a stream — STT, translation, captioning, WebSocket forwarders, on-disk capture — without going through the recorder / file path.
