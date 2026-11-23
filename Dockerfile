@@ -43,5 +43,12 @@ COPY index.js package.json package-lock.json /app/
 COPY lib/ /app/lib/                                       
 COPY examples/ /app/examples/                                                                                                                                                               
 RUN npm ci --omit=dev --ignore-scripts                    
+# examples/simplenode.js requires the package by its name, as an application
+# would, but the image runs it from the package's own directory, where
+# nothing installs it under that name. So link the name to /app, after
+# `npm ci`, which empties node_modules first. Without the link the CMD exits
+# at once with MODULE_NOT_FOUND, as every image from 3.0.0 to 3.8.0 did.
+RUN mkdir -p /app/node_modules/@babblevoice && \
+    ln -s /app /app/node_modules/@babblevoice/projectrtp
 EXPOSE 10000-50000/udp                                                                                                                                                                      
 CMD [ "node", "examples/simplenode.js" ]
