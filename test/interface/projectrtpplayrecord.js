@@ -120,7 +120,7 @@ describe( "playrecord", function() {
     await new Promise( resolve => setTimeout( resolve, 3500 ) )
     channel.close()
     await finished
-    await new Promise( resolve => server.close( resolve ) )
+    await /** @type { Promise< void > } */ ( new Promise( resolve => server.close( resolve ) ) )
 
     /* verify event sequence */
     const playstart = events.find( e => "play" === e.action && "start" === e.event )
@@ -194,7 +194,7 @@ describe( "playrecord", function() {
     channel.close()
     await finished
     delayedjobs.forEach( id => clearTimeout( id ) )
-    await new Promise( resolve => server.close( resolve ) )
+    await /** @type { Promise< void > } */ ( new Promise( resolve => server.close( resolve ) ) )
 
     /* verify barge-in occurred */
     const playend = events.find( e => "play" === e.action && "end" === e.event )
@@ -249,7 +249,7 @@ describe( "playrecord", function() {
     await new Promise( resolve => setTimeout( resolve, 3500 ) )
     channel.close()
     await finished
-    await new Promise( resolve => server.close( resolve ) )
+    await /** @type { Promise< void > } */ ( new Promise( resolve => server.close( resolve ) ) )
 
     /* play should have completed normally, not interrupted */
     const playend = events.find( e => "play" === e.action && "end" === e.event )
@@ -314,7 +314,7 @@ describe( "playrecord", function() {
     channel.close()
     await finished
     delayedjobs.forEach( id => clearTimeout( id ) )
-    await new Promise( resolve => server.close( resolve ) )
+    await /** @type { Promise< void > } */ ( new Promise( resolve => server.close( resolve ) ) )
 
     /* the prompt must have been ended by stopplay, never by energy barge-in */
     const interrupted = events.find( e => "play" === e.action && "end" === e.event && "interrupted" === e.reason )
@@ -382,7 +382,7 @@ describe( "playrecord", function() {
     channel.close()
     await finished
     delayedjobs.forEach( id => clearTimeout( id ) )
-    await new Promise( resolve => server.close( resolve ) )
+    await /** @type { Promise< void > } */ ( new Promise( resolve => server.close( resolve ) ) )
 
     /* the prompt was never restarted or cut: exactly one play/start, and the
        single play/end is a natural "completed" (not "replaced"/"interrupted"). */
@@ -437,7 +437,7 @@ describe( "playrecord", function() {
       channel.close()
       await finished
       delayedjobs.forEach( id => clearTimeout( id ) )
-      await new Promise( resolve => server.close( resolve ) )
+      await /** @type { Promise< void > } */ ( new Promise( resolve => server.close( resolve ) ) )
 
       const wav = fs.readFileSync( recordoptions.file )
       let maxabs = 0
@@ -503,7 +503,7 @@ describe( "playrecord", function() {
     channel.close()
     await finished
     delayedjobs.forEach( id => clearTimeout( id ) )
-    await new Promise( resolve => server.close( resolve ) )
+    await /** @type { Promise< void > } */ ( new Promise( resolve => server.close( resolve ) ) )
 
     const paused = events.find( e => "play" === e.action && "paused" === e.event )
     const resumed = events.find( e => "play" === e.action && "resumed" === e.event )
@@ -561,7 +561,7 @@ describe( "playrecord", function() {
     await new Promise( resolve => setTimeout( resolve, 2500 ) )
     channel.close()
     await finished
-    await new Promise( resolve => server.close( resolve ) )
+    await /** @type { Promise< void > } */ ( new Promise( resolve => server.close( resolve ) ) )
 
     const recfinish = events.find( e => "record" === e.action && "finished.requested" === e.event )
     expect( recfinish ).to.exist
@@ -598,7 +598,7 @@ describe( "playrecord", function() {
     setTimeout( () => channel.close(), 200 )
 
     await finished
-    await new Promise( resolve => server.close( resolve ) )
+    await /** @type { Promise< void > } */ ( new Promise( resolve => server.close( resolve ) ) )
     /* no crash = pass */
   } )
 

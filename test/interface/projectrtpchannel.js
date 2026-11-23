@@ -7,9 +7,11 @@ const node = require( "../../lib/node" ).interface
 const server = require( "../../lib/server" ).interface
 const rtputil = require( "../util/rtp" )
 
+/** @import { channel } from "../../index.js" */
+
 /**
  * Common channel tester
- * @param { object } channel 
+ * @param { channel } channel 
  * @param { string } id 
  */
 function exepectchannel( channel, id ) {
@@ -37,7 +39,7 @@ function exepectchannel( channel, id ) {
  * @param { number } sn 
  * @param { number } sendtime 
  * @param { number } dstport 
- * @param { object } server 
+ * @param { dgram.Socket } server 
  * @param { number } ssrc 
  * @param { number } pklength 
  */
@@ -92,7 +94,7 @@ describe( "rtpchannel", function() {
 
     exepectchannel( channel, "4" )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
     channel.close()
     await finished
   } )
@@ -112,7 +114,7 @@ describe( "rtpchannel", function() {
 
     exepectchannel( channel, "4" )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
     channel.close()
     await finished
 
@@ -138,7 +140,7 @@ describe( "rtpchannel", function() {
 
     exepectchannel( channel, "4" )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
     channel.close()
     await finished
 

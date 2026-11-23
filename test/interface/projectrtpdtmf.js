@@ -40,7 +40,7 @@ function sendpayload( sendtime, pk, dstport, server ) {
 /**
  * Limitation of not parsing ccrc.
  * @param { Buffer } packet
- * @return { object }
+ * @return { { sn: number, ts: number, pt: number, ssrc: number, payload: Uint8Array } }
  */
 function parsepk( packet ) {
   return {
@@ -55,7 +55,7 @@ function parsepk( packet ) {
 /**
  * Limitation of not parsing ccrc.
  * @param { Buffer } packet
- * @return { object }
+ * @return { { sn: number, ts: number, pt: number, ssrc: number, event: { id: number, eoe: boolean, volume: number, duration: number } } }
  */
 function parse2833pk( packet ) {
   return {
@@ -270,9 +270,9 @@ describe( "dtmf", function() {
     this.slow( 2500 )
 
     clienta.bind()
-    await new Promise( ( resolve ) => { clienta.on( "listening", () => resolve()  ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { clienta.on( "listening", () => resolve()  ) } ) )
     clientb.bind()
-    await new Promise( ( resolve ) => { clientb.on( "listening", () => resolve()  ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { clientb.on( "listening", () => resolve()  ) } ) )
 
     const ouraport = clienta.address().port
     const ourbport = clientb.address().port
@@ -295,9 +295,9 @@ describe( "dtmf", function() {
       sendpk( i, i*160, i*20, channela.local.port, clienta )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 400 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 400 ) } ) )
     channela.dtmf( "*9F" )
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 3 * timeperdtmfdigit ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 3 * timeperdtmfdigit ) } ) )
     channela.close()
 
     await finished
@@ -346,9 +346,9 @@ describe( "dtmf", function() {
     this.slow( 2500 )
 
     clienta.bind()
-    await new Promise( ( resolve ) => { clienta.on( "listening", () => resolve()  ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { clienta.on( "listening", () => resolve()  ) } ) )
     clientb.bind()
-    await new Promise( ( resolve ) => { clientb.on( "listening", () => resolve()  ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { clientb.on( "listening", () => resolve()  ) } ) )
 
     const ouraport = clienta.address().port
     const ourbport = clientb.address().port
@@ -371,9 +371,9 @@ describe( "dtmf", function() {
       sendpk( i, i*160, i*20, channela.local.port, clienta )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 400 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 400 ) } ) )
     channela.dtmf( "*9F" )
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 3 * timeperdtmfdigit ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 3 * timeperdtmfdigit ) } ) )
     channela.close()
 
     await finished
@@ -420,11 +420,11 @@ describe( "dtmf", function() {
     this.slow( 2500 )
 
     clienta.bind()
-    await new Promise( ( resolve ) => { clienta.on( "listening", () => resolve()  ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { clienta.on( "listening", () => resolve()  ) } ) )
     clientb.bind()
-    await new Promise( ( resolve ) => { clientb.on( "listening", () => resolve()  ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { clientb.on( "listening", () => resolve()  ) } ) )
     clientc.bind()
-    await new Promise( ( resolve ) => { clientc.on( "listening", () => resolve()  ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { clientc.on( "listening", () => resolve()  ) } ) )
 
     const ouraport = clienta.address().port
     const ourbport = clientb.address().port
@@ -453,9 +453,9 @@ describe( "dtmf", function() {
       sendpk( i, i*160, i*20, channela.local.port, clienta )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
     channela.dtmf( "*9ABD" )
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 5 * timeperdtmfdigit ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 5 * timeperdtmfdigit ) } ) )
     channela.close()
 
     clienta.close()
@@ -478,7 +478,7 @@ describe( "dtmf", function() {
     this.slow( 2500 )
 
     server.bind()
-    await new Promise( ( resolve ) => { server.on( "listening", () => resolve() ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { server.on( "listening", () => resolve() ) } ) )
 
     const ourport = server.address().port
 
@@ -663,10 +663,10 @@ describe( "dtmf", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -740,7 +740,7 @@ describe( "dtmf", function() {
     sendpk( 48, 40*160, 39*20, channela.local.port, endpointa, 0 )
     sendpk( 49, 51*160, 40*20, channela.local.port, endpointa, 0 )
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 2500 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), 2500 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -809,10 +809,10 @@ describe( "dtmf", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -886,7 +886,7 @@ describe( "dtmf", function() {
     sendpk( 48, 40*160, 39*20, channela.local.port, endpointa, 0 )
     sendpk( 49, 51*160, 40*20, channela.local.port, endpointa, 0 )
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 2500 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), 2500 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -967,13 +967,13 @@ describe( "dtmf", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     endpointc.bind()
-    await new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } ) )
 
     const receveiedmessages = []
 
@@ -1073,7 +1073,7 @@ describe( "dtmf", function() {
     sendpk( 58, 50*160, 50*20, channela.local.port, endpointa, 0 )
     sendpk( 59, 52*160, 51*20, channela.local.port, endpointa, 0 )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1200 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1200 ) } ) )
 
     channela.close()
 
@@ -1416,9 +1416,9 @@ describe( "dtmf", function() {
     endpointb.on( "message", function() {} )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", () => resolve() ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", () => resolve() ) } ) )
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", () => resolve() ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", () => resolve() ) } ) )
 
     const channela = await projectrtp.openchannel(
       { "remote": { "address": "127.0.0.1", "port": endpointa.address().port, "codec": 0 } },

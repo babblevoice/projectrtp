@@ -63,7 +63,7 @@ module.exports = async ( mstimeout ) => {
   expect( clienta.play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
   expect( clientb.echo() ).to.be.true
 
-  await new Promise( ( r ) => { setTimeout( () => r(), Math.max( mstimeout, 110 ) ) } )
+  await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), Math.max( mstimeout, 110 ) ) } ) )
   clienta.close()
   clientb.close()
 

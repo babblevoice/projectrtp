@@ -12,10 +12,33 @@ function toHex( d ) {
 }
 
 /**
+ * A captured frame: ipv4 is there for an IPv4 frame, with udp or tcp in it for those.
+ * @typedef { object } pcappacket
+ * @property { number } frame
+ * @property { number } ts_sec
+ * @property { number } ts_sec_offset - seconds since the first frame
+ * @property { string } [ src ]
+ * @property { string } [ dst ]
+ * @property { string } ethertype
+ * @property { object } [ ipv4 ]
+ * @property { string } ipv4.src
+ * @property { string } ipv4.dst
+ * @property { number } ipv4.protocol
+ * @property { Buffer } ipv4.data
+ * @property { object } [ ipv4.udp ]
+ * @property { number } ipv4.udp.srcport
+ * @property { number } ipv4.udp.dstport
+ * @property { number } ipv4.udp.length
+ * @property { number } ipv4.udp.checksum
+ * @property { Buffer } ipv4.udp.data
+ * @property { Object< string, any > } [ ipv4.tcp ]
+ */
+
+/**
  * 
  * @param { string } file 
  * @param { number } maxnumberofpackets 
- * @returns { Promise< Array< object > > }
+ * @returns { Promise< Array< pcappacket > > }
  */
 // For now disable - this is only used in test.
 // eslint-disable-next-line complexity

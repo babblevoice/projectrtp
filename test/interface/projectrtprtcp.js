@@ -76,10 +76,11 @@ describe( "rtcp", function() {
 
     /* Bind the RTP peer, then bind the RTCP peer at its port + 1 — the address
        the channel derives for symmetric RTCP without mux. */
-    await new Promise( ( res ) => rtp.bind( res ) )
+    await /** @type { Promise< void > } */ ( new Promise( ( res ) => rtp.bind( res ) ) )
     const peerport = rtp.address().port
-    await new Promise( ( res, rej ) =>
-      rtcp.bind( peerport + 1, ( e ) => ( e ? rej( e ) : res() ) ) )
+    /* dgram's bind callback takes no error: a failed bind is an "error" event */
+    await /** @type { Promise< void > } */ ( new Promise( ( res ) =>
+      rtcp.bind( peerport + 1, () => res() ) ) )
 
     let closestats
     let resolveclose
@@ -164,10 +165,11 @@ describe( "rtcp", function() {
     let p1count = 0
     rtcp.on( "message", () => { p1count++ } )
 
-    await new Promise( ( res ) => rtp.bind( res ) )
+    await /** @type { Promise< void > } */ ( new Promise( ( res ) => rtp.bind( res ) ) )
     const peerport = rtp.address().port
-    await new Promise( ( res, rej ) =>
-      rtcp.bind( peerport + 1, ( e ) => ( e ? rej( e ) : res() ) ) )
+    /* dgram's bind callback takes no error: a failed bind is an "error" event */
+    await /** @type { Promise< void > } */ ( new Promise( ( res ) =>
+      rtcp.bind( peerport + 1, () => res() ) ) )
 
     let closestats
     let resolveclose
@@ -227,10 +229,11 @@ describe( "rtcp", function() {
     const rtcp = dgram.createSocket( "udp4" )
     rtp.on( "message", () => {} ) /* drain echoed audio */
 
-    await new Promise( ( res ) => rtp.bind( res ) )
+    await /** @type { Promise< void > } */ ( new Promise( ( res ) => rtp.bind( res ) ) )
     const peerport = rtp.address().port
-    await new Promise( ( res, rej ) =>
-      rtcp.bind( peerport + 1, ( e ) => ( e ? rej( e ) : res() ) ) )
+    /* dgram's bind callback takes no error: a failed bind is an "error" event */
+    await /** @type { Promise< void > } */ ( new Promise( ( res ) =>
+      rtcp.bind( peerport + 1, () => res() ) ) )
 
     /* Resolve on the first compound that carries a BYE sub-packet. Closing
        early (before the first periodic report) means the BYE is the only

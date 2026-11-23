@@ -61,7 +61,7 @@ module.exports = async ( mstimeout ) => {
     clienta.dtmf( "45678F#" )
   }, Math.min( utils.between( 100, mstimeout ), 100 ) )
 
-  await new Promise( ( r ) => { setTimeout( () => r(), Math.max( mstimeout, 110 ) ) } )
+  await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), Math.max( mstimeout, 110 ) ) } ) )
   clienta.close()
 
 }

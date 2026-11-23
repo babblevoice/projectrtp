@@ -19,7 +19,7 @@
     "rust:test": "cd rust && cargo test --lib",
     "rust:test:release": "cd rust && cargo test --lib --release",
     "github:check": "node test/basictests.js; npm update; ./node_modules/mocha/bin/_mocha test/interface/*.js test/unit/*.js --check-leaks --exit",
-    "check": "eslint --max-warnings 0 ./",
+    "check": "tsc -p jsconfig.json && eslint --max-warnings 0 ./",
     "docs": "jsdoc -c jsdoc.conf.json ./README.md",
     "stress": "node stress/index.js"
   },
@@ -53,6 +53,7 @@
     "globals": "^17.6.0",
     "jsdoc": "^4.0.0",
     "mocha": "^11.7.6",
-    "nodeplotlib": "^0.7.7"
+    "nodeplotlib": "^0.7.7",
+    "typescript": "7.0.2"
   }
 }

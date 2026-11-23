@@ -45,7 +45,7 @@ function concatint16arrays( arrays ) {
 
 /**
  * 
- * @param { Array< number > } inarray
+ * @param { ArrayLike< number > } inarray
  * @returns { Int16Array }
  */
 function pcmutolinear( inarray ) {
@@ -59,7 +59,7 @@ function pcmutolinear( inarray ) {
 
 /**
  * 
- * @param { Array< number > } inarray
+ * @param { ArrayLike< number > } inarray
  * @returns { Int16Array }
  */
 function pcmatolinear( inarray ) {
@@ -74,7 +74,7 @@ function pcmatolinear( inarray ) {
 /**
  * Limitation of not parsing ccrc.
  * @param { Buffer } packet
- * @return { object }
+ * @return { { sn: number, ts: number, pt: number, ssrc: number, payload: Uint8Array } }
  */
 function parsertppk( packet ) {
   return {
@@ -140,7 +140,7 @@ describe( "rtpsound", function() {
     expect( channel.play( {} ) ).to.equal( false )
     expect( channel.play( { "files": [ { "wav": "doesntexsist.wav" } ] } ) ).to.equal( false )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 200 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 200 ) } ) )
     channel.close()
 
     await finished
@@ -187,7 +187,7 @@ describe( "rtpsound", function() {
 
     } )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1100 ) } ) )
     if( channel ) channel.close()
     server.close()
 
@@ -345,7 +345,7 @@ describe( "rtpsound", function() {
 
     } )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 2200 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 2200 ) } ) )
     channel.close()
     server.close()
 

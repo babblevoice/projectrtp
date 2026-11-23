@@ -30,7 +30,7 @@ module.exports = class {
    * 
    * @param { number } port 
    * @param { string } address 
-   * @returns { Promise< object > }
+   * @returns { Promise< void > }
    */
   async connect( port = 9002, address = "127.0.0.1" ) {
     let newconnectresolve

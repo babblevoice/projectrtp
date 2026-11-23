@@ -90,7 +90,7 @@ describe( "record", function() {
       }
     } )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } ) )
     const startclose = Date.now()
     channel.close()
     await new Promise( resolve => { server.on( "close", resolve ) } )
@@ -174,7 +174,7 @@ describe( "record", function() {
       "finish": true
     } ) , 600 )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } ) )
     channel.close()
     await new Promise( resolve => { server.on( "close", resolve ) } )
 
@@ -233,7 +233,7 @@ describe( "record", function() {
       }, 400 )
     } )
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 1300 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), 1300 ) } ) )
     channel.close()
     await new Promise( resolve => { server.on( "close", resolve ) } )
 
@@ -468,7 +468,7 @@ describe( "record", function() {
     await new Promise( resolve => setTimeout( resolve, totalseconds * 1000 ) )
     channel.close()
     await finished
-    await new Promise( resolve => server.close( () => resolve() ) )
+    await /** @type { Promise< void > } */ ( new Promise( resolve => server.close( () => resolve() ) ) )
 
     let stats = fs.statSync( "/tmp/dualrecordingpower.wav" )
     // Bound widened from 30000..41000. The Rust port computes
@@ -506,12 +506,12 @@ describe( "record", function() {
   } )
 
   after( async () => {
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourrecording.wav", () => { resolve() } ) } )
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourstoppedrecording.wav", () => { resolve() } ) } )
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourpausedrecording.wav", () => { resolve() } ) } )
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourpowerrecording.wav", () => { resolve() } ) } )
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/ourtimeoutpowerrecording.wav", () => { resolve() } ) } )
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/dualrecordingpower.wav", () => { resolve() } ) } )
-    await new Promise( ( resolve ) => { fs.unlink( "/tmp/dualrecording.wav", () => { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { fs.unlink( "/tmp/ourrecording.wav", () => { resolve() } ) } ) )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { fs.unlink( "/tmp/ourstoppedrecording.wav", () => { resolve() } ) } ) )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { fs.unlink( "/tmp/ourpausedrecording.wav", () => { resolve() } ) } ) )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { fs.unlink( "/tmp/ourpowerrecording.wav", () => { resolve() } ) } ) )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { fs.unlink( "/tmp/ourtimeoutpowerrecording.wav", () => { resolve() } ) } ) )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { fs.unlink( "/tmp/dualrecordingpower.wav", () => { resolve() } ) } ) )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { fs.unlink( "/tmp/dualrecording.wav", () => { resolve() } ) } ) )
   } )
 } )

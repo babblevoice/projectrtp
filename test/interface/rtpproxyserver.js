@@ -627,7 +627,7 @@ describe( "rtpproxy server", function() {
     const n = await ournode.listen( "127.0.0.1", ourport )
     const chnl = await prtp.openchannel()
     await chnl.close()
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
     n.destroy()
   } )
 
@@ -644,7 +644,7 @@ describe( "rtpproxy server", function() {
     const chnl2 = await prtp.openchannel()
     await chnl.close()
     await chnl2.close()
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
     n.destroy()
   } )
 
@@ -659,10 +659,10 @@ describe( "rtpproxy server", function() {
     const n = await ournode.listen( "127.0.0.1", ourport )
     const chnl = await prtp.openchannel()
     const chnl2 = await chnl.openchannel()
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
     await chnl.close()
     await chnl2.close()
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
     n.destroy()
   } )
 
@@ -685,10 +685,10 @@ describe( "rtpproxy server", function() {
 
     chnl.play( { "interupt":true, "files": [ { "wav": "test/interface/pcaps/180fa1ac-08e5-11ed-bd4d-02dba5b5aad6.wav" } ] } )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
 
     await chnl.close()
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
 
     n.destroy()
 
@@ -724,7 +724,7 @@ describe( "rtpproxy server", function() {
     expect( chnl.history.filter( ( m ) => "livestats" === m.channel || "livestats" === m.action ) ).to.have.lengthOf( 0 )
 
     await chnl.close()
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
     ournode.destroy()
     p.destroy()
   } )
@@ -751,7 +751,7 @@ describe( "rtpproxy server", function() {
 
     await limited.close()
     await defaulted.close()
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
     ournode.destroy()
     p.destroy()
   } )
@@ -775,14 +775,14 @@ describe( "rtpproxy server", function() {
     const b = await prtp.openchannel( { "relay": true, "remote": { "address": "127.0.0.1", "port": bob.address().port, "codec": 100 } } )
     expect( a.connection ).to.be.an( "object" ) /* proxied, not local */
     await a.mix( b )
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
 
     const rtp = Buffer.alloc( 112 )
     rtp[ 0 ] = 0x80
     rtp[ 1 ] = 96
     rtp.writeUInt32BE( 0xa11ce, 8 )
     alice.send( rtp, a.local.port, "127.0.0.1" )
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 200 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 200 ) } ) )
 
     const s = await b.livestats()
     expect( s.streams ).to.deep.equal( [ { "source": a.uuid, "ssrc": b.local.ssrc, "sourcessrc": 0xa11ce, "pt": 100 } ] )
@@ -888,11 +888,11 @@ describe( "rtpproxy server", function() {
     const ournode = await prtp.node.connect( ourport, "127.0.0.1" )
 
     const chnl = await prtp.openchannel()
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
     await chnl.close()
     const chnl2 = await prtp.openchannel()
     await chnl2.close()
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
     ournode.destroy()
     p.destroy()
   } )

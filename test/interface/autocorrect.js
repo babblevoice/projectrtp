@@ -9,7 +9,7 @@ const dgram = require( "dgram" )
  * @param { number } sn 
  * @param { number } sendtime 
  * @param { number } dstport 
- * @param { object } server 
+ * @param { dgram.Socket } server 
  * @param { number } ssrc 
  * @param { number } pklength 
  */

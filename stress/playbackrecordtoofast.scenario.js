@@ -49,7 +49,7 @@ async function createclient() {
   } )
 
   client.bind()
-  await new Promise( ( r ) => { client.on( "listening", function() { r() } ) } )
+  await /** @type { Promise< void > } */ ( new Promise( ( r ) => { client.on( "listening", function() { r() } ) } ) )
 
   return client
 }

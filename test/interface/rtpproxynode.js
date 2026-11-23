@@ -183,10 +183,10 @@ describe( "rtpproxy node", function() {
 
     chnl.play( { "interupt":true, "files": [ { "wav": "test/interface/pcaps/180fa1ac-08e5-11ed-bd4d-02dba5b5aad6.wav" } ] } )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
 
     await chnl.close()
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
 
     n.destroy()
     await ourserver.destroy()

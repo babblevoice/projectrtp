@@ -355,7 +355,7 @@ async function runchain( opts ) {
   chanA.close()
   chanB.close()
   await Promise.all( [ closeA, closeB, closePoly ] )
-  await new Promise( ( r ) => sinkB.sock.close( r ) )
+  await /** @type { Promise< void > } */ ( new Promise( ( r ) => sinkB.sock.close( r ) ) )
 
   // Write sinkB to disk (= outWav). PCMA / PCMU only (asserted above)
   // so decoding is always possible.

@@ -5,6 +5,8 @@ const message = require( "../../lib/message.js" )
 const prtp = require( "../../index.js" ).projectrtp
 const { v4: uuidv4 } = require( "uuid" )
 
+/** @import { controlmessage } from "../../lib/message.js" */
+
 class mocknode {
 
   constructor() {
@@ -31,7 +33,7 @@ class mocknode {
    */
   async connect( port = 9002, address = "127.0.0.1" ) {
 
-    const connectpromise = new Promise( resolve => this._newconnectresolve = resolve )
+    const connectpromise = /** @type { Promise< void > } */ ( new Promise( resolve => this._newconnectresolve = resolve ) )
     const connection = net.createConnection( port, address, () => {
 
       this.connection = connection
@@ -45,7 +47,7 @@ class mocknode {
       this._newconnectresolve()
 
       const mp = message.newstate()
-      connection.on( "data", ( data ) => {
+      connection.on( "data", ( /** @type { Buffer } */ data ) => {
         message.parsemessage( mp, data, ( receivedmsg ) => {
           this.recevievedmessagecount++
           expect( receivedmsg ).to.have.property( "channel" ).that.is.a( "string" )
@@ -74,7 +76,7 @@ class mocknode {
     this.server = net.createServer( ( connection ) => {
       connection.setKeepAlive( true )
       const mp = message.newstate()
-      connection.on( "data", ( data ) => {
+      connection.on( "data", ( /** @type { Buffer } */ data ) => {
         message.parsemessage( mp, data, ( receivedmsg ) => {
           this.recevievedmessagecount++
           expect( receivedmsg ).to.have.property( "channel" ).that.is.a( "string" )
@@ -137,7 +139,7 @@ class mocknode {
    * Will send a messag to the latst connection. If you expect multiple
    * connections for a node then use the senddata function passed into the
    * on data event.
-   * @param { object } obj 
+   * @param { controlmessage } obj 
    * @return { void }
    */
   sendmessage( obj ) {

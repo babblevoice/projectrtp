@@ -132,10 +132,11 @@ jobs:
       #   LINT_IMAGE: node:26-alpine3.24
       #   LINT_COMMAND: npm ci --ignore-scripts && npm run lint
       #
-      # projectrtp's: ESLint, as `npm run check` runs it, failing on any
-      # error or warning, in the Node image the Dockerfile builds on. npm ci
-      # installs the dev dependencies ESLint needs and runs no package's
-      # scripts; the copy has no submodules, which ESLint does not read.
+      # projectrtp's: `npm run check`, which is tsc's type check (jsconfig.json)
+      # then ESLint, failing on any type error or any ESLint error or warning,
+      # in the Node image the Dockerfile builds on. npm ci installs the dev
+      # dependencies they need and runs no package's scripts; the copy has no
+      # submodules, which neither reads.
       # rustfmt and clippy are in suites.yml, since clippy needs libilbc built.
       LINT_IMAGE: node:26-alpine3.24
       LINT_COMMAND: npm ci --ignore-scripts --no-audit --no-fund && npm run check

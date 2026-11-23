@@ -47,7 +47,7 @@ module.exports = async ( mstimeout ) => {
     expect( clients[i].play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
   }
 
-  await new Promise( ( r ) => { setTimeout( () => r(), Math.max( mstimeout, 110 ) ) } )
+  await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), Math.max( mstimeout, 110 ) ) } ) )
   
   // Clean up
   for ( let i = 0; i < max_channels; i++ ) {
