@@ -110,6 +110,8 @@ If you change Rust source files, rebuild the image.
 
 ### Rust unit tests
 
+The crate builds with Rust 1.100.0, pinned in `rust/rust-toolchain.toml` (rustup installs and uses it in `rust/`), the Dockerfile and the CI suite, which fails if the three differ.
+
 The crate's own unit tests run via cargo:
 
 ```bash

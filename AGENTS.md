@@ -33,7 +33,10 @@ on the commit you push, people and agents alike:
 <!-- >>> settings: the suites, and how to run them -->
 projectrtp has two suites, and suites.yml runs both.
 
-`rust` is the crate's own checks and unit tests, from `rust/`. They link
+`rust` is the crate's own checks and unit tests, from `rust/`, with Rust
+1.100.0: `rust/rust-toolchain.toml` pins it, so rustup uses it there, and the
+Dockerfile and suites.yml pin the same version (the suite fails if the three
+differ; move them together). They link
 libspandsp and libilbc, so the host needs both, as CI installs them: on Debian
 or Ubuntu, `sudo apt-get install cmake build-essential libspandsp-dev`, then
 build libilbc from the submodule into /usr/local (suites.yml's "Install native
