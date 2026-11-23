@@ -19,6 +19,8 @@ const fs = require( "fs" )
 const projectrtp = require( "../../index.js" ).projectrtp
 const readpcap = require( "./pcap.js" ).readpcap
 
+/** @import { pcappacket } from "./pcap.js" */
+
 const tmpfile = ( name ) => `/tmp/projectrtp-pcap-${ name }-${ process.pid }.pcap`
 
 /**
@@ -56,8 +58,8 @@ const isrtp = ( d ) => 2 === d[ 0 ] >> 6 && !isrtcp( d )
 
 /**
  * The frames of a capture that carry RTP.
- * @param { Array< object > } frames
- * @returns { Array< object > }
+ * @param { Array< pcappacket > } frames
+ * @returns { Array< pcappacket > }
  */
 const rtpframes = ( frames ) => frames.filter( ( f ) => isrtp( f.ipv4.udp.data ) )
 
@@ -81,17 +83,25 @@ function sendpk( sn, dstport, server ) {
 }
 
 /**
+ * What capture() saw.
+ * @typedef { object } captureresult
+ * @property { boolean } armed - what channel.pcap() returned when the capture was asked for
+ * @property { boolean } beforeclose - whether the pcap event came before the channel was closed
+ * @property { Object< string, any > } event - the channel's pcap event
+ */
+
+/**
  * Drive a channel with 50 inbound packets and echo, capturing to file.
  * @param { string } file
  * @param { object } pcapoptions
  * @param { boolean } finishexplicitly
- * @returns { Promise< object > }
+ * @returns { Promise< captureresult > }
  */
 async function capture( file, pcapoptions = {}, finishexplicitly = true ) {
 
   const server = dgram.createSocket( "udp4" )
   server.on( "message", () => {} )
-  await new Promise( ( r ) => { server.bind( r ) } )
+  await /** @type { Promise< void > } */ ( new Promise( ( r ) => { server.bind( r ) } ) )
 
   const events = []
   const channel = await projectrtp.openchannel( {
@@ -295,8 +305,8 @@ describe( "pcap", function() {
     endpointa.on( "message", () => {} )
     endpointb.on( "message", () => {} )
 
-    await new Promise( ( r ) => { endpointa.bind( r ) } )
-    await new Promise( ( r ) => { endpointb.bind( r ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointa.bind( r ) } ) )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointb.bind( r ) } ) )
 
     const events = []
     const channela = await projectrtp.openchannel( {
@@ -431,7 +441,7 @@ describe( "pcap", function() {
     const file = tmpfile( "dupes" )
     const server = dgram.createSocket( "udp4" )
     server.on( "message", () => {} )
-    await new Promise( ( r ) => { server.bind( r ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { server.bind( r ) } ) )
 
     const events = []
     const channel = await projectrtp.openchannel( {
@@ -470,7 +480,7 @@ describe( "pcap", function() {
     const file = tmpfile( "rtcp" )
     const server = dgram.createSocket( "udp4" )
     server.on( "message", () => {} )
-    await new Promise( ( r ) => { server.bind( r ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { server.bind( r ) } ) )
 
     const channel = await projectrtp.openchannel( {
       "remote": { "address": "127.0.0.1", "port": server.address().port, "codec": 0 }
