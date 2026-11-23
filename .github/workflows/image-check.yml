@@ -1,0 +1,213 @@
+name: Image build check
+
+# Proves the image still builds, on the pull requests that could break it
+# (BACKEND-25).
+#
+# This file is a copy of a template in babblevoice/babble-configs'
+# workflow-templates. Change only what is between `# >>> settings` and
+# `# <<< settings`, and comments; the templates' README says how, and their
+# check-copy.sh checks a copy.
+#
+# release.yml builds only on a release tag, so without this a PR that breaks the
+# image is found at the next release, with every merge since then to search.
+# Turnstile's PRs used to publish a preview image instead, at 1,718 billable
+# minutes in 30 days, and in those 30 days no PR build failed because of the
+# PR: all five failures were GitHub, Docker Hub or a download host.
+#
+# Why the path filter.
+#   The image can only stop building when the Dockerfile changes, or
+#   .dockerignore (which decides what is copied in), or a file the build runs
+#   or reads to decide what to install: the package files an install reads, a
+#   script a RUN calls. A file that is only copied in cannot stop it, short of
+#   being deleted. A PR that touches none of these cannot change whether the
+#   image builds, so this workflow never starts for it and costs nothing.
+#
+# Why it needs no approval gate.
+#   Nothing here can publish or read a secret: no registry login, no `secrets.*`,
+#   a read-only token, and `outputs: type=cacheonly`. Turnstile's old fork
+#   publish needed an approval gate because it built fork code with the Docker
+#   Hub push token in scope; here there is no token to take. check-copy.sh
+#   fails a copy that adds one, even in a setting, and the templates' own
+#   test/pr-code-workflows-hold-no-secrets.test.js fails the template.
+#
+# Why no build cache.
+#   `pull_request_target` runs with GITHUB_REF on main, whatever the PR's base
+#   (GitHub has taken the workflow and the ref from the default branch since
+#   December 2025), so a cache written here would be in main's scope, which a
+#   tag's run restores too, and a fork could poison the image that ships.
+#   This runs a handful of times a month, so an uncached build is cheaper than
+#   proving which cache operations are safe. release.yml restores no cache
+#   either, since a fork's run that broke out of its build could still write
+#   one.
+#
+# Why two PR triggers: the same as pr-checks.yml, which explains it in full. In
+# a private repository a fork's PR never fires `pull_request`, and
+# `pull_request_target` is the one event that runs for it. The job's `if:` gives
+# each PR to exactly one of the two, by pr-checks.yml's rule.
+
+# No `branches:` filter, for the reason pr-checks.yml gives: on a pull request it
+# matches the BASE, so it silently skipped every PR that was not based on main. A
+# stacked PR can break the image exactly as well as a flat one, and the path
+# filter below already keeps this cheap.
+#
+# The two lists are one list written twice: keep them equal.
+on:
+  pull_request:
+    paths:
+      # >>> settings: what the image is built from
+      # projectrtp's: the package files `npm ci` reads; libilbc, a submodule
+      # the build compiles, whose commit is the path `libilbc` and whose
+      # source .gitmodules names; and the whole Rust crate, which the build
+      # compiles too, with the musl toolchain the Dockerfile pins. The suites
+      # build the crate with stable glibc Rust instead, so a change that
+      # breaks only the musl build (the pin is for one) shows here.
+      - Dockerfile
+      - .dockerignore
+      - package.json
+      - package-lock.json
+      - .gitmodules
+      - libilbc
+      - rust/**
+      # <<< settings
+      - .github/workflows/image-check.yml
+  pull_request_target:
+    paths:
+      # >>> settings: what the image is built from
+      # projectrtp's: the package files `npm ci` reads; libilbc, a submodule
+      # the build compiles, whose commit is the path `libilbc` and whose
+      # source .gitmodules names; and the whole Rust crate, which the build
+      # compiles too, with the musl toolchain the Dockerfile pins. The suites
+      # build the crate with stable glibc Rust instead, so a change that
+      # breaks only the musl build (the pin is for one) shows here.
+      - Dockerfile
+      - .dockerignore
+      - package.json
+      - package-lock.json
+      - .gitmodules
+      - libilbc
+      - rust/**
+      # <<< settings
+      - .github/workflows/image-check.yml
+
+# Keyed by event as well as PR number, for the reason pr-checks.yml gives: both
+# triggers fire for every matching PR, and with one shared group the skipped
+# sibling could cancel the real run.
+concurrency:
+  group: image-check-${{ github.event_name }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# `bash -eo pipefail`, as the templates' tests run the script below.
+defaults:
+  run:
+    shell: bash
+
+env:
+  # >>> settings: submodules, as in release.yml
+  # release.yml's SUBMODULES, written again: "false", or "recursive" when the
+  # Dockerfile COPYs a git submodule. projectrtp's: libilbc, and its own
+  # abseil-cpp.
+  SUBMODULES: "recursive"
+  # <<< settings
+
+jobs:
+  build:
+    name: Image builds (${{ matrix.platform }})
+    if: >-
+      (github.event_name == 'pull_request'
+        && (github.event.pull_request.head.repo.full_name == github.repository
+          || !github.event.repository.private))
+      || (github.event_name == 'pull_request_target'
+        && github.event.pull_request.head.repo.full_name != github.repository
+        && github.event.repository.private)
+    # Native runners for both platforms, as release.yml uses: an emulated arm64
+    # build is not proof that the native one works.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # >>> settings: the platforms, as in release.yml
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+          # <<< settings
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      # Only for "Wait for the merge commit": the PR's mergeability.
+      pull-requests: read
+    timeout-minutes: 15
+    steps:
+      # Under `pull_request_target` GitHub does not wait for the merge ref to
+      # exist before the run starts, as it does for `pull_request`. It makes
+      # the merge commit in the background, and asking for the PR's
+      # mergeability is what starts that: babble-rtp #134's checkout, 8 seconds
+      # after the PR was opened, found no ref three times in 36 seconds. So
+      # this asks, and waits up to two minutes, before any of the PR's code is
+      # on the runner. A PR that conflicts with its base has no merge commit at
+      # all, and is told so rather than failing in the checkout.
+      - name: Wait for the merge commit
+        if: github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.number }}
+        run: |
+          for attempt in $(seq 24); do
+            mergeable="$(gh api "repos/$REPO/pulls/$PR" --jq '.mergeable')" || mergeable=unknown
+            case "$mergeable" in
+              true)
+                echo "GitHub has made the merge commit."
+                exit 0
+                ;;
+              false)
+                echo "::error::This pull request conflicts with its base, so there is no merge commit to check. Merge the base into it, or rebase it, and push."
+                exit 1
+                ;;
+            esac
+            [ "$attempt" = 24 ] || sleep 5
+          done
+          echo "::error::GitHub had not made the merge commit after two minutes. Re-run this job."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # The PR as it would land on its base, which is what pr-checks.yml
+          # checks out too. `pull_request_target` would otherwise check out the
+          # base itself.
+          ref: refs/pull/${{ github.event.number }}/merge
+          persist-credentials: false
+          # As release.yml builds: SUBMODULES (above) says whether to fetch
+          # git submodules. This file is main's copy, so a pull request cannot
+          # turn it on. Where it is on, a fork's pull request names its own
+          # submodules, fetched with the same read-only token, which
+          # actions/checkout sends only to github.com and removes afterwards,
+          # onto the runner that builds the fork's code anyway.
+          submodules: ${{ env.SUBMODULES }}
+          # Deliberate opt-in, defensible for the reasons pr-checks.yml gives —
+          # no secrets, a read-only token, no cache — and here nothing is pushed.
+          # Read pr-checks.yml's note before adding a step: this flag will not warn
+          # whoever adds a registry login.
+          allow-unsafe-pr-checkout: true
+
+      # buildkitd-flags replaces the action's default, which lets a build ask
+      # for `security.insecure` (a privileged RUN, root on the runner) and
+      # `network.host`. Nothing here asks for either, but this builds a fork's
+      # code, so the builder refuses them rather than relying on that. Any
+      # flag replaces the default, and an empty one brings it back: this is
+      # BuildKit's own default.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          buildkitd-flags: --oci-worker-gc=true
+
+      - name: Build without pushing
+        uses: docker/build-push-action@v7
+        with:
+          # `.` is the checkout above. Left out, the action builds from the
+          # event's git ref, which under `pull_request_target` is main — so a fork
+          # PR's own Dockerfile would never be built at all.
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=cacheonly

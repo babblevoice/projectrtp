@@ -1,0 +1,176 @@
+name: Test run proof
+
+# The check that a pull request says its suites were run, on the commit it
+# asks to merge (BACKEND-25).
+#
+# This file is a copy of a template in babblevoice/babble-configs'
+# workflow-templates. Change only what is between `# >>> settings` and
+# `# <<< settings`, and comments; the templates' README says how, and their
+# check-copy.sh checks a copy.
+#
+# CI does not run the suites on a private repository's pull requests: the
+# author runs them first, people and agents alike, and the PR's test plan
+# carries one line saying so, written from the suites' own summaries:
+#
+#   - [x] Suites run on 1a2b3c4d: unit 7250 passed, 0 failed; browser 1845 passed, 0 failed
+#
+# This job fails when there is no such line, when it names a commit other than
+# the PR's head, or when a suite on it does not give both counts or failed any.
+# A line inside a fenced code block or an HTML comment is an example, not the
+# line. So a push needs a new run and a new line, an "Update branch" merge
+# included. It catches forgetting, not lying: it can read what the line says,
+# never what ran.
+#
+# The one exception is a change to the CI workflows alone, which runs its own
+# tests and actionlint instead and says so, check-copy.sh being the tests for a
+# repository whose workflows are copies of the templates:
+#
+#   - [x] Suites not run: workflow-only change; check-copy.sh and actionlint passed
+#
+# That line is accepted only from a PR that changes something under
+# .github/workflows/.
+#
+# Why `pull_request_target` alone, for every PR, same-repository ones too.
+#   It runs this file as it is on main or on the branch the PR targets, never
+#   the PR's own copy, so a PR cannot weaken the check that is run on it, which
+#   is what secret-scanning.yml does for the same reason. It is safe there
+#   because nothing from the PR is checked out or run: the body arrives in the
+#   event, and the changed files are read from the API on a read-only token.
+#
+# Why its own workflow, not a job in pr-checks.yml.
+#   The line is usually fixed by editing the PR's description, so this has to
+#   run on `edited` too. In pr-checks.yml an edit would start a run that cancels
+#   the lint in flight, or skips it and leaves "skipped" as its latest result.
+#
+# The templates' test/pr-proof.test.js runs the script below against PR
+# bodies.
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+# Only the newest description and head matter.
+concurrency:
+  group: pr-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# `bash -eo pipefail`, as the templates' tests run the script below.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  proof:
+    name: Suites run on this commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # Every value comes in through env, never `${{ }}` in the script: the body
+      # is text anyone opening a PR can write, and interpolated it would be a
+      # shell injection.
+      - name: Read the line that proves the suites ran
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          shopt -s nocasematch
+          # shellcheck disable=SC2016  # the backticks are the line's own, matched literally
+          ran='^[[:space:]]*[-*][[:space:]]+\[[xX]\][[:space:]]+Suites run on[[:space:]]+`?([0-9a-fA-F]{7,40})`?[[:space:]]*:(.*)$'
+          skipped='^[[:space:]]*[-*][[:space:]]+\[[xX]\][[:space:]]+Suites not run:[[:space:]]*workflow-only change'
+          # A checklist item that starts like either and is neither: unticked,
+          # or the commit left out. Prose that mentions the line is not one.
+          almost='^[[:space:]]*[-*][[:space:]]+\[[ xX]\][[:space:]]+Suites (not )?run'
+          example='- [x] Suites run on <commit>: unit 7250 passed, 0 failed; browser 1845 passed, 0 failed'
+          short="${HEAD_SHA:0:8}"
+          # Text from the body is printed back with its control characters
+          # blanked, so a line of it cannot start a workflow command of its own.
+          printable() { printf '%s' "${1//[[:cntrl:]]/ }"; }
+          ran_lines=0
+          workflow_only=0
+          problems=0
+          fence=''
+          comment=false
+          while IFS= read -r line; do
+            # An example is not the line, as a PR about this check shows it:
+            # inside a fenced code block, which only the same character at
+            # least as many times closes, or inside an HTML comment.
+            if [ -n "$fence" ]; then
+              if [[ $line =~ ^[[:space:]]*(\`{3,}|~{3,})[[:space:]]*$ && ${BASH_REMATCH[1]} == "$fence"* ]]; then
+                fence=''
+              fi
+              continue
+            fi
+            if [[ $line =~ ^[[:space:]]*(\`{3,}|~{3,}) ]]; then
+              fence="${BASH_REMATCH[1]}"
+              continue
+            fi
+            if [ "$comment" = true ]; then
+              if [[ $line == *'-->'* ]]; then comment=false; fi
+              continue
+            fi
+            if [[ $line == *'<!--'* ]]; then
+              if [[ ${line#*<!--} != *'-->'* ]]; then comment=true; fi
+              continue
+            fi
+
+            if [[ $line =~ $ran ]]; then
+              ran_lines=$((ran_lines + 1))
+              named="${BASH_REMATCH[1],,}"
+              counts="${BASH_REMATCH[2]}"
+              if [[ ${HEAD_SHA,,} != "$named"* ]]; then
+                echo "::error::The suites were run on $named, but this PR's head is $short. Run them again on $short and update the line."
+                problems=$((problems + 1))
+              fi
+              # Each suite, between semicolons, gives both counts, and no
+              # suite failed any.
+              suites=0
+              uncounted=false
+              failed=false
+              IFS=';' read -ra parts <<< "$counts"
+              for part in "${parts[@]}"; do
+                if ! [[ $part =~ [[:alnum:]] ]]; then continue; fi
+                suites=$((suites + 1))
+                if ! [[ $part =~ [0-9]+\ passed ]] || ! [[ $part =~ ([0-9]+)\ failed ]]; then
+                  uncounted=true
+                elif (( 10#${BASH_REMATCH[1]} != 0 )); then
+                  failed=true
+                fi
+              done
+              if [ "$suites" -eq 0 ] || [ "$uncounted" = true ]; then
+                echo "::error::The line does not give each suite's passed and failed counts: $(printable "$counts"). Give them from each suite's summary, as: $example"
+                problems=$((problems + 1))
+              elif [ "$failed" = true ]; then
+                echo "::error::The line says a suite failed: $(printable "$counts"). The suites must pass before a PR is opened."
+                problems=$((problems + 1))
+              fi
+            elif [[ $line =~ $skipped ]]; then
+              workflow_only=$((workflow_only + 1))
+              if ! files="$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[].filename')"; then
+                echo "::error::Couldn't read this PR's files to check that it is workflow-only. Re-run this job."
+                problems=$((problems + 1))
+              elif ! grep -q '^\.github/workflows/' <<< "$files"; then
+                echo "::error::The line says this is a workflow-only change, but nothing under .github/workflows/ changes. Run the suites and say so instead: $example"
+                problems=$((problems + 1))
+              fi
+            elif [[ $line =~ $almost ]]; then
+              echo "::error::This item looks like the proof but does not read as it: \"$(printable "$line")\". Write it ticked, as: $example"
+              problems=$((problems + 1))
+            fi
+          done <<< "$BODY"
+          if [ "$ran_lines" -eq 0 ] && [ "$workflow_only" -eq 0 ] && [ "$problems" -eq 0 ]; then
+            echo "::error::The test plan has no line saying the suites were run. Run them on $short and add: $example"
+            exit 1
+          fi
+          if [ "$problems" -gt 0 ]; then
+            exit 1
+          fi
+          if [ "$ran_lines" -gt 0 ]; then
+            echo "The suites were run on $short, and the PR says so."
+          else
+            echo "This PR says it changes only the workflows, and it changes a workflow."
+          fi

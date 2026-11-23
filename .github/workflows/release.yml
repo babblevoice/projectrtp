@@ -1,0 +1,622 @@
+name: Release
+
+# The one way an image is published: a release tag (BACKEND-25).
+#
+# Nothing else builds an image. A merge to main publishes nothing, and neither
+# does a pull request. Before this, repositories published `latest`, `main`,
+# `sha-<commit>` and `pr-<number>` on merges and pull requests, and production
+# ended up pinned to tags nobody could read a version into. Now every published
+# image is a version someone chose to cut.
+#
+# This file is a copy of a template in babblevoice/babble-configs'
+# workflow-templates. Change only what is between `# >>> settings` and
+# `# <<< settings`, and comments; the templates' README says how, and their
+# check-copy.sh checks a copy.
+#
+# Cutting one:
+#
+#   git tag v1.4.0-rc.1 && git push origin v1.4.0-rc.1   a pre-release, to try out
+#   git tag v1.4.0 && git push origin v1.4.0             a full release
+#
+#   Anyone with write access may cut a pre-release. A full release is created
+#   by the Operations Director or someone they have named, and creating it is
+#   the approval for it to go live; that is the written process, not anything
+#   this file can enforce. An AI agent pushes a pre-release tag only when asked
+#   in that conversation, and never a full release.
+#
+#   Making the release by hand on GitHub's Releases page works too, whether it
+#   creates the tag or the tag is pushed beside it: the tag builds it the same
+#   way, and the `release` job keeps the notes written there.
+#
+# What a tag goes through, in order, and nothing is pushed until the last:
+#
+#   release-check  refuses a tag that is not vX.Y.Z or vX.Y.Z-rc.N; a commit on
+#                  neither main nor its hotfix/X.Y branch; a release from main
+#                  while a hotfix branch holds a change main lacks; and a
+#                  version already on Docker Hub.
+#   suites         the repository's suites (suites.yml) on the tagged commit.
+#   build          per platform, on a native runner: build the image, start it
+#                  and wait for it to answer, then push it by digest.
+#   merge          one manifest list from both digests, tagged with the exact
+#                  version and nothing else: no `latest`, `stable`, `1.4` or `1`.
+#                  Which version runs where is decided where it is deployed.
+#   release        the GitHub release and its notes.
+#
+# A version that may not survive being rolled back (hot pinned back to the
+# version before it, after a data migration or a newly required setting) says
+# so at the top of its release notes, with the way back: whoever makes the
+# release writes it, on a release made by hand or in the notes this workflow
+# made.
+#
+# Hotfixes. A fix for a security problem, an outage or data at risk can go out
+# without everything else on main: it merges to main first, is copied onto
+# hotfix/X.Y (made from the vX.Y.Z tag the first time) with `git cherry-pick
+# -x`, and is tagged there with the next patch number. The guard in
+# release-check is what lets the copy go first in a real emergency without
+# anything being missed: no release from main goes out while a hotfix branch
+# holds a change main lacks.
+#
+# A failed version stays used. Its number is not pushed again, so a release
+# that fails leaves a gap (1.4.0, then 1.4.2), and that is deliberate: see
+# "Refuse a version already published".
+#
+# The templates' test/release-gate.test.js runs this file's scripts against
+# fakes.
+
+on:
+  push:
+    # Tags only. The pattern lets in any v tag with three dotted parts, so
+    # release-check can say why one of the wrong shape (v1.4.0-beta.1) is
+    # refused; a tag with fewer parts (v1.4) starts nothing at all.
+    tags: ["v*.*.*"]
+
+# One run per tag at a time. The Docker Hub check is half an hour before the
+# publish, so a tag deleted and pushed again onto another commit while the
+# first run was still in the suites would pass the check twice, and the later
+# run would move the published version. Queued instead, the second run finds
+# the version already published and is refused.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+# Every `run:` step under `bash -eo pipefail`, which is what the templates'
+# tests run them under. Left unset, the runner uses `bash -e`, and a failure
+# early in a pipeline would pass unnoticed.
+defaults:
+  run:
+    shell: bash
+
+env:
+  # >>> settings: the image, and how to tell it started
+  # Docker Hub namespace/name. Every babblevoice image is under tinpotnick.
+  IMAGE: tinpotnick/projectrtp
+  # The start-up check (see `build`): the `docker run` arguments, a command
+  # that succeeds once the container answers, and how long it gets. With no
+  # command the container only has to still be running after STARTUP_SECONDS.
+  # The arguments are split on spaces, tabs and newlines and nothing else: no
+  # quotes, no `$VAR`, and a `*`, `?` or `[` in one can match a file, so keep
+  # those out. Turn on what production turns on where it changes what the
+  # image loads: a module loaded only when a setting is on is checked by
+  # nothing else. Turnstile's: `-p 127.0.0.1:3000:3000`, a curl of /healthz,
+  # 120 seconds. babble-rtp's: its metrics port and its profiler's two
+  # settings, with a curl of /metrics.
+  #
+  # projectrtp's: the image runs examples/simplenode.js, an RTP node that
+  # connects out to its control server and listens on nothing, so there is
+  # nothing to ask. With no control server it stays up, retrying
+  # 127.0.0.1:9002 every two seconds, and staying up for a minute means the
+  # Rust addon loaded and made its tones. PA is the address it gives the
+  # control server; without it the node asks checkip.amazonaws.com, and with
+  # no network it crashes on the failed lookup, so the check sets it rather
+  # than depend on that service.
+  STARTUP_DOCKER_ARGS: "-e PA=127.0.0.1"
+  STARTUP_PROBE: ""
+  STARTUP_SECONDS: "60"
+  # <<< settings
+  # >>> settings: submodules, for the image build
+  # Whether the image build's checkout fetches git submodules: "false", or
+  # "recursive" when the Dockerfile COPYs one (projectrtp's libilbc). Only a
+  # submodule this repository's token can read can be fetched: a public
+  # repository over https. A private one (babbledb) or an ssh URL fails the
+  # checkout, so a repository with one of those that the image does not need
+  # keeps "false". image-check.yml has the same setting, and they must match.
+  #
+  # projectrtp's: the Dockerfile COPYs libilbc, a submodule (public, over
+  # https) with abseil-cpp as a submodule of its own. Without them cmake finds
+  # no source, and the build fails minutes later at link, on libilbc.so.3.
+  SUBMODULES: "recursive"
+  # <<< settings
+
+jobs:
+  # The refusals, before anything expensive runs.
+  #
+  # Its own job, not steps in the gate, because it is the only place outside
+  # `build` and `merge` that holds the Docker Hub token: nothing here installs
+  # or runs the repository's code. It reads the registry over HTTP and writes no
+  # login to disk.
+  release-check:
+    name: Release gate (tag, commit, version)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Full history and every branch: the steps below need the default
+          # branch (origin/main, or origin/master where that is the default)
+          # and origin/hotfix/*.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The two shapes a release can take, read once here for the whole file.
+      # A pre-release is an rc and nothing else, so "rc" can never be mistaken
+      # for "beta" by whoever deploys it, and a leading zero is refused because
+      # 1.04.0 and 1.4.0 would be two names for one version.
+      - name: Read the tag
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          number='(0|[1-9][0-9]*)'
+          if ! [[ $version =~ ^$number\.$number\.$number(-rc\.[1-9][0-9]*)?$ ]]; then
+            echo "::error::$TAG is not a release tag, so nothing is built. A full release is vX.Y.Z (v1.4.0), a pre-release vX.Y.Z-rc.N (v1.4.0-rc.1), with no leading zeros."
+            exit 1
+          fi
+          case "$version" in
+            *-rc.*) prerelease=true ;;
+            *) prerelease=false ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "$TAG is version $version (pre-release: $prerelease)."
+
+      # A release publishes a commit a pull request was reviewed into: one on
+      # main, or for a hotfix one on the branch for its own minor version, so
+      # v1.1.2 may come from hotfix/1.1 and never from hotfix/1.0. HEAD rather
+      # than GITHUB_SHA: for an annotated tag GITHUB_SHA can be the tag object.
+      #
+      # "main" in this file means the repository's default branch, read from
+      # the push event rather than written here, so a repository still on
+      # master takes these files unchanged. With no name to read, nothing is
+      # built: without it this check would pass every commit.
+      - name: Refuse an unreviewed commit
+        env:
+          TAG: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ -z "$DEFAULT_BRANCH" ]; then
+            echo "::error::The push event names no default branch, so $TAG cannot be checked against it and nothing is built."
+            exit 1
+          fi
+          version="${TAG#v}"
+          line="${version%%-*}"
+          line="${line%.*}"
+          if git merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH"; then
+            echo "$TAG is on $DEFAULT_BRANCH."
+            exit 0
+          fi
+          if git rev-parse --verify --quiet "origin/hotfix/$line^{commit}" >/dev/null \
+              && git merge-base --is-ancestor HEAD "origin/hotfix/$line"; then
+            echo "$TAG is on hotfix/$line."
+            exit 0
+          fi
+          echo "::error::$TAG points at a commit on neither $DEFAULT_BRANCH nor hotfix/$line. A release must publish a commit a pull request was reviewed into: from $DEFAULT_BRANCH, or for a $line hotfix from hotfix/$line."
+          exit 1
+
+      # The hotfix guard. A fix goes on main first and is copied to the hotfix
+      # branch, but in an emergency the copy can go first, and then the next
+      # release from main must not ship without it: hot would lose the fix it
+      # already had. So a release from main is refused while any hotfix branch
+      # holds a commit main has no copy of.
+      #
+      # A copy is found two ways: by an identical patch (git's --cherry-pick),
+      # or by the line `git cherry-pick -x` writes, "(cherry picked from commit
+      # <sha>)", naming a commit on main. The line is what finds a copy whose
+      # patch had to change on the way, and it is read in either direction, so
+      # a fix made on the hotfix branch first and copied to main afterwards
+      # counts too. A squash merge keeps it while the squash message is the
+      # commits' own messages, which is GitHub's default.
+      - name: Refuse a release that would leave a hotfix behind
+        env:
+          TAG: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ -z "$DEFAULT_BRANCH" ]; then
+            echo "::error::The push event names no default branch, so $TAG cannot be checked against the hotfix branches and nothing is built."
+            exit 1
+          fi
+          main="origin/$DEFAULT_BRANCH"
+          if ! git merge-base --is-ancestor HEAD "$main"; then
+            echo "$TAG is a hotfix release, so it cannot leave a hotfix behind."
+            exit 0
+          fi
+          named() {
+            sed -n 's/^[[:space:]]*(cherry picked from commit \([0-9a-f]\{7,40\}\))[[:space:]]*$/\1/p'
+          }
+          missing=0
+          for branch in $(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/hotfix/*'); do
+            copied_to_main="$(git log --format=%B "$main" --not "$branch" | named)"
+            for commit in $(git rev-list --no-merges --right-only --cherry-pick "$main...$branch"); do
+              found=false
+              for source in $(git log -1 --format=%B "$commit" | named); do
+                if git merge-base --is-ancestor "$source" "$main" 2>/dev/null; then
+                  found=true
+                fi
+              done
+              for copy in $copied_to_main; do
+                case "$commit" in
+                  "$copy"*) found=true ;;
+                esac
+              done
+              if [ "$found" = false ]; then
+                echo "::error::${branch#origin/} has $(git log -1 --format='%h "%s"' "$commit"), and $DEFAULT_BRANCH has no copy of it."
+                missing=$((missing + 1))
+              fi
+            done
+          done
+          if [ "$missing" -gt 0 ]; then
+            echo "::error::$TAG is refused: a release from $DEFAULT_BRANCH would take away $missing change(s) a hotfix already shipped. Merge each one to $DEFAULT_BRANCH (git cherry-pick -x keeps the line that matches them up), then push the tag again."
+            exit 1
+          fi
+          echo "No hotfix branch holds a change $DEFAULT_BRANCH lacks."
+
+      # A version already on Docker Hub is a re-push: the tag was moved, and a
+      # moved tag is a deletion and a rewrite of history something may already
+      # have pulled. So it fails here, before the gate, and deleting the
+      # published version is left to a person.
+      #
+      # The registry is asked, not the Releases page. Turnstile's check used to
+      # be "a GitHub release exists for this tag", and that turned away every
+      # release made by hand there, since the page's release exists before its
+      # tag's run starts.
+      #
+      # A HEAD of the manifest, which Docker Hub does not count against the
+      # pull limit. 404 is the only answer that lets the tag through: a failed
+      # sign-in, a 401, a 5xx or no answer at all refuses it, since a gate that
+      # cannot look must not guess. A 401 or 403 is the token, not Docker Hub,
+      # so a re-run helps only once the token can read the image.
+      - name: Refuse a version already published
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          auth="$(curl -fsS -u "$DOCKERHUB_USERNAME:$DOCKERHUB_TOKEN" \
+            "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$IMAGE:pull" || true)"
+          token="$(printf '%s' "$auth" | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')"
+          if [ -z "$token" ]; then
+            echo "::error::Couldn't sign in to Docker Hub to check whether $version is already published, so $TAG is refused. Check the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets, then re-run this job."
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          status="$(curl -sS -o /dev/null -w '%{http_code}' --head \
+            -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+            "https://registry-1.docker.io/v2/$IMAGE/manifests/$version" || true)"
+          case "$status" in
+            404)
+              echo "$version is not on Docker Hub yet, so $TAG is a new version."
+              ;;
+            200)
+              echo "::error::$version is already on Docker Hub, so $TAG has been pushed before — moving a tag rewrites history something may have deployed. Deleting the published version should be a person's decision."
+              exit 1
+              ;;
+            *)
+              echo "::error::Couldn't check whether $version is already on Docker Hub (HTTP ${status:-none}), so $TAG is refused. A 401 or 403 means the token cannot read the image; anything else, re-run this job once Docker Hub answers."
+              exit 1
+              ;;
+          esac
+
+  # The suites on the exact commit being released. A called workflow runs as a
+  # job of this one, so `build` waits on it like any other job; suites.yml says
+  # what it runs and why it is not a copy here.
+  suites:
+    name: Release gate (suites)
+    needs: release-check
+    permissions:
+      contents: read
+    uses: ./.github/workflows/suites.yml
+
+  build:
+    name: Build and start (${{ matrix.platform }})
+    # Default `success()`: a gate that failed, or hit its timeout and ended
+    # cancelled, stops the build.
+    needs: [release-check, suites]
+    # Native runners rather than QEMU emulation. Emulated arm64 builds fail on
+    # things native ones don't (Turnstile's puppeteer postinstall SIGILLed under
+    # qemu), and an emulated build is no proof the native image works.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # >>> settings: the platforms, each on a native runner
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+          # <<< settings
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Nothing after checkout uses git, so don't leave the token in .git/config.
+          persist-credentials: false
+          # The build context is the checkout, so a Dockerfile that COPYs a
+          # submodule needs it there. SUBMODULES (above) says whether to.
+          submodules: ${{ env.SUBMODULES }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # Labels only (source, revision, version). The one tag the image gets
+      # is written by `merge`.
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: type=raw,value=${{ needs.release-check.outputs.version }}
+
+      # Built into the runner's own Docker first, so the image can be started
+      # before anything is pushed. The push below reuses this build's layers,
+      # from the same builder.
+      #
+      # No cache from earlier runs, and none saved for later ones. A tag's run
+      # can restore its own cache and main's, and nothing on main saves one:
+      # the runs in main's cache scope are the pull request checks, which a
+      # fork's pull request starts (image-check.yml says how). One that broke
+      # out of its build could leave a layer there for the next release to put
+      # in the image. A release is rare, and a build from nothing costs it a
+      # few minutes.
+      - name: Build for the start-up check
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          load: true
+          tags: startup-check:candidate
+
+      # The suites run the code; this runs the image, which is what goes out.
+      # A Dockerfile that copies too little, a native module built for the wrong
+      # libc, a start script that exits: each passes every suite and fails here.
+      # A repository with no suites still fails on an image that won't start.
+      # Run before the Docker Hub login, so the image is started on a runner
+      # holding no registry credentials.
+      - name: Start-up check
+        env:
+          CANDIDATE: startup-check:candidate
+        run: |
+          # Removed however the check ends, so nothing from the image is still
+          # running when the runner logs in to push it.
+          trap 'docker rm -f startup-check >/dev/null 2>&1 || true' EXIT
+          still_running() {
+            local state
+            state="$(docker inspect -f '{{.State.Status}}' startup-check)"
+            if [ "$state" != running ]; then
+              docker logs startup-check
+              echo "::error::The image stopped during its start-up check ($state, exit code $(docker inspect -f '{{.State.ExitCode}}' startup-check)). Its log is above."
+              exit 1
+            fi
+          }
+          # shellcheck disable=SC2086  # the run arguments are a setting, split on purpose
+          docker run -d --pull never --name startup-check $STARTUP_DOCKER_ARGS "$CANDIDATE" >/dev/null
+          # A try every two seconds, and a deadline as well, since a probe that
+          # connects to a server too busy to answer takes its own time out.
+          deadline=$((SECONDS + STARTUP_SECONDS))
+          tries=$(( (STARTUP_SECONDS + 1) / 2 ))
+          for _ in $(seq "$tries"); do
+            still_running
+            if [ -n "$STARTUP_PROBE" ] && sh -c "$STARTUP_PROBE" >/dev/null 2>&1; then
+              docker logs startup-check
+              echo "The image started and answered: $STARTUP_PROBE"
+              exit 0
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              break
+            fi
+            sleep 2
+          done
+          if [ -z "$STARTUP_PROBE" ]; then
+            still_running
+            docker logs startup-check
+            echo "The image started and is still running after $STARTUP_SECONDS seconds."
+            exit 0
+          fi
+          docker logs startup-check
+          echo "::error::The image did not answer within $STARTUP_SECONDS seconds: $STARTUP_PROBE. Its log is above."
+          exit 1
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # By digest, with no tag, so `merge` can assemble one manifest list
+          # from both. A digest nobody has tagged is not a published version.
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
+        with:
+          # One name per platform, however many the settings list.
+          name: digests-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Publish the version
+    needs: [release-check, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # One tag, the exact version. A rolling tag (`latest`, `stable`, `1.4`)
+      # would move under whatever pins it, which is the thing BACKEND-25 set out
+      # to stop: what runs where is a pin someone wrote, never a tag that moved.
+      - name: Publish the exact version
+        working-directory: /tmp/digests
+        env:
+          VERSION: ${{ needs.release-check.outputs.version }}
+        run: |
+          sources=()
+          for digest in *; do
+            sources+=("$IMAGE@sha256:$digest")
+          done
+          docker buildx imagetools create -t "$IMAGE:$VERSION" "${sources[@]}"
+
+      - name: Inspect the image
+        env:
+          VERSION: ${{ needs.release-check.outputs.version }}
+        run: docker buildx imagetools inspect "$IMAGE:$VERSION"
+
+  release:
+    # The GitHub release: the notes page and the pre-release marker, written
+    # once the image it describes is published. `--generate-notes` builds the
+    # body from the titles of the pull requests merged since the release the
+    # notes start at.
+    #
+    # Unless the release was made by hand on the Releases page first, which
+    # `release-check` lets through: then its notes are whoever wrote them, and
+    # this job only sets its pre-release mark.
+    #
+    # `contents: write` is this job's alone, and this workflow runs only on a
+    # pushed tag, never on a pull request, so no PR's code ever runs with it.
+    name: GitHub release
+    needs: [release-check, merge]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Full history, so the step below can pick the tag the notes start
+          # from out of the tag list.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.release-check.outputs.prerelease }}
+          # Who pushed the tag, and not who re-ran the run: a re-run keeps it.
+          TAGGED_BY: ${{ github.actor }}
+        run: |
+          pre=false
+          if [ "$PRERELEASE" = "true" ]; then
+            pre=true
+          fi
+
+          # Made by hand: the notes are kept as written, and the pre-release
+          # mark is set by the version's shape as it is for one made here, so
+          # the page cannot call 1.4.0-rc.1 the latest release. A draft stays
+          # a draft; publishing it is for whoever is writing its notes.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --prerelease="$pre"
+            if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = "true" ]; then
+              echo "::notice::$TAG already had a release, still a draft. Its notes are kept; publish it on the Releases page when they are ready."
+            else
+              echo "::notice::$TAG already had a release. Its notes are kept as written."
+            fi
+            exit 0
+          fi
+
+          full='^(v[0-9]+\.[0-9]+\.[0-9]+|[0-9]{4}\.[0-9]{2}\.[0-9]{2})$'
+          rc='^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$'
+
+          # A pre-release is never the latest release. A full release is, only
+          # when it is the highest version there is: a hotfix to an older line
+          # (1.1.2 after 1.2.0) is not, and GitHub would otherwise mark it so
+          # by date. Every full release tag is counted, on any branch.
+          if [ "$pre" = "true" ]; then
+            args="--prerelease"
+          else
+            highest="$(git -c versionsort.suffix=-rc tag --list --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n 1p || true)"
+            if [ "$highest" = "$TAG" ]; then
+              args="--latest=true"
+            else
+              args="--latest=false"
+            fi
+          fi
+
+          # Where the notes start, pinned here because GitHub does not document
+          # what --generate-notes picks by itself: the release before this one
+          # by version, among the tags this commit contains. A pre-release
+          # starts at the tag before it, of either kind, so rc.2 lists what
+          # changed since rc.1. A full release starts at the previous FULL
+          # release (a date tag like Turnstile's 2026.10.06 counts as one), so
+          # 1.2.0 lists everything since 1.1.1, its pre-releases included, and
+          # never just the tail since its last rc. --merged HEAD so a tag on
+          # some other branch can never answer for it: a hotfix's notes start on
+          # its own branch, and main's never start at a hotfix. Only a release's
+          # own shape counts, so a tag someone pushed to mark a commit never
+          # becomes the start. By version, with an rc before its release, not by
+          # date: a tag's date is when it was made, which for an old commit
+          # tagged late says nothing about where it falls.
+          older="$(git -c versionsort.suffix=-rc tag --list --merged HEAD --sort=-v:refname \
+            | awk -v tag="$TAG" 'seen { print } $0 == tag { seen = 1 }')"
+          if [ "$pre" = "true" ]; then
+            prev="$(grep -E "$full|$rc" <<< "$older" | sed -n 1p || true)"
+          else
+            prev="$(grep -E "$full" <<< "$older" | sed -n 1p || true)"
+          fi
+          if [ -n "$prev" ]; then
+            args="$args --notes-start-tag $prev"
+          fi
+
+          # A release this job makes is GitHub's bot's, so the notes open with
+          # who pushed the tag, which for a full release is who approved it.
+          # The login is in backticks so the line does not notify them.
+          # shellcheck disable=SC2086
+          gh release create "$TAG" --title "$TAG" --generate-notes --notes "Tagged by \`$TAGGED_BY\`." $args

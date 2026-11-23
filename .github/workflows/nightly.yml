@@ -1,0 +1,129 @@
+name: Nightly tests
+
+# The suites' verdict on main, once a night (BACKEND-25). Pull requests run no
+# suites in CI in a private repository and a merge runs nothing, so this is the
+# net for whatever the runs before each PR could not see: an interaction
+# between merges that landed close together, a test that only fails far from a
+# UK afternoon, a run someone skipped. It is also the on-demand full run
+# (`workflow_dispatch`, after a batch of merges, say).
+#
+# This file is a copy of a template in babblevoice/babble-configs'
+# workflow-templates. Change only what is between `# >>> settings` and
+# `# <<< settings`, and comments; the templates' README says how, and their
+# check-copy.sh checks a copy.
+#
+# The suites run only when main has moved. A scheduled run first asks for the
+# last run of this workflow on main that finished. If that was on the commit
+# main is on now, the suites have already given their verdict there, so they
+# are not run again, red or green: a commit is tested once, not every night.
+# The night repeats that verdict instead: green after a pass, red after
+# anything else. A run asked for by hand is never skipped, so that is how to
+# retry a flake on a commit main has not moved from.
+#
+# Why its own workflow, and why the pill.
+#   A badge on the README is the alarm: GitHub's failure email for a scheduled
+#   run reaches only whoever last edited the workflow file, one person. A
+#   workflow badge shows that workflow's latest run on the default branch, so
+#   on its own workflow the pill is exactly the nightly's verdict, and it stays
+#   red until a later run goes green. A skipped night keeps the pill as the
+#   commit's verdict left it: green if it passed, red if it did not, so a
+#   failure is never painted over by a night that tested nothing.
+#
+#   In a private repository the badge shows to anyone with access viewing the
+#   README on GitHub while signed in, and nowhere else. That is fine: the
+#   audience is the team.
+#
+# Triaging a red pill.
+#   This is the only regular run far from a UK afternoon, so expect it to be
+#   the first place date- and time-of-day-sensitive tests turn red. Rule that
+#   out before bisecting yesterday's merges.
+#
+# No fork guards: this workflow never touches a pull request. It runs this
+# repository's own code: main's at night, or the branch a run was asked for on.
+
+on:
+  schedule:
+    # >>> settings: when it runs, in UTC
+    # After the day's merges have settled, before UK working hours, so the
+    # morning starts with the pill already showing last night's verdict.
+    - cron: "20 3 * * *"
+    # <<< settings
+  workflow_dispatch:
+
+# A run asked for by hand should not stack up behind a scheduled one, and two
+# collapse to the newest, but a running nightly is never cancelled part-way,
+# which would read as a failure.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+# `bash -eo pipefail`, as the templates' tests run the script below.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  moved:
+    name: Has the default branch moved?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      # Any doubt runs the suites: a failed lookup costs one night's minutes,
+      # a wrong skip costs a night with no verdict. The last run that finished,
+      # not the last that passed: a run asked for by hand that failed on the
+      # same commit since must not be skipped over and turned green. A night
+      # that repeats a red verdict fails this job, which is what keeps the pill
+      # red; the suites are skipped either way.
+      #
+      # "main" here means the repository's default branch. Only a scheduled run
+      # reaches the lookup, and GitHub runs a schedule on the default branch, so
+      # github.ref_name is its name: main, or master in a repository still on it.
+      - name: Compare with the last nightly
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT" != schedule ]; then
+            echo "Asked for by hand, so the suites run."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          workflow="${GITHUB_WORKFLOW_REF%@*}"
+          workflow="${workflow##*/}"
+          if ! last="$(gh api "repos/$REPO/actions/workflows/$workflow/runs?branch=$BRANCH&status=completed&per_page=1" \
+              --jq '.workflow_runs[0] // {} | "\(.conclusion // "") \(.head_sha // "")"')"; then
+            echo "::warning::Couldn't find the last nightly, so the suites run."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          read -r conclusion ran_on <<< "$last" || true
+          if [ -z "$conclusion" ]; then
+            echo "No nightly has finished on $BRANCH yet, so the suites run."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "$ran_on" != "$SHA" ]; then
+            echo "$BRANCH has moved to ${SHA:0:8} since the last nightly, on ${ran_on:0:8}, so the suites run."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "$conclusion" = success ]; then
+            echo "$BRANCH is still on ${SHA:0:8}, where the last nightly passed, so the suites are not run again."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::$BRANCH is still on ${SHA:0:8}, where the last nightly ended $conclusion. The suites are not run again until $BRANCH moves; run this workflow by hand to retry them."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+  suites:
+    name: Suites
+    needs: moved
+    if: needs.moved.outputs.run == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/suites.yml
