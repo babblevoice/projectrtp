@@ -10,11 +10,14 @@ WORKDIR /src
 # the toolchain.
 RUN apk add --no-cache musl-dev pkgconfig cmake build-base linux-headers spandsp3-dev
 COPY libilbc/ /src/libilbc/
+# The braces keep `|| true` to ldconfig alone. Without them it covered the
+# whole chain, so a failed cmake or make passed, and the build only stopped
+# minutes later, when cargo could not link libilbc.
 RUN mkdir -p /src/libilbc/_build && \
     cd /src/libilbc/_build && \
     cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
     make -j"$(nproc)" && make install && \
-    ldconfig /usr/local/lib 2>/dev/null || true
+    { ldconfig /usr/local/lib 2>/dev/null || true; }
 COPY rust/ /src/rust/
 WORKDIR /src/rust
 # Alpine's rust defaults target musl, which forces `-C target-feature=+crt-static`.
