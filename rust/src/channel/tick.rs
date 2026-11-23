@@ -24,7 +24,7 @@
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 
-use super::actor::{activate_pending_recorder, Event, Subsystems, PREBUFFER_CAPACITY_SAMPLES};
+use super::actor::{activate_pending_recorder, hold_for_pending_recorder, Event, Subsystems};
 use super::rtp::{self, RtpPacket};
 use super::state::ChannelState;
 
@@ -121,7 +121,7 @@ pub async fn run(state: &mut ChannelState, subs: &mut Subsystems) -> TickOutcome
 
     let decoded = decode_inbound(state, inbound_pkt.as_ref());
     run_bargein(state, subs, decoded.as_deref()).await;
-    accumulate_prebuffer(subs, decoded.as_deref());
+    accumulate_prebuffer(state, subs, decoded.as_deref());
     feed_recorders_and_readers(state, subs, decoded.as_deref(), out_frame).await;
 
     send_outbound(state, subs, out_frame, inbound_pkt.as_ref()).await;
@@ -305,25 +305,16 @@ async fn run_bargein(state: &mut ChannelState, subs: &mut Subsystems, decoded: O
 /// During the prompt phase of a `playrecord` (player active *and*
 /// recorder pending), accumulate inbound samples into the pre-buffer so
 /// they can be flushed into the recorder on activation — captures the
-/// caller's speech that started before the prompt finished.
-fn accumulate_prebuffer(subs: &mut Subsystems, decoded: Option<&[i16]>) {
-    if subs.player.is_none() || subs.pending_recorder.is_none() {
+/// caller's speech that started before the prompt finished. Held at the
+/// queued recorder's rate (see `hold_for_pending_recorder`).
+fn accumulate_prebuffer(state: &mut ChannelState, subs: &mut Subsystems, decoded: Option<&[i16]>) {
+    if subs.player.is_none() {
         return;
     }
     let Some(samples) = decoded else {
         return;
     };
-
-    let total = subs.prebuffer.len() + samples.len();
-    if total > PREBUFFER_CAPACITY_SAMPLES {
-        let drop_n = total - PREBUFFER_CAPACITY_SAMPLES;
-        for _ in 0..drop_n.min(subs.prebuffer.len()) {
-            subs.prebuffer.pop_front();
-        }
-    }
-    for s in samples {
-        subs.prebuffer.push_back(*s);
-    }
+    hold_for_pending_recorder(subs, &mut state.codecx, samples);
 }
 
 /// Resolve inbound / outbound sample slices for the tick (same L/R

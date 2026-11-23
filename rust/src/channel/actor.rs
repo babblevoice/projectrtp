@@ -337,6 +337,46 @@ pub struct PendingRecorder {
     pub file_str: String,
 }
 
+/// Hold one tick of the caller's audio in `prebuffer` for the recorder a
+/// `playrecord` has queued. No-op when no recorder is queued. Drops the
+/// oldest samples past `PREBUFFER_CAPACITY_SAMPLES`.
+///
+/// The audio is held at the queued recorder's rate, because
+/// `activate_pending_recorder` writes it with `write_raw`, which doesn't
+/// resample. On G.722 the recorder is 16 kHz, so this holds the codec's
+/// wideband decode, which `narrowband` was already made from. 8 kHz audio in
+/// a 16 kHz recording plays at double speed.
+///
+/// Call only on a tick with an inbound packet, after it was decoded into
+/// `narrowband`: `codecx` must hold this tick's wire bytes, or its cached
+/// decode is the previous packet's.
+pub(super) fn hold_for_pending_recorder(
+    subs: &mut Subsystems,
+    codecx: &mut crate::codec::CodecBundle,
+    narrowband: &[i16],
+) {
+    let Some(pending) = subs.pending_recorder.as_ref() else {
+        return;
+    };
+    let samples: &[i16] = if pending.cfg.sample_rate == 16000 {
+        match codecx.require_wideband_16k() {
+            Some(wideband) => wideband,
+            None => return,
+        }
+    } else {
+        narrowband
+    };
+
+    let total = subs.prebuffer.len() + samples.len();
+    if total > PREBUFFER_CAPACITY_SAMPLES {
+        let drop_n = total - PREBUFFER_CAPACITY_SAMPLES;
+        for _ in 0..drop_n.min(subs.prebuffer.len()) {
+            subs.prebuffer.pop_front();
+        }
+    }
+    subs.prebuffer.extend(samples.iter().copied());
+}
+
 /// Per-channel subsystems the tick pipeline hands off to. Keeping them in a
 /// sibling struct (not in ChannelState) avoids mixing pipeline-owned and
 /// control-owned state — the mixer will move ChannelState but leaves these
@@ -1354,6 +1394,109 @@ mod tests {
         // 400 mono samples → 800 stereo samples × 2 bytes = 1600 bytes PCM.
         assert_eq!(info.subchunksize, 1600);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// `len` samples of a `hz` tone at `rate`, from sample `n0` on, so
+    /// consecutive frames join up.
+    fn tone(hz: f64, rate: u32, n0: usize, len: usize) -> Vec<i16> {
+        (n0..n0 + len)
+            .map(|n| {
+                let t = n as f64 / rate as f64;
+                ((t * hz * 2.0 * std::f64::consts::PI).sin() * 8000.0) as i16
+            })
+            .collect()
+    }
+
+    /// Sign changes a second: twice a tone's frequency.
+    fn crossings_per_second(samples: &[i16], rate: u32) -> f64 {
+        let crossings = samples
+            .windows(2)
+            .filter(|w| (w[0] < 0) != (w[1] < 0))
+            .count();
+        crossings as f64 * rate as f64 / samples.len() as f64
+    }
+
+    /// Hold `frames` 20 ms frames of a 1 kHz tone arriving as `pt` (G.722,
+    /// or PCMU) for `subs`' queued recorder, decoding each one first as the
+    /// tick does.
+    fn hold_tone_frames(subs: &mut Subsystems, pt: u8, frames: usize) {
+        let mut codecx = crate::codec::CodecBundle::new();
+        let mut g722 = crate::g722::Encoder::new().unwrap();
+        for f in 0..frames {
+            let wire: Vec<u8> = if pt == 9 {
+                g722.encode(&tone(1000.0, 16000, f * 320, 320)).to_vec()
+            } else {
+                tone(1000.0, 8000, f * 160, 160)
+                    .iter()
+                    .map(|&s| crate::codec::linear_to_ulaw(s as i32))
+                    .collect()
+            };
+            codecx.feed_wire(pt, &wire);
+            let narrowband = codecx.require_narrowband_8k().unwrap().to_vec();
+            hold_for_pending_recorder(subs, &mut codecx, &narrowband);
+        }
+    }
+
+    fn pending_subs(cfg: RecorderConfig) -> Subsystems {
+        let file_str = cfg.file.to_string_lossy().into_owned();
+        Subsystems {
+            pending_recorder: Some(PendingRecorder { cfg, file_str }),
+            ..Default::default()
+        }
+    }
+
+    /// RTP-27: on G.722 the queued recorder is 16 kHz, so the audio held
+    /// while the prompt plays must be the 16 kHz decode. The 8 kHz one,
+    /// written as it is into the 16 kHz WAV, played at double speed: the
+    /// 1 kHz tone came out at 2 kHz, in half the time.
+    #[tokio::test]
+    async fn held_g722_audio_plays_at_its_own_speed_in_a_16k_recording() {
+        let mut cfg = test_recorder_cfg("actor_hold_g722_16k.wav");
+        cfg.sample_rate = 16000;
+        let path = cfg.file.clone();
+        let mut subs = pending_subs(cfg);
+
+        hold_tone_frames(&mut subs, 9, 25);
+        assert_eq!(subs.prebuffer.len(), 25 * 320, "0.5 s at 16 kHz");
+
+        let mut events: Vec<Event> = Vec::new();
+        assert!(activate_pending_recorder(&mut subs, &mut events).await);
+        let mut rec = subs.recorders.pop().unwrap();
+        rec.close(FinishReason::Completed);
+
+        let info = crate::soundfile::js_info(path.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(info.samplerate, 16000);
+        assert_eq!(info.subchunksize, 25 * 320 * 2, "0.5 s at 16 kHz");
+
+        let bytes = std::fs::read(&path).unwrap();
+        let (pairs, _) = bytes[crate::soundfile::WAV_HEADER_LEN..].as_chunks::<2>();
+        let samples: Vec<i16> = pairs.iter().map(|&b| i16::from_le_bytes(b)).collect();
+        // Skip the codec's first 40 ms while it settles.
+        let rate = crossings_per_second(&samples[640..], 16000);
+        assert!(
+            (1800.0..2200.0).contains(&rate),
+            "expected the 1 kHz tone (~2000 crossings/s), got {rate:.0}/s"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An 8 kHz recorder holds the 8 kHz decode: whatever the codec, the
+    /// held audio follows the rate the recorder was queued at, which is the
+    /// rate its WAV is stamped with.
+    #[test]
+    fn held_audio_is_the_narrowband_decode_for_an_8k_recorder() {
+        for pt in [0u8, 9] {
+            let mut subs = pending_subs(test_recorder_cfg("actor_hold_8k.wav"));
+            hold_tone_frames(&mut subs, pt, 5);
+            assert_eq!(subs.prebuffer.len(), 5 * 160, "pt {pt}: 100 ms at 8 kHz");
+        }
+    }
+
+    #[test]
+    fn nothing_is_held_without_a_queued_recorder() {
+        let mut subs = Subsystems::default();
+        hold_tone_frames(&mut subs, 9, 5);
+        assert!(subs.prebuffer.is_empty());
     }
 
     #[tokio::test]

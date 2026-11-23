@@ -35,8 +35,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{interval, MissedTickBehavior};
 
 use super::actor::{
-    activate_pending_recorder, Event, EventSink, PlayState, RecordState, Subsystems,
-    PREBUFFER_CAPACITY_SAMPLES, TICK_MS,
+    activate_pending_recorder, hold_for_pending_recorder, Event, EventSink, PlayState, RecordState,
+    Subsystems, TICK_MS,
 };
 use super::commands::{ChannelId, Command};
 use super::player::Player;
@@ -477,25 +477,17 @@ impl Member {
     }
 
     /// While `playrecord` is in its play phase (player active AND
-    /// recorder queued), accumulate inbound samples into `prebuffer`.
+    /// recorder queued), accumulate inbound samples into `prebuffer`, at
+    /// the queued recorder's rate (see `hold_for_pending_recorder`).
     /// Drops oldest samples when the cap is hit.
     fn accumulate_playrecord_prebuffer(&mut self, inbound: Option<&[i16]>) {
-        if self.subs.player.is_none() || self.subs.pending_recorder.is_none() {
+        if self.subs.player.is_none() {
             return;
         }
         let Some(samples) = inbound else {
             return;
         };
-
-        if self.subs.prebuffer.len() + samples.len() > PREBUFFER_CAPACITY_SAMPLES {
-            let drop_n = self.subs.prebuffer.len() + samples.len() - PREBUFFER_CAPACITY_SAMPLES;
-            for _ in 0..drop_n.min(self.subs.prebuffer.len()) {
-                self.subs.prebuffer.pop_front();
-            }
-        }
-        for s in samples {
-            self.subs.prebuffer.push_back(*s);
-        }
+        hold_for_pending_recorder(&mut self.subs, &mut self.state.codecx, samples);
     }
 
     /// Feed active recorders the inbound 8 kHz linear samples for this
