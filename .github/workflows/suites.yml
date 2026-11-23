@@ -1,0 +1,123 @@
+name: Suites
+
+# The repository's test suites, defined once (BACKEND-25).
+#
+# This file is a copy of a template in babblevoice/babble-configs'
+# workflow-templates. Change only what is between `# >>> settings` and
+# `# <<< settings`, and comments; the templates' README says how, and their
+# check-copy.sh checks a copy.
+#
+# Nothing triggers this file on its own. It is called, as a job, by:
+#   - release.yml, on every release tag, where it is the gate: a red suite
+#     stops the image before a single digest is pushed;
+#   - nightly.yml, on main once a night, skipped when main has not moved;
+#   - pr-checks.yml, on every pull request, but only in a PUBLIC repository,
+#     where Actions minutes are free. A private repository runs no suite on a
+#     pull request: the author runs them before opening it, and pr-proof.yml
+#     checks the PR says so.
+#
+# Why a called workflow rather than copies of these jobs in each caller.
+#   A workflow cannot gate another workflow's publish, which is why
+#   Turnstile's build.yml used to carry its own copy of test.yml's jobs, kept in
+#   step by comments in both files. A called workflow runs as a job OF its
+#   caller, so release.yml's build `needs:` it like any other job, and the
+#   suites are written once.
+#
+# What a job here must keep, whoever edits it:
+#   - `permissions: contents: read` and no `secrets` at all. No caller passes
+#     any, and none should: on a public repository a fork's pull request runs
+#     these jobs with its own code.
+#   - the default checkout, with no `ref:`. Each caller's event already names
+#     the right commit: the tag, main's tip at night (or the branch a run was
+#     asked for on), or the pull request's merge ref.
+#   - a `timeout-minutes` above the suite's slowest run, so a hang fails with a
+#     readable log rather than sitting until the 6-hour ceiling. A job that
+#     hits it ends cancelled, and release.yml publishes only on success.
+
+on:
+  workflow_call:
+
+jobs:
+  # >>> settings: the repository's suites, one job each
+  # projectrtp's two suites: the Rust crate's checks and unit tests, which
+  # rust.yml ran on every push before, and the mocha specs in the
+  # Dockerfile's `test` stage, which load the built addon and open real
+  # channels, and which nothing ran in CI before. Both check out libilbc and
+  # its abseil-cpp, since the crate links libilbc and the Dockerfile COPYs it.
+  #
+  # `rust` is rust.yml's job as it was, but with no cargo cache: a cache a
+  # pull request's run saved could be restored by a release's (release.yml
+  # says why it restores none). stable Rust on glibc, as rust.yml had: the
+  # musl rustls crash that pins the Dockerfile to 1.92 does not happen here.
+  # Uncached, it takes about ten minutes.
+  rust:
+    name: Rust (rustfmt, clippy, cargo test)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      # build.rs links libspandsp (G.722) and libilbc (iLBC). Ubuntu
+      # packages spandsp; libilbc has no package, so build it from the
+      # submodule and install it into /usr/local, where build.rs looks.
+      - name: Install native deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libspandsp-dev
+          cd libilbc
+          cmake . -DCMAKE_INSTALL_LIBDIR=/usr/local/lib -DCMAKE_INSTALL_INCLUDEDIR=/usr/local/include
+          cmake --build .
+          sudo cmake --install .
+          sudo ldconfig
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: rustfmt
+        working-directory: rust
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        working-directory: rust
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: check
+        working-directory: rust
+        run: cargo check --all-targets --locked
+
+      - name: test
+        working-directory: rust
+        run: cargo test --lib --locked
+
+  # The Dockerfile's `test` stage: the addon built as the image builds it
+  # (musl, Rust 1.92), then test/interface and test/unit under mocha, as the
+  # README's Tests section runs them. No network: every spec talks to
+  # 127.0.0.1. The build takes about seven minutes on a runner, and the
+  # specs about seven more.
+  test-stage:
+    name: Interface and unit (mocha, in the test stage)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Build the test stage
+        run: docker build --target test -t projectrtp:test .
+
+      - name: Run the specs
+        run: docker run --rm --network none projectrtp:test
+  # <<< settings

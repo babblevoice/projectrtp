@@ -1,5 +1,7 @@
 # Gitleaks settings for this repository: Gitleaks's default rules, less the
-# false alarms allowlisted below.
+# false alarms allowlisted below. Every babblevoice repository's .gitleaks.toml
+# starts as a copy of the template, word for word, with its title changed, and
+# adds its own allowlists at the end.
 #
 # CI reads this file from the default branch, never from the branch it checks,
 # so a branch cannot allowlist its own secret. A new rule takes effect once it
@@ -8,7 +10,8 @@
 # Allowlist only what is not a secret, and as narrowly as it will go: one
 # rule, one file, or one exact value. A real secret is never allowlisted; it is
 # rotated, and the code reads it from where our secrets are kept instead.
-# The guide, the CI workflow and this common part: babblevoice/secret-scanning.
+# The guide, the CI workflow and this common part: babblevoice/babble-configs,
+# workflow-templates/secret-scanning/.
 
 title = "babblevoice/projectrtp"
 

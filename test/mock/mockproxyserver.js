@@ -2,7 +2,9 @@
 const net = require( "net" )
 const message = require( "../../lib/message.js" )
 
-let listenport = 55000
+/* ports below the kernel's ephemeral range (32768-60999), where a client socket
+   the suite has open can hold the port and make listen() fail */
+let listenport = 26500
 module.exports = class {
 
   /** 

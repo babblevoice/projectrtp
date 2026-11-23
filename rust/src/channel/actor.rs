@@ -221,6 +221,12 @@ pub struct SpawnConfig {
 pub struct RelaySpawn {
     pub shared: Arc<super::relay::RelayShared>,
     pub data_rx: mpsc::Receiver<super::relay::RelayFrame>,
+    /// The address `openchannel` was given, if any. It is stored before the
+    /// send task starts: that task forwards whatever a peer's recv_loop
+    /// hands it, and once the leg is mixed that can happen before this
+    /// channel's actor has dispatched its first `Remote` command. Without an
+    /// address the frame has nowhere to go and is dropped, uncounted.
+    pub remote: Option<SocketAddr>,
 }
 
 #[cfg(test)]
@@ -252,6 +258,9 @@ pub fn spawn_with_sockets(
     let relay_spawn = cfg.relay;
     if let Some(rs) = &relay_spawn {
         state.relay = Some(rs.shared.clone());
+        if let Some(addr) = rs.remote {
+            state.set_remote_addr(addr);
+        }
     }
 
     // DTLS keying material is published here once the handshake completes so
@@ -1585,5 +1594,86 @@ mod tests {
 
         handle.close("done").await;
         let _ = std::fs::remove_file(&rec_path);
+    }
+
+    /// A relay leg opened with a remote and mixed straight away forwards the
+    /// first frame its peer hands it, even when that frame reaches the send
+    /// task before the actor has dispatched the `Remote` command that
+    /// `openchannel` queues. On this single-threaded runtime no task runs
+    /// until the test awaits, and the send task is spawned before the actor,
+    /// so it takes the frame first: the order a busy CI runner produced,
+    /// where the first packet after `mix()` was dropped, uncounted.
+    #[tokio::test]
+    async fn relay_leg_forwards_before_its_actor_applies_the_remote() {
+        use super::super::commands::RemoteConfig;
+        use super::super::relay::{join, RelayShared};
+        use super::super::rtp::RtpPacket;
+
+        let far = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let far_addr = far.local_addr().unwrap();
+
+        let (data_tx, data_rx) = tmpsc::channel(8);
+        let shared = Arc::new(RelayShared::new(2, data_tx, false, 96));
+        let (sink_tx, _sink_rx) = tmpsc::unbounded_channel();
+        let handle = spawn(SpawnConfig {
+            id: 2,
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            ssrc: 0x2222,
+            events: Arc::new(TestSink { tx: sink_tx }),
+            port_reservation: None,
+            local_icepwd: String::new(),
+            relay: Some(RelaySpawn {
+                shared: shared.clone(),
+                data_rx,
+                remote: Some(far_addr),
+            }),
+        })
+        .await
+        .unwrap();
+        // What openchannel queues for params.remote.
+        let (ack, _) = tokio::sync::oneshot::channel();
+        handle
+            .cmd
+            .try_send(Command::Remote {
+                cfg: RemoteConfig {
+                    addr: far_addr,
+                    payload_type: 96,
+                    ilbc_payload_type: None,
+                    rfc2833_payload_type: None,
+                    dtls: None,
+                    rtcpmux: false,
+                    icepwd: None,
+                },
+                ack,
+            })
+            .unwrap();
+
+        // mix(): the peer leg joins the group, and its recv_loop fans one
+        // packet out to us.
+        let (peer_tx, _peer_rx) = tmpsc::channel(8);
+        let peer = Arc::new(RelayShared::new(1, peer_tx, false, 96));
+        assert!(join(&peer, &shared));
+        let mut pkt = RtpPacket::new();
+        pkt.as_mut_slice_for_fill(16).copy_from_slice(&[
+            0x80, 96, 0, 1, 0, 0, 0, 9, 0, 0, 0, 0x55, 0xde, 0xad, 0xbe, 0xef,
+        ]);
+        peer.fan_out(pkt);
+
+        // The join also asks us for a keyframe, so a PLI (RTCP) may come
+        // first: wait for the RTP.
+        let mut buf = [0u8; 1500];
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        let payload = loop {
+            let (n, _) = tokio::time::timeout_at(deadline, far.recv_from(&mut buf))
+                .await
+                .expect("the frame forwarded before the actor ran was dropped")
+                .unwrap();
+            if !(200..=206).contains(&buf[1]) {
+                break buf[12..n].to_vec();
+            }
+        };
+        assert_eq!(payload, [0xde, 0xad, 0xbe, 0xef]);
+
+        handle.close("done").await;
     }
 }

@@ -1507,7 +1507,11 @@ pub fn open_channel(env: Env, params: Object, callback: JsFunction) -> Result<Ch
         }
         (
             Some(shared.clone()),
-            Some(actor::RelaySpawn { shared, data_rx }),
+            Some(actor::RelaySpawn {
+                shared,
+                data_rx,
+                remote: remote_addr,
+            }),
         )
     } else {
         (None, None)

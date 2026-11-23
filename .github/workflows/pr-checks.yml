@@ -1,0 +1,259 @@
+name: PR checks
+
+# The cheap checks every pull request gets (BACKEND-25).
+#
+# This file is a copy of a template in babblevoice/babble-configs'
+# workflow-templates. Change only what is between `# >>> settings` and
+# `# <<< settings`, and comments; the templates' README says how, and their
+# check-copy.sh checks a copy.
+#
+# The suites do not run here in a private repository. They cost 59% of
+# Turnstile's billable Actions minutes in the 30 days measured, and the same
+# suites already have to pass on the author's machine before a pull request is
+# opened. So the author runs them, the pull request says so on one line, and
+# pr-proof.yml checks that line names the commit under review. In CI the
+# suites gate every release tag (release.yml) and run nightly on main
+# (nightly.yml). A PUBLIC repository's minutes are free, so there the suites
+# run here as well, and the run before the PR is still required.
+#
+# What runs on every pull request, then:
+#   - this file: the workflow lint, plus the repository's own lint if it has
+#     one, and the suites if the repository is public;
+#   - pr-proof.yml: the line that proves the suites were run;
+#   - image-check.yml: the image builds, when a file it is built from changed;
+#   - secret-scanning.yml: Gitleaks over the commits the PR adds.
+
+# Why two PR triggers.
+#   In a PRIVATE repository GitHub does not run `pull_request` workflows for a
+#   pull request raised from a fork: it skips them silently, with no queued run
+#   and no failing check. Contributors without push access can only open PRs
+#   from a fork, so their PRs once merged with nothing having run (that is how
+#   a server-crashing bug reached Turnstile's main, and babble-rtp #130 had no
+#   checks at all). `pull_request_target` is the one PR event GitHub does run
+#   for them.
+#
+#   So each job below is claimed by exactly one of the two events:
+#     - `pull_request` takes a same-repository PR, and every PR in a public
+#       repository, where GitHub runs it for forks too, in its own sandbox and
+#       behind its approval for first-time contributors;
+#     - `pull_request_target` takes a fork's PR in a private repository, and
+#       nothing else.
+#   The templates' test/pr-workflow-claims.test.js evaluates every job's `if:`
+#   in all four cases and fails unless exactly one event runs it.
+#
+# What makes the `pull_request_target` path safe.
+#   `pull_request_target` runs in the BASE repository's context, so the usual
+#   footgun is handing repository secrets to code the PR author controls. These
+#   jobs defuse that:
+#     - they read no secrets at all;
+#     - `permissions:` cuts the token back to reading the code and the PR,
+#       since `pull_request_target` would otherwise supply a read/write one;
+#     - `persist-credentials: false` keeps even that token out of the checkout
+#       the fork's code can see;
+#     - no cache is read or written. `pull_request_target` runs with GITHUB_REF
+#       on main, whatever the PR's base, so a cache written here would be in
+#       main's scope, restored by later runs there and on a tag, and a fork
+#       could poison it.
+#     - the repository's own lint, the one step that runs the PR's code, runs
+#       it in a container (see "Lint the repository" below).
+#   What remains is fork-authored code on a read-only token and no secrets,
+#   which is what `pull_request` from a fork would give it anyway.
+#
+# Why `allow-unsafe-pr-checkout` is set.
+#   actions/checkout v7 refuses to check out a fork's code from a
+#   `pull_request_target` workflow unless told to, because the combination is
+#   the classic "pwn request": fork-authored code with the base repository's
+#   write token, secrets and default-branch cache scope. The opt-in is
+#   deliberate, and defensible only because every one of those has been taken
+#   away above.
+#
+#   READ THIS BEFORE EDITING: the flag turns the guardrail off permanently, so
+#   it will NOT warn whoever later adds `secrets.*` or a write permission to
+#   these jobs, and that edit would hand it all to any fork that opens a PR.
+#   check-copy.sh fails a copy that adds one, even in a setting, and the
+#   templates' own test/pr-code-workflows-hold-no-secrets.test.js fails the
+#   template.
+#
+#   The way out is the repository setting, not this flag: Settings → Actions →
+#   General → "Run workflows from fork pull requests" (with the send-secrets and
+#   write-token sub-options left off) makes plain `pull_request` run for fork
+#   PRs in GitHub's own sandbox. Turn that on and the `pull_request_target`
+#   trigger, the claims and this flag all go away together.
+
+# Why no `branches:` filter.
+#   On a pull request `branches:` matches the BASE, so `branches: [main]` meant
+#   a PR based on anything else never started a run at all: no queued job, no
+#   skipped check, nothing on the PR to notice. Stacked PRs are the case that
+#   hits: four of Turnstile's sat open with nothing having run, and one was
+#   auto-closed unmerged the second its base branch was deleted. The templates'
+#   test/pr-workflows-run-on-every-base.test.js holds every PR workflow to it.
+on:
+  pull_request:
+  pull_request_target:
+
+# A new push to a PR makes the in-flight run pointless, so it is cancelled.
+#
+# READ BEFORE SIMPLIFYING THIS KEY: `github.event_name` is in it because both
+# triggers fire for every PR, and GitHub resolves concurrency BEFORE the job
+# `if:` that decides which one claims it. With one shared group the two sibling
+# runs raced, and whichever GitHub created second cancelled the other; when
+# that was the real one, the PR was left with nothing having run. Keyed by
+# event, a second push to the same PR still lands in the same group.
+concurrency:
+  group: pr-checks-${{ github.event_name }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# `bash -eo pipefail`, as the templates' tests run the script below.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    name: Lint
+    if: >-
+      (github.event_name == 'pull_request'
+        && (github.event.pull_request.head.repo.full_name == github.repository
+          || !github.event.repository.private))
+      || (github.event_name == 'pull_request_target'
+        && github.event.pull_request.head.repo.full_name != github.repository
+        && github.event.repository.private)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # Only for "Wait for the merge commit": the PR's mergeability.
+      pull-requests: read
+    env:
+      # >>> settings: the repository's own lint, if it has one
+      # A command run on a copy of the PR's code at /repo, in a throwaway
+      # container of LINT_IMAGE; left empty, there is no lint but actionlint.
+      # A Node repository's might be:
+      #   LINT_IMAGE: node:26-alpine3.24
+      #   LINT_COMMAND: npm ci --ignore-scripts && npm run lint
+      #
+      # projectrtp's lint, `npm run check` (tsc, then eslint), fails on main:
+      # eslint reports 89 errors in 21 files, and tsc is not installed, so
+      # that half never runs. It stays off until it passes. rustfmt and clippy
+      # are in suites.yml, since clippy needs libilbc built.
+      LINT_IMAGE: ""
+      LINT_COMMAND: ""
+      # <<< settings
+    steps:
+      # Under `pull_request_target` GitHub does not wait for the merge ref to
+      # exist before the run starts, as it does for `pull_request`. It makes
+      # the merge commit in the background, and asking for the PR's
+      # mergeability is what starts that: babble-rtp #134's checkout, 8 seconds
+      # after the PR was opened, found no ref three times in 36 seconds. So
+      # this asks, and waits up to two minutes, before any of the PR's code is
+      # on the runner. A PR that conflicts with its base has no merge commit at
+      # all, and is told so rather than failing in the checkout.
+      - name: Wait for the merge commit
+        if: github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.number }}
+        run: |
+          for attempt in $(seq 24); do
+            mergeable="$(gh api "repos/$REPO/pulls/$PR" --jq '.mergeable')" || mergeable=unknown
+            case "$mergeable" in
+              true)
+                echo "GitHub has made the merge commit."
+                exit 0
+                ;;
+              false)
+                echo "::error::This pull request conflicts with its base, so there is no merge commit to check. Merge the base into it, or rebase it, and push."
+                exit 1
+                ;;
+            esac
+            [ "$attempt" = 24 ] || sleep 5
+          done
+          echo "::error::GitHub had not made the merge commit after two minutes. Re-run this job."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # `pull_request_target` checks out main by default, whatever the PR's
+          # base, so the PR's own code has to be asked for by name. The merge
+          # ref is what `pull_request` would have checked: the PR as it would
+          # land.
+          ref: refs/pull/${{ github.event.number }}/merge
+          persist-credentials: false
+          # Deliberate opt-in — see "Why `allow-unsafe-pr-checkout` is set" above.
+          allow-unsafe-pr-checkout: true
+
+      # Lints .github/workflows/ itself. Nothing else validates these files,
+      # and release.yml runs only on a tag, so a bug in it would otherwise
+      # first show on a release.
+      #
+      # Bare `actionlint` from the repository root is "project mode": it lints
+      # every file under .github/workflows/, so a workflow added later is
+      # covered with no list here to keep in step, and it checks the contract
+      # between a called workflow and its callers (suites.yml and the three
+      # that call it). Don't switch to a hand-kept file list.
+      #
+      # The image bundles shellcheck, so `run:` scripts are linted too. Suppress
+      # a genuine false positive with a scoped `# shellcheck disable=` inside
+      # the script, as release.yml does, not by narrowing the invocation.
+      #
+      # Pinned rather than :latest so a new actionlint release can't turn an
+      # unrelated PR red, and by digest as well, since a tag can be moved. Bump
+      # both deliberately.
+      #
+      # `-config-file /dev/null`, because actionlint otherwise reads
+      # .github/actionlint.yaml from the checkout, which is the PR's: a PR could
+      # tell it to ignore everything the PR gets wrong. A repository that needs
+      # a config has the templates changed first. shellcheck's own config file
+      # is ignored already.
+      #
+      # Run as a container of its own, not as `uses: docker://…`: GitHub hands
+      # a container action the runner's cache token and mounts the workspace
+      # read-write, and this reads a fork's files. Read-only and given nothing,
+      # it can only read them.
+      - name: Lint workflows (actionlint)
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" -w /repo \
+            rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            -color -config-file /dev/null
+
+      # The repository's own lint runs the PR's code, and for a fork's PR in a
+      # private repository it does so under `pull_request_target`, in main's
+      # cache scope. A script run on the runner itself could read the runner's
+      # cache token out of the runner's memory (hosted runners give passwordless
+      # sudo) and write a cache entry in main's scope, which later runs on main
+      # and on a tag restore. In a container it can do neither: the runner's
+      # processes are not in its view, and nothing passes the token in. So the
+      # command runs in one, and never as a step of its own.
+      #
+      # The checkout goes in read-only and is copied there, so nothing the
+      # command writes reaches the runner's workspace: actions/checkout's
+      # clean-up runs git in it after the job, on the runner, and a
+      # .git/config the command had rewritten (a core.fsmonitor, say) would
+      # run whatever it named there.
+      #
+      # As root and through `sh`, whatever the image's own user and entrypoint
+      # (a lint tool's image usually has both), so any image with `sh` and `cp`
+      # will do. `mkdir` fails if the image already has a /repo, where `cp`
+      # would quietly put the code a level down and leave the lint checking an
+      # empty folder.
+      - name: Lint the repository
+        if: env.LINT_COMMAND != '' || env.LINT_IMAGE != ''
+        run: |
+          if [ -z "$LINT_IMAGE" ] || [ -z "$LINT_COMMAND" ]; then
+            echo "::error::LINT_IMAGE and LINT_COMMAND go together: set both, or neither."
+            exit 1
+          fi
+          docker run --rm --user 0 --entrypoint sh -v "$PWD:/src:ro" "$LINT_IMAGE" \
+            -c "mkdir /repo && cp -R /src/. /repo && cd /repo && $LINT_COMMAND"
+
+  # A public repository's minutes are free, so its PRs run the suites too. In a
+  # private one this job is skipped, which costs nothing. Only `pull_request`
+  # claims it: in a public repository that event runs every PR, forks included.
+  suites:
+    name: Suites (public repositories)
+    if: github.event_name == 'pull_request' && !github.event.repository.private
+    permissions:
+      contents: read
+    uses: ./.github/workflows/suites.yml

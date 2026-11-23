@@ -5,7 +5,7 @@ Also see:
 [ARCHITECTURE.md](./ARCHITECTURE.md)
 
 
-[![Build](https://github.com/babblevoice/projectrtp/actions/workflows/buildimage.yaml/badge.svg)](https://github.com/babblevoice/projectrtp/actions/workflows/buildimage.yaml)
+![Nightly tests](https://github.com/babblevoice/projectrtp/actions/workflows/nightly.yml/badge.svg)
 
 An RTP node addon which offers functionality to process RTP data streams and mix it. All performance tasks are implemented in Rust (a napi-rs native module) with a per-channel tokio actor model for high concurrency.
 
@@ -41,7 +41,21 @@ As part of this, we maintain jsdoc documentation to document our public interfac
 
 ## Release process
 
-Releases are managed on GitHub actions. It builds and tests any version.
+A release is a tag, and nothing else publishes an image. Push `v3.9.0-rc.1` for
+a pre-release, or `v3.9.0` for a full release, and
+`.github/workflows/release.yml` runs the suites (the Rust checks and tests, and
+the specs in the Dockerfile's `test` stage), builds the image natively for amd64
+and arm64, starts it, and only then publishes `tinpotnick/projectrtp:3.9.0` and
+makes the GitHub release. It publishes that exact version and nothing else, so
+Docker Hub's `latest`, `3`, `3.8` and `main` no longer move.
+
+The npm package is still published by hand, and only by its owner
+(tinpotnick): once `release.yml` has passed for a full release, the same
+version, from a clean checkout of the tag after
+`git submodule update --init --recursive`. The package ships libilbc and its
+abseil-cpp as source, which babble-rtp builds from. AGENTS.md has the rules:
+who cuts which release, the line a pull request carries to prove the suites
+ran, and hotfixes.
 
 ## Docker
 
@@ -133,7 +147,11 @@ The environment variable HOST should contain the host address of the control ser
 
 The environment variable PA takes the below form- where the address is passed back to the control server so it can be published in SDP - i.e. this allows for multiple RTP nodes on different IP addresses. If you do not pass this in, the default script will determine your public IP address by calling https://checkip.amazonaws.com to obtain your IP.
 
-docker run --restart=always --net=host -d -it --env PA=127.0.0.1 --name=prtp projectrtp:latest
+Run an exact version: `latest` no longer moves, and every 3.x image up to 3.8.0 exits at start-up (it cannot find its own package), so take a later one.
+
+```bash
+docker run --restart=always --net=host -d -it --env PA=127.0.0.1 --name=prtp tinpotnick/projectrtp:X.Y.Z
+```
 
 ## Codecs
 

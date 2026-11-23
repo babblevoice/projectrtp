@@ -13,8 +13,15 @@ after( async () => {
 
 /**
  * Test we ensure that the server has cleaned up that channel's resources.
+ * This hook runs after every test in every file. A test that failed part-way
+ * may not have reached its close calls: its channels are closed here instead,
+ * because a failing afterEach makes mocha skip every test after it.
  */
-afterEach( async () => {
+afterEach( async function() {
+  if( "failed" === this.currentTest.state ) {
+    await projectrtp.shutdown()
+    return
+  }
   const stats = projectrtp.stats()
   expect( stats.channel.current ).to.equal( 0 )
 } )
