@@ -64,10 +64,17 @@ cargo prints `test result: ok. N passed; 0 failed`; mocha prints `N passing`,
 `P pending` for the specs marked skip, and `M failing` only if any did. The
 line says `rust N passed, 0 failed; test-stage N passed, 0 failed`.
 
-The lint (`npm run check`: tsc and eslint) is not a suite, and does not run
-yet: eslint fails on main, and tsc is not installed. Once it passes, set
-`LINT_IMAGE` and `LINT_COMMAND` in `pr-checks.yml`, and CI runs it on every
-pull request.
+The lint is ESLint, `npm run check`, and CI runs it on every pull request
+(`pr-checks.yml`, in `node:26-alpine3.24`), failing on any error or warning.
+It is not a suite and has no place in the proof line, but run it before you
+push, since a red lint is one more round trip:
+
+```bash
+npm ci --ignore-scripts && npm run check
+```
+
+There is no type check yet: tsc is not a dependency, and finds type errors
+when run by hand.
 <!-- <<< settings -->
 
 <!-- >>> settings: when a suite may be left out -->
