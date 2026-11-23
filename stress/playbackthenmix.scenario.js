@@ -45,16 +45,16 @@ module.exports = async ( mstimeout ) => {
   
   const clientb = await projectrtp.openchannel( {}, ( d ) => {
     if( "close" === d.action ) {
-    channelb.close()
-    utils.logclosechannel( `Mix 2 after play (clientb) for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
+      channelb.close()
+      utils.logclosechannel( `Mix 2 after play (clientb) for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
     }
   } )
   utils.lognewchannel()
 
   const channelb = await projectrtp.openchannel( { "remote": { "address": "localhost", "port": clientb.local.port, "codec": bcodec } }, ( d ) => {
-      if( "close" === d.action ) {
+    if( "close" === d.action ) {
       utils.logclosechannel( `Mix 2 after play (channelb) for ${mstimeout} mS completed with reason '${d.reason}'`, d, mstimeout )
-      }
+    }
   } )
   clientb.remote( { "address": "localhost", "port": channelb.local.port, "codec": bcodec } )
   utils.lognewchannel()
@@ -63,7 +63,7 @@ module.exports = async ( mstimeout ) => {
   expect( clienta.play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
   expect( clientb.echo() ).to.be.true
 
-  await new Promise( ( r ) => { setTimeout( () => r(), Math.max( mstimeout, 110 ) ) } )
+  await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), Math.max( mstimeout, 110 ) ) } ) )
   clienta.close()
   clientb.close()
 

@@ -132,12 +132,14 @@ jobs:
       #   LINT_IMAGE: node:26-alpine3.24
       #   LINT_COMMAND: npm ci --ignore-scripts && npm run lint
       #
-      # projectrtp's lint, `npm run check` (tsc, then eslint), fails on main:
-      # eslint reports 89 errors in 21 files, and tsc is not installed, so
-      # that half never runs. It stays off until it passes. rustfmt and clippy
-      # are in suites.yml, since clippy needs libilbc built.
-      LINT_IMAGE: ""
-      LINT_COMMAND: ""
+      # projectrtp's: `npm run check`, which is tsc's type check (jsconfig.json)
+      # then ESLint, failing on any type error or any ESLint error or warning,
+      # in the Node image the Dockerfile builds on. npm ci installs the dev
+      # dependencies they need and runs no package's scripts; the copy has no
+      # submodules, which neither reads.
+      # rustfmt and clippy are in suites.yml, since clippy needs libilbc built.
+      LINT_IMAGE: node:26-alpine3.24
+      LINT_COMMAND: npm ci --ignore-scripts --no-audit --no-fund && npm run check
       # <<< settings
     steps:
       # Under `pull_request_target` GitHub does not wait for the merge ref to

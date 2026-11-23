@@ -1,4 +1,6 @@
 
+/** @import { channelreadstream, channelwritestream } from "./types/streams" */
+
 const { v4: uuidv4 } = require( "uuid" )
 const EventEmitter = require( "events" )
 const { Readable, Writable } = require( "stream" )
@@ -40,9 +42,9 @@ class proxy {
    * @summary Listen for connections from RTP nodes which can offer their services
    * to us. When we listen for other nodes, we can configure them so that it is invisible
    * to the main node as to where the channel is being handled.
-   * @param { Object } port - port to listen on
-   * @param { string } address - what address to listen to on
-   * @param { object } em - event emitter
+   * @param { number } [ port ] - port to listen on
+   * @param { string } [ address ] - what address to listen to on
+   * @param { EventEmitter } [ em ] - event emitter
    * @return { Promise< server.rtpserver > }
    */
   async listen( em, address = "127.0.0.1", port = 9002 ) {
@@ -125,9 +127,20 @@ class proxy {
 }
 
 /**
+ * An event a channel passes back. Which other fields it carries depends on
+ * action: see the close, record, play and telephone-event events below.
+ * @typedef { Object< string, any > } channelevent
+ * @property { string } action
+ * @property { string } [ reason ]
+ * @property { string } [ event ]
+ * @property { string } [ file ]
+ */
+
+/**
  * Callback for events we pass back to interested parties.
  * @callback channelcallback
- * @param {object} event
+ * @param { channelevent } event
+ * @returns { void }
  * @listens close
  * @listens record
  * @listens play
@@ -173,6 +186,9 @@ class proxy {
 
 /**
  * @typedef { Object } channel
+ * @property { string } id - the id passed to openchannel, or one made up for it
+ * @property { string } uuid - the channel's own id: a relay leg names its sources by it in livestats().streams
+ * @property { EventEmitter } em - emits every event as "all", and again under its action
  * @property { function } close
  * @property { function } remote
  * @property { function } mix
@@ -227,8 +243,9 @@ class proxy {
  *   at all receives packets under their source PT. Also accepted by channel.remote(), which replaces
  *   the leg's codec, codecs and remote together
  * @param { Object } [ properties.remote.dtls ]
- * @param { string } properties.remote.dtls.fingerprint - the fingerprint we verify the remote against
- * @param { string } properties.remote.dtls.setup - "active" or "passive"
+ * @param { Object } properties.remote.dtls.fingerprint
+ * @param { string } properties.remote.dtls.fingerprint.hash - the fingerprint we verify the remote against
+ * @param { string } properties.remote.dtls.mode - "active" or "passive"
  * @param { boolean } [ properties.remote.rtcpmux = false ] - RFC 5761 rtcp-mux: carry RTCP over the RTP port/5-tuple instead of the separate P+1 control port. Set from the SDP `a=rtcp-mux` attribute.
  * @param { boolean } [ properties.relay = false ] - open a tick-free relay (video) leg: RTP is
  *   forwarded to the other legs it is mix()ed with, never decoded. A relay leg opened without a
@@ -262,16 +279,50 @@ class proxy {
  * @returns { Promise< channel > } - the newly created channel
  */
 
+/**
+ * What openchannel takes: each field is described in openchannel above.
+ * @typedef { object } channelparams
+ * @property { string } [ id ]
+ * @property { channelremote } [ remote ]
+ * @property { boolean } [ relay ]
+ * @property { object } [ relaylimits ]
+ * @property { number } [ relaylimits.bitrate ]
+ * @property { number } [ relaylimits.burst ]
+ * @property { number } [ relaylimits.packetrate ]
+ * @property { number } [ relaylimits.framerate ]
+ * @property { number } [ relaylimits.maxfs ]
+ * @property { object } [ direction ]
+ * @property { boolean } [ direction.send ]
+ * @property { boolean } [ direction.recv ]
+ * @property { object } [ local ]
+ * @property { string } [ local.icepwd ] - our ICE password, in place of the one we would make up
+ * @property { boolean } [ forcelocal ] - open the channel here, even when RTP nodes are connected to our server
+ * @property { string } [ nodeinstance ] - with RTP nodes connected to our server: the instance to open the channel on
+ */
 
 /**
- * @typedef { function } codecfunc
+ * @typedef { object } channelremote
+ * @property { number } port
+ * @property { string } address
+ * @property { number } codec
+ * @property { Object< string, number > } [ codecs ]
+ * @property { { fingerprint: { hash: string }, mode: string } } [ dtls ]
+ * @property { string } [ icepwd ] - the remote's ICE password, to answer its STUN binding requests
+ * @property { number } [ rfc2833pt ] - the payload type the remote uses for RFC 2833 telephone-events
+ * @property { number } [ ilbcpt ] - the payload type the remote uses for iLBC
+ * @property { boolean } [ rtcpmux ]
+ */
+
+
+/**
+ * @callback codecfunc
  * @param { number } in - single val to input
  * @returns { number } - out
  */
 
 
 /**
- * @typedef { object } tonegenerate
+ * @callback tonegenerate
  * @param { string } tone - tone description
  * @param { string } file - wav file to append the data to, it will create new if it doesn't exist.
  * @returns { boolean }
@@ -368,11 +419,12 @@ A sound soup can then be used to index the times within the wav file.
  * @property { codecfunc } pcma2linear16
  * @property { codecfunc } linear162pcmu
  * @property { codecfunc } pcmu2linear16
+ * @property { function } codectests - runs the native codec self-tests
  */
 
 /**
  * @summary functions for tone manipulation.
- * @memberof projectrtp
+ * @typedef { object } tone
  * @property { tonegenerate } generate
  */
 
@@ -409,7 +461,7 @@ class projectrtp {
   /** @type { codecx } */
   codecx
 
-  /** @type { tonegenerate } */
+  /** @type { tone } */
   tone
 
   /** @type { proxy } */
@@ -437,7 +489,7 @@ class projectrtp {
 
   /**
    * Stsrtas our underlying server waiting for instructions. Must be called to initialise.
-   * @param { object|undefined } params 
+   * @param { object } [ params ]
    * @returns { void }
    */
   run( params ) {
@@ -466,8 +518,8 @@ class projectrtp {
 
   /**
    * Open a local channel (an RTP endpoint). Pass in params to confiure local and remote details.
-   * @param { object } params 
-   * @param { channelcallback } cb 
+   * @param { channelparams | channelcallback } [ params ] - or the callback, with no params
+   * @param { channelcallback } [ cb ]
    */
   async openchannel( params = undefined, cb = undefined ) {
     if( "function" == typeof params ) {
@@ -566,11 +618,11 @@ class projectrtp {
         const resolved = {
           direction:   opts.direction   || "in",
           format:      opts.format      || "l16",
-          samplerate:  ( opts.samplerate === 16000 ) ? 16000 : 8000,
+          samplerate:  ( 16000 === opts.samplerate ) ? 16000 : 8000,
           numchannels: ( 2 === opts.numchannels ) ? 2 : 1,
         }
 
-        const stream = new Readable( { read() { /* push-driven */ } } )
+        const stream = /** @type { channelreadstream } */ ( new Readable( { read() { /* push-driven */ } } ) )
         let destroyed = false
 
         const id = napiCreateReadStream( opts, ( buf ) => {
@@ -644,7 +696,7 @@ class projectrtp {
            When the Rust-side 1 s queue is full we delay cb() with a
            short setImmediate until the tick drains. This keeps cb()
            non-blocking while still applying backpressure upstream. */
-        const stream = new Writable( {
+        const stream = /** @type { channelwritestream } */ ( new Writable( {
           highWaterMark: 16 * 1024, // 16 KB ≈ 500 ms of L16 @ 8 kHz
           write( chunk, _enc, cb ) {
             const push = () => {
@@ -664,7 +716,7 @@ class projectrtp {
             napiDestroyWriteStream( id )
             cb( err )
           }
-        } )
+        } ) )
 
         stream.format      = resolved.format
         stream.samplerate  = resolved.samplerate

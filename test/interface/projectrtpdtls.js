@@ -152,7 +152,7 @@ describe( "dtls", function() {
 
     expect( channelb.echo() ).to.be.true
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 2000 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), 2000 ) } ) )
 
     channela.close()
 
@@ -347,14 +347,14 @@ describe( "dtls", function() {
 
     channela.mix( channelb )
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 500 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), 500 ) } ) )
 
     channeltargeta.codec = 9
     expect( channela.remote( channeltargeta ) ).to.be.true
     expect( channelb.remote( channeltargetb ) ).to.be.true
     channela.mix( channelb )
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 2500 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), 2500 ) } ) )
 
     channela.close()
 
@@ -481,7 +481,7 @@ describe( "dtls", function() {
     /* echo at the other end */
     expect( channeld.echo() ).to.be.true
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 1500 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), 1500 ) } ) )
 
     channela.close()
 

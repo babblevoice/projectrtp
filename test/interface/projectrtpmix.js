@@ -75,10 +75,10 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -99,7 +99,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -132,9 +132,9 @@ describe( "channel mix", function() {
     endpointb.on( "message", function() {} )
 
     endpointa.bind()
-    await new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } ) )
     endpointb.bind()
-    await new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -157,7 +157,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -210,10 +210,10 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -240,7 +240,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channela.local.port, endpointa, undefined, 8, 27 )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1300 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -279,10 +279,10 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     let promisearesolve, promisebresolve
     const promisea = new Promise( r => promisearesolve = r )
@@ -308,7 +308,7 @@ describe( "channel mix", function() {
     }
 
     /* 1S for 50 packets to get through, 0.5 seconds to allow all through jitter buffers */
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } ) )
 
     channelb.unmix()
     channelb.close()
@@ -349,10 +349,10 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     let promisearesolve, promisebresolve
     const promisea = new Promise( r => promisearesolve = r )
@@ -382,14 +382,14 @@ describe( "channel mix", function() {
     }
 
     /* 1S for 50 packets to get through, 0.5 seconds to allow all through jitter buffers */
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } ) )
 
     channela.direction( { send: true, recv: false } )
     expect( channelb.unmix( channela ) ).to.be.true
     channelb.play( { "loop": true, "files": [
       { "wav": "/tmp/ukringing.wav" } ] } )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 200 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 200 ) } ) )
 
     channela.direction( { send: true, recv: true } )
     expect( channelb.mix( channela ) ).to.be.true
@@ -402,7 +402,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channelb.local.port, endpointb, datab )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } ) )
 
     channelb.close()
     channela.close()
@@ -444,10 +444,10 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     let promisearesolve, promisebresolve
     const promisea = new Promise( r => promisearesolve = r )
@@ -474,7 +474,7 @@ describe( "channel mix", function() {
     }
 
     /* 1S for 50 packets @ 20mS 0.5 seconds to allow through jitter buffers */
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1700 ) } ) )
 
     channelb.close()
     channela.close()
@@ -514,10 +514,10 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -538,7 +538,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -582,10 +582,10 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -606,7 +606,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1400 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1400 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -642,10 +642,10 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -666,7 +666,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -703,10 +703,10 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -729,7 +729,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -772,7 +772,7 @@ describe( "channel mix", function() {
     expect( channela.mix( channelb ) ).to.be.true
 
     const recfile = "/tmp/g722legrecording.wav"
-    try { await fs.unlink( recfile ) } catch( e ) { /* may not exist */ }
+    try { await fs.unlink( recfile ) } catch { /* may not exist */ }
 
     /* Record on the g722 leg, before any media flows (typical SIP ordering). */
     channelb.record( { "file": recfile } )
@@ -783,7 +783,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channelb.local.port, endpointb, g722pl, 9 )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -824,10 +824,10 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -855,7 +855,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channela.local.port, endpointa )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -895,13 +895,13 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     endpointc.bind()
-    await new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -927,7 +927,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1200 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1200 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -971,13 +971,13 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     endpointc.bind()
-    await new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -1003,7 +1003,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1200 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1200 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -1047,13 +1047,13 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } ) )
 
     endpointc.bind()
-    await new Promise( ( r ) => { endpointc.on( "listening", function() { r() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointc.on( "listening", function() { r() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -1079,7 +1079,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channelc.local.port, endpointc )
     }
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 1500 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), 1500 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -1137,13 +1137,13 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointa.on( "listening", function() { r() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointb.on( "listening", function() { r() } ) } ) )
 
     endpointc.bind()
-    await new Promise( ( r ) => { endpointc.on( "listening", function() { r() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { endpointc.on( "listening", function() { r() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -1171,7 +1171,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
-    await new Promise( ( r ) => { setTimeout( () => r(), 1500 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), 1500 ) } ) )
 
     channela.close()
     endpointa.close()
@@ -1221,13 +1221,13 @@ describe( "channel mix", function() {
     } )
 
     endpointa.bind()
-    await new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointa.on( "listening", function() { resolve() } ) } ) )
 
     endpointb.bind()
-    await new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointb.on( "listening", function() { resolve() } ) } ) )
 
     endpointc.bind()
-    await new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { endpointc.on( "listening", function() { resolve() } ) } ) )
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -1256,7 +1256,7 @@ describe( "channel mix", function() {
       sendpk( i, i, channelc.local.port, endpointc, Buffer.alloc( 160 ).fill( projectrtp.codecx.linear162pcmu( 8 ) ) )
     }
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1500 ) } ) )
 
     channela.close()
     endpointa.close()

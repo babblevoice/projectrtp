@@ -154,14 +154,14 @@ describe( "rtpproxy multi node", function() {
     const channel1 = await prtp.openchannel( { "nodeinstance": rtp1.ourstats.instance } )
     const channel2 = await prtp.openchannel( { "nodeinstance": rtp2.ourstats.instance } )
     await channel1.mix( channel2 )
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1000 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1000 ) } ) )
     channel1.unmix()
     channel2.unmix()
 
     channel1.close()
     channel2.close()
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } ) )
 
     for ( const msg of rtpreceveivedmessages ) actual[ msg.channel ] += 1
     expect( actual ).to.deep.equal( { "mix": 2, "open": 4, "unmix": 4, "close": 4, "remote": 2 } )
@@ -296,14 +296,14 @@ describe( "rtpproxy multi node", function() {
     const channel1 = await prtp.openchannel()
     const channel2 = await channel1.openchannel()
     await channel1.mix( channel2 )
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1000 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1000 ) } ) )
     channel1.unmix()
     channel2.unmix()
 
     channel1.close()
     channel2.close()
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } ) )
 
     for ( const msg of rtpreceveivedmessages ) actual[ msg.channel ] += 1
     expect( actual ).to.deep.equal( { "mix": 1, "open": 2, "unmix": 2, "close": 2, "remote": 0 } )
@@ -393,7 +393,7 @@ describe( "rtpproxy multi node", function() {
     channel1.close()
     channel2.close()
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } ) )
 
     for ( const msg of rtpreceveivedmessages ) actual[ msg.channel ] += 1
     expect( actual ).to.deep.equal( { "mix": 1, "open": 2, "unmix": 2, "close": 2, "remote": 0 } )
@@ -565,7 +565,7 @@ describe( "rtpproxy multi node", function() {
     const channel3 = await prtp.openchannel( { "nodeinstance": rtp1.id } )
     await channel1.mix( channel3 )
     await channel1.mix( channel2 )
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1000 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1000 ) } ) )
     channel1.unmix()
     channel2.unmix()
     channel3.unmix()
@@ -575,7 +575,7 @@ describe( "rtpproxy multi node", function() {
     channel3.close()
 
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 10 ) } ) )
 
     for ( const msg of rtpreceveivedmessages ) actual[ msg.channel ] += 1
     expect( actual ).to.deep.equal( { "mix": 3, "open": 5, "unmix": 5, "close": 5, "remote": 2 } )
@@ -809,7 +809,7 @@ describe( "rtpproxy multi node", function() {
     const channel3 = await prtp.openchannel( { "nodeinstance": rtp3.id } )
     await channel1.mix( channel3 )
     await channel1.mix( channel2 )
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1000 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1000 ) } ) )
     // Close channel1, but the main node bridges should not be closed
     channel1.unmix()
     channel2.unmix()
@@ -819,7 +819,7 @@ describe( "rtpproxy multi node", function() {
     channel2.close()
     channel3.close()
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 100 ) } ) )
 
     for ( const msg of rtpreceveivedmessages ) actual[ msg.channel ] += 1
     expect( actual ).to.deep.equal( { "mix": 4, "open": 7, "unmix": 7, "close": 7, "remote": 4 } )

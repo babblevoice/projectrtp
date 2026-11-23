@@ -45,7 +45,7 @@ function concatint16arrays( arrays ) {
 
 /**
  * 
- * @param { Array< number > } inarray
+ * @param { ArrayLike< number > } inarray
  * @returns { Int16Array }
  */
 function pcmutolinear( inarray ) {
@@ -59,7 +59,7 @@ function pcmutolinear( inarray ) {
 
 /**
  * 
- * @param { Array< number > } inarray
+ * @param { ArrayLike< number > } inarray
  * @returns { Int16Array }
  */
 function pcmatolinear( inarray ) {
@@ -74,7 +74,7 @@ function pcmatolinear( inarray ) {
 /**
  * Limitation of not parsing ccrc.
  * @param { Buffer } packet
- * @return { object }
+ * @return { { sn: number, ts: number, pt: number, ssrc: number, payload: Uint8Array } }
  */
 function parsertppk( packet ) {
   return {
@@ -140,7 +140,7 @@ describe( "rtpsound", function() {
     expect( channel.play( {} ) ).to.equal( false )
     expect( channel.play( { "files": [ { "wav": "doesntexsist.wav" } ] } ) ).to.equal( false )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 200 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 200 ) } ) )
     channel.close()
 
     await finished
@@ -187,7 +187,7 @@ describe( "rtpsound", function() {
 
     } )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 1100 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 1100 ) } ) )
     if( channel ) channel.close()
     server.close()
 
@@ -345,7 +345,7 @@ describe( "rtpsound", function() {
 
     } )
 
-    await new Promise( ( resolve ) => { setTimeout( () => resolve(), 2200 ) } )
+    await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), 2200 ) } ) )
     channel.close()
     server.close()
 
@@ -382,7 +382,6 @@ describe( "rtpsound", function() {
     let transindex = 0
     let lastvalue = 0
 
-    // eslint-disable-next-line complexity
     server.on( "message", function( msg ) {
 
       receviedpkcount++
@@ -440,10 +439,7 @@ describe( "rtpsound", function() {
     /* create our RTP/UDP endpoint */
     const server = dgram.createSocket( "udp4" )
 
-    /** @type { prtp.channel } */
-    let channel
-
-    let receivedpcmu = []
+    const receivedpcmu = []
     server.on( "message", function( msg ) {
       receivedpcmu.push( pcmatolinear( rtputils.parsepk( msg ).payload ) )
     } )
@@ -461,11 +457,12 @@ describe( "rtpsound", function() {
 
     let starttime = 0, endtime = 0
     let playcount = 0
-    channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 8 } }, function( d ) {
+    /** @type { prtp.channel } */
+    const channel = await prtp.projectrtp.openchannel( { "remote": { "address": "127.0.0.1", "port": ourport, "codec": 8 } }, function( d ) {
       //console.log(d)
       if( "play" === d.action && "start" == d.event ) {
         playcount++
-        if( playcount >= 1 )
+        if( 1 <= playcount )
           starttime = + new Date()
       }
       if( "play" === d.action && "end" == d.event && "completed" == d.reason ) {
@@ -495,8 +492,9 @@ describe( "rtpsound", function() {
 
     const receviedaudio = concatint16arrays( receivedpcmu )
 
-    /* further test - if you want to play the output */
-    if( false ) {
+    /* further test - if you want to play the output, run with
+       PRTP_TEST_WAVOUT=1 and it is written to /tmp/testout.wav */
+    if( process.env.PRTP_TEST_WAVOUT ) {
       
       console.log( receviedaudio )
 
@@ -670,7 +668,7 @@ describe( "rtpsound", function() {
     } )
 
     /* rapidly replace the player */
-    for( let i = 0; i < 20; i++ ) {
+    for( let i = 0; 20 > i; i++ ) {
       const file = ( 0 == i % 2 ) ? "/tmp/flat.wav" : "/tmp/flat2.wav"
       expect( channel.play( { "files": [ { "wav": file } ] } ) ).to.be.true
       await new Promise( r => setTimeout( r, 30 ) )
@@ -751,7 +749,7 @@ describe( "rtpsound", function() {
     this.timeout( 5000 )
     this.slow( 3000 )
 
-    for( let attempt = 0; attempt < 10; attempt++ ) {
+    for( let attempt = 0; 10 > attempt; attempt++ ) {
       let done
       const finished = new Promise( r => { done = r } )
 

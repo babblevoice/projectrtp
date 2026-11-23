@@ -58,11 +58,20 @@ const dgram = require( "dgram" )
 
 const projectrtp = require( "../../index" ).projectrtp
 
+/** @import { channel } from "../../index.js" */
+
 before( () => { projectrtp.run() } )
 
 /**
  * Build an RTP packet buffer.
  * @param { object } opts
+ * @param { number } [ opts.pt ]
+ * @param { number } [ opts.sn ]
+ * @param { number } [ opts.ts ]
+ * @param { number } [ opts.ssrc ]
+ * @param { boolean } [ opts.marker ]
+ * @param { number } [ opts.payloadsize ]
+ * @param { number } [ opts.fill ]
  * @returns { Buffer }
  */
 function rtppacket( { pt = 96, sn = 0, ts = 0, ssrc = 0x11223344, marker = false, payloadsize = 1000, fill = 0 } ) {
@@ -116,7 +125,7 @@ function ispli( m ) {
 
 /**
  * Collect channel close promises.
- * @returns { object }
+ * @returns { { closed: Array< Promise< unknown > >, mkclose: function } }
  */
 function closetracker() {
   const closed = []
@@ -130,7 +139,7 @@ function closetracker() {
 
 /**
  * Bind a dgram socket on an OS-assigned port and resolve once listening.
- * @returns { Promise< object > }
+ * @returns { Promise< dgram.Socket > }
  */
 function bindsocket() {
   return new Promise( ( resolve ) => {
@@ -141,9 +150,9 @@ function bindsocket() {
 
 /**
  * Open a relay pair wired to the two endpoint sockets and mix them.
- * @param { object } alice
- * @param { object } bob
- * @returns { Promise< object > }
+ * @param { dgram.Socket } alice
+ * @param { dgram.Socket } bob
+ * @returns { Promise< { a: channel, b: channel, closed: Array< Promise< unknown > > } > }
  */
 async function openrelaypair( alice, bob ) {
   const closed = []
@@ -682,7 +691,7 @@ describe( "rtprelay", function() {
 
     /**
      * Three endpoints, three relay legs, one group via mix( a, b ), mix( a, c ).
-     * @returns { Promise< object > }
+     * @returns { Promise< { socks: Array< dgram.Socket >, got: Array< Array< Buffer > >, legs: Array< channel >, done: function } > }
      */
     async function threeway() {
       const socks = [ await bindsocket(), await bindsocket(), await bindsocket() ]
@@ -904,11 +913,16 @@ describe( "rtprelay", function() {
     /**
      * Open a relay pair; `alimits` (if defined) is leg A's relaylimits, and
      * A's remote declares `codecs`.
-     * @param { object } alice
-     * @param { object } bob
+     * @param { dgram.Socket } alice
+     * @param { dgram.Socket } bob
      * @param { object } [ alimits ]
-     * @param { object } [ codecs ]
-     * @returns { Promise< object > }
+     * @param { number } [ alimits.bitrate ]
+     * @param { number } [ alimits.burst ]
+     * @param { number } [ alimits.packetrate ]
+     * @param { number } [ alimits.framerate ]
+     * @param { number } [ alimits.maxfs ]
+     * @param { Object< string, number > } [ codecs ]
+     * @returns { Promise< { a: channel, b: channel, done: function } > }
      */
     async function limitedpair( alice, bob, alimits, codecs ) {
       const { closed, mkclose } = closetracker()
@@ -934,8 +948,8 @@ describe( "rtprelay", function() {
     /**
      * Send `count` packets of `payloadsize` from alice to leg A, one frame
      * (one timestamp) per `perframe` packets, paced `batch` per 5ms.
-     * @param { object } alice
-     * @param { object } a
+     * @param { dgram.Socket } alice
+     * @param { channel } a
      * @param { number } count
      * @param { number } payloadsize
      * @param { number } [ perframe ]

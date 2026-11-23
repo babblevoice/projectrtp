@@ -12,10 +12,33 @@ function toHex( d ) {
 }
 
 /**
+ * A captured frame: ipv4 is there for an IPv4 frame, with udp or tcp in it for those.
+ * @typedef { object } pcappacket
+ * @property { number } frame
+ * @property { number } ts_sec
+ * @property { number } ts_sec_offset - seconds since the first frame
+ * @property { string } [ src ]
+ * @property { string } [ dst ]
+ * @property { string } ethertype
+ * @property { object } [ ipv4 ]
+ * @property { string } ipv4.src
+ * @property { string } ipv4.dst
+ * @property { number } ipv4.protocol
+ * @property { Buffer } ipv4.data
+ * @property { object } [ ipv4.udp ]
+ * @property { number } ipv4.udp.srcport
+ * @property { number } ipv4.udp.dstport
+ * @property { number } ipv4.udp.length
+ * @property { number } ipv4.udp.checksum
+ * @property { Buffer } ipv4.udp.data
+ * @property { Object< string, any > } [ ipv4.tcp ]
+ */
+
+/**
  * 
  * @param { string } file 
  * @param { number } maxnumberofpackets 
- * @returns { Promise< Array< object > > }
+ * @returns { Promise< Array< pcappacket > > }
  */
 // For now disable - this is only used in test.
 // eslint-disable-next-line complexity
@@ -27,8 +50,8 @@ module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
 
   let fileposition = 0
 
-  let ts_sec = 0
-  let ts_usec = 0
+  let ts_sec
+  let ts_usec
   let ts_firstether = -1
   let frame = 0
   const ipv4hosts = []
@@ -129,7 +152,6 @@ module.exports.readpcap = async ( file, maxnumberofpackets = 5000 ) => {
         etherpacket.ipv4.checksum = "" + toHex( etherpacket.ipv4.data[ 10 ] ) + toHex( etherpacket.ipv4.data[ 11 ] )
         etherpacket.ipv4.src = "" + etherpacket.ipv4.data[ 12 ] + "." + etherpacket.ipv4.data[ 13 ] + "." + etherpacket.ipv4.data[ 14 ] + "." + etherpacket.ipv4.data[ 15 ]
         etherpacket.ipv4.dst = "" + etherpacket.ipv4.data[ 16 ] + "." + etherpacket.ipv4.data[ 17 ] + "." + etherpacket.ipv4.data[ 18 ] + "." + etherpacket.ipv4.data[ 19 ]
-        hostid = -1
         if ( -1 == ( hostid = ipv4hosts.indexOf( etherpacket.ipv4.src ) ) ) {
           etherpacket.ipv4.srchostid = ipv4hosts.length
           ipv4hosts.push( etherpacket.ipv4.src )

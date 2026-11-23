@@ -40,7 +40,7 @@ describe( "rtcp secure (SRTCP)", function() {
 
   const wavpath = "/tmp/rtcp_srtcp_tone.wav"
   before( () => { writetonewav( wavpath ) } )
-  after( () => { try { fs.unlinkSync( wavpath ) } catch( _ ) { /* ignore */ } } )
+  after( () => { try { fs.unlinkSync( wavpath ) } catch { /* ignore */ } } )
 
   it( "protects RTCP as SRTCP over DTLS and folds the peer's decrypted reports", async function() {
 

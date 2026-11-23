@@ -91,9 +91,9 @@ function crc32( buf ) {
 
 const crc32table = ( function() {
   const table = new Uint32Array( 256 )
-  for( let i = 0; i < 256; i++ ) {
+  for( let i = 0; 256 > i; i++ ) {
     let c = i
-    for( let j = 0; j < 8; j++ ) {
+    for( let j = 0; 8 > j; j++ ) {
       c = ( c & 1 ) ? ( 0xedb88320 ^ ( c >>> 1 ) ) : ( c >>> 1 )
     }
     table[ i ] = c >>> 0
@@ -107,20 +107,20 @@ const crc32table = ( function() {
  * @returns {{ port: number, address: string } | false }
  */
 function parsestunresponse( pkt ) {
-  if( pkt.length < 20 ) return false
+  if( 20 > pkt.length ) return false
   const msgtype = pkt.readUInt16BE( 0 )
-  if( msgtype !== 0x0101 ) return false /* not a binding success */
+  if( 0x0101 !== msgtype ) return false /* not a binding success */
   const cookie = pkt.readUInt32BE( 4 )
-  if( cookie !== 0x2112a442 ) return false
+  if( 0x2112a442 !== cookie ) return false
 
   let offset = 20
   const end = 20 + pkt.readUInt16BE( 2 )
   while( offset + 4 <= end ) {
     const attrtype = pkt.readUInt16BE( offset )
     const attrlen = pkt.readUInt16BE( offset + 2 )
-    if( attrtype === 0x0020 ) { /* XOR-MAPPED-ADDRESS */
+    if( 0x0020 === attrtype ) { /* XOR-MAPPED-ADDRESS */
       const family = pkt.readUInt8( offset + 5 )
-      if( family === 0x01 ) {
+      if( 0x01 === family ) {
         const xport = pkt.readUInt16BE( offset + 6 ) ^ ( 0x2112a442 >>> 16 )
         const xaddr = pkt.readUInt32BE( offset + 8 ) ^ 0x2112a442
         const a = ( xaddr >>> 24 ) & 0xff
@@ -194,7 +194,7 @@ describe( "STUN ICE timing", function() {
       }
     } )
 
-    const closedata = await finished
+    await finished
 
     expect( responses.length ).to.equal( requestcount )
 
@@ -252,7 +252,7 @@ describe( "STUN ICE timing", function() {
       }
 
       /* 2 STUN before DTLS + 2 STUN after DTLS = 4 total */
-      if( stunresponses.length === 4 ) {
+      if( 4 === stunresponses.length ) {
         server.close()
         channel.close()
       }
@@ -262,7 +262,7 @@ describe( "STUN ICE timing", function() {
     server.on( "listening", function() {
 
       /* send 2 STUN requests */
-      for( let i = 0; i < 2; i++ ) {
+      for( let i = 0; 2 > i; i++ ) {
         const pkt = buildstunrequest( serverufrag, clientufrag, projecticepwd )
         sendtimes.push( process.hrtime.bigint() )
         server.send( pkt, channel.local.port, "localhost" )
@@ -275,14 +275,14 @@ describe( "STUN ICE timing", function() {
       server.send( fakeDtls, channel.local.port, "localhost" )
 
       /* send 2 more STUN requests after the DTLS packet */
-      for( let i = 0; i < 2; i++ ) {
+      for( let i = 0; 2 > i; i++ ) {
         const pkt = buildstunrequest( serverufrag, clientufrag, projecticepwd )
         sendtimes.push( process.hrtime.bigint() )
         server.send( pkt, channel.local.port, "localhost" )
       }
     } )
 
-    const closedata = await finished
+    await finished
 
     expect( stunresponses.length ).to.equal( 4 )
 
@@ -328,13 +328,10 @@ describe( "STUN ICE timing", function() {
       if( "close" === d.action ) done( d )
     } )
 
-    const server = dgram.createSocket( "udp4" )
-
     /* send from different source ports to get different XOR-MAPPED-ADDRESS in responses */
     const servers = []
     const responses = []
     const requestcount = 3
-    let closedcount = 0
 
     function trydone() {
       if( responses.length === requestcount ) {
@@ -361,7 +358,7 @@ describe( "STUN ICE timing", function() {
       } )
     }
 
-    const closedata = await finished
+    await finished
 
     expect( responses.length ).to.equal( requestcount )
 

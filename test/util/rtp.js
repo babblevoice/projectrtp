@@ -4,7 +4,7 @@
 /**
  * Limitation of not parsing ccrc.
  * @param { Buffer } packet
- * @return { object }
+ * @return { { sn: number, ts: number, pt: number, ssrc: number, payload: Uint8Array } }
  */
 module.exports.parsepk = function( packet ) {
   return {

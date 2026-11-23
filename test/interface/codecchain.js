@@ -248,10 +248,10 @@ async function runchain( opts ) {
     const echoSsrc = 0xDEADBEEF
     let echoSn = 0
     let echoTs = 0
-    const silenceByte = ( expectedPt === 0 ) ? 0xFF : 0xD5
+    const silenceByte = ( 0 === expectedPt ) ? 0xFF : 0xD5
 
     sock.on( "message", ( msg, rinfo ) => {
-      if( msg.length < 12 ) return
+      if( 12 > msg.length ) return
       const pt = msg[ 1 ] & 0x7F
       if( pt !== expectedPt ) return
       const payload = msg.subarray( 12 )
@@ -355,13 +355,13 @@ async function runchain( opts ) {
   chanA.close()
   chanB.close()
   await Promise.all( [ closeA, closeB, closePoly ] )
-  await new Promise( ( r ) => sinkB.sock.close( r ) )
+  await /** @type { Promise< void > } */ ( new Promise( ( r ) => sinkB.sock.close( r ) ) )
 
   // Write sinkB to disk (= outWav). PCMA / PCMU only (asserted above)
   // so decoding is always possible.
   dumpsinkaudio( sinkB.bytes, chanBCodec, outWav.replace( /\.wav$/, "" ) )
 
-  const received = ( chanBCodec === 8 )
+  const received = ( 8 === chanBCodec )
     ? Array.from( pcmatolinear( Buffer.from( sinkB.bytes ) ) )
     : Array.from( pcmutolinear( Buffer.from( sinkB.bytes ) ) )
 
@@ -387,13 +387,13 @@ async function runchain( opts ) {
  */
 function dumpsinkaudio( bytes, pt, stemNoExt ) {
   const buf = Buffer.from( bytes )
-  if( pt === 8 || pt === 0 ) {
-    const linear = ( pt === 8 ) ? pcmatolinear( buf ) : pcmutolinear( buf )
+  if( 8 === pt || 0 === pt ) {
+    const linear = ( 8 === pt ) ? pcmatolinear( buf ) : pcmutolinear( buf )
     const path = `${stemNoExt}.wav`
     writewav( path, linear, 8000 )
     return path
   }
-  if( pt === 9 ) {
+  if( 9 === pt ) {
     const path = `${stemNoExt}.g722`
     fs.writeFileSync( path, buf )
     return path
@@ -439,7 +439,7 @@ describe( "codec chain (3 channels: pseudo-poly → mix(A, B) → JS measure)", 
   } )
 
   this.afterAll( function() {
-    try { fs.unlinkSync( "/tmp/tone400.wav" ) } catch( _ ) { /* ignore */ }
+    try { fs.unlinkSync( "/tmp/tone400.wav" ) } catch { /* ignore */ }
   } )
 
   it( "G.722 on the wire → mix → PCMA out: 400 Hz tone survives", async function() {
@@ -463,7 +463,6 @@ describe( "codec chain (3 channels: pseudo-poly → mix(A, B) → JS measure)", 
     const etotal = amps.reduce( ( a, b ) => a + b, 0 )
     const ratio = e400 / etotal
 
-    // eslint-disable-next-line no-console
     console.log( `    G.722→PCMA: samples=${received.length}  E@400Hz=${e400.toFixed(0)}  ` +
                  `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
 
@@ -496,7 +495,6 @@ describe( "codec chain (3 channels: pseudo-poly → mix(A, B) → JS measure)", 
     const etotal = amps.reduce( ( a, b ) => a + b, 0 )
     const ratio = e400 / etotal
 
-    // eslint-disable-next-line no-console
     console.log( `    PCMA→PCMA : samples=${received.length}  E@400Hz=${e400.toFixed(0)}  ` +
                  `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
 
@@ -527,7 +525,6 @@ describe( "codec chain (3 channels: pseudo-poly → mix(A, B) → JS measure)", 
     const etotal = amps.reduce( ( a, b ) => a + b, 0 )
     const ratio = e400 / etotal
 
-    // eslint-disable-next-line no-console
     console.log( `    G.722→PCMU: samples=${received.length}  E@400Hz=${e400.toFixed(0)}  ` +
                  `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
 
@@ -564,14 +561,14 @@ function readwav( path ) {
   const sampleRate = buf.readUInt32LE( 24 )
   const numChannels = buf.readUInt16LE( 22 )
   const bitsPerSample = buf.readUInt16LE( 34 )
-  if( bitsPerSample !== 16 ) throw new Error( `unexpected bitsPerSample=${bitsPerSample}` )
+  if( 16 !== bitsPerSample ) throw new Error( `unexpected bitsPerSample=${bitsPerSample}` )
   const dataLen = buf.readUInt32LE( 40 )
   const n = dataLen / 2
   const interleaved = new Int16Array( n )
   for( let i = 0; i < n; i++ ) interleaved[ i ] = buf.readInt16LE( 44 + i * 2 )
   // If stereo, just return the left channel — that's the "inbound" side
   // under our current L=in / R=out convention.
-  if( numChannels === 2 ) {
+  if( 2 === numChannels ) {
     const mono = new Int16Array( n / 2 )
     for( let i = 0; i < mono.length; i++ ) mono[ i ] = interleaved[ i * 2 ]
     return { samples: mono, sampleRate }
@@ -589,13 +586,13 @@ describe( "dtls-srtp back-to-back (2 channels: A plays → SRTP → B records)",
   } )
 
   this.afterAll( function() {
-    try { fs.unlinkSync( "/tmp/tone400_dtls.wav" ) } catch ( _ ) { /* ignore */ }
+    try { fs.unlinkSync( "/tmp/tone400_dtls.wav" ) } catch { /* ignore */ }
   } )
 
   it( "PCMA over DTLS: 400 Hz tone survives the encrypted leg", async function() {
 
     const recPath = "/tmp/codecchain_dtls_b_rec.wav"
-    try { fs.unlinkSync( recPath ) } catch ( _ ) { /* ignore */ }
+    try { fs.unlinkSync( recPath ) } catch { /* ignore */ }
 
     let done
     const finished = new Promise( ( r ) => { done = r } )
@@ -655,7 +652,6 @@ describe( "dtls-srtp back-to-back (2 channels: A plays → SRTP → B records)",
     const etotal = amps.reduce( ( a, b ) => a + b, 0 )
     const ratio = e400 / etotal
 
-    // eslint-disable-next-line no-console
     console.log( `    DTLS-SRTP: samples=${analysed.length}  E@400Hz=${e400.toFixed(0)}  ` +
                  `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
 
@@ -694,7 +690,7 @@ describe( "createReadStream — live audio tap", function() {
   } )
 
   this.afterAll( function() {
-    try { fs.unlinkSync( "/tmp/tone400_tap.wav" ) } catch ( _ ) { /* ignore */ }
+    try { fs.unlinkSync( "/tmp/tone400_tap.wav" ) } catch { /* ignore */ }
   } )
 
   it( "PCMA tone → inbound tap: 400 Hz survives the full reader pipeline", async function() {
@@ -764,7 +760,6 @@ describe( "createReadStream — live audio tap", function() {
     const etotal = amps.reduce( ( a, b ) => a + b, 0 )
     const ratio = e400 / etotal
 
-    // eslint-disable-next-line no-console
     console.log( `    TAP: samples=${analysed.length}  E@400Hz=${e400.toFixed(0)}  ` +
                  `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
 
@@ -867,7 +862,6 @@ describe( "createWriteStream — live audio inject", function() {
     const etotal = amps.reduce( ( a, b ) => a + b, 0 )
     const ratio = e400 / etotal
 
-    // eslint-disable-next-line no-console
     console.log( `    WRITE: samples=${analysed.length}  E@400Hz=${e400.toFixed(0)}  ` +
                  `total=${etotal.toFixed(0)}  ratio=${ratio.toFixed(3)}` )
 

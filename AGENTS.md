@@ -64,10 +64,21 @@ cargo prints `test result: ok. N passed; 0 failed`; mocha prints `N passing`,
 `P pending` for the specs marked skip, and `M failing` only if any did. The
 line says `rust N passed, 0 failed; test-stage N passed, 0 failed`.
 
-The lint (`npm run check`: tsc and eslint) is not a suite, and does not run
-yet: eslint fails on main, and tsc is not installed. Once it passes, set
-`LINT_IMAGE` and `LINT_COMMAND` in `pr-checks.yml`, and CI runs it on every
-pull request.
+The lint is `npm run check`: TypeScript's type check of the JavaScript and
+its JSDoc types (`tsc -p jsconfig.json`), then ESLint. CI runs it on every
+pull request (`pr-checks.yml`, in `node:26-alpine3.24`), failing on any type
+error, and on any ESLint error or warning. It is not a suite and has no place
+in the proof line, but run it before you push, since a red lint is one more
+round trip:
+
+```bash
+npm ci --ignore-scripts && npm run check
+```
+
+Editors read jsconfig.json too, so they show the same type errors.
+TypeScript 7 does not take a JSDoc `{ object }` to mean anything goes: give a
+parameter the shape it has. A `new Promise` whose resolve is called with
+nothing needs a `/** @type { Promise< void > } */` hint.
 <!-- <<< settings -->
 
 <!-- >>> settings: when a suite may be left out -->

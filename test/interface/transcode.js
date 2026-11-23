@@ -130,7 +130,7 @@ function lineartopcma( inarray ) {
 
 /**
  * 
- * @param { Array< number > } inarray
+ * @param { ArrayLike< number > } inarray
  * @returns { Int16Array }
  */
 function pcmatolinear( inarray ) {
@@ -156,7 +156,7 @@ function lineartopcmu( inarray ) {
 
 /**
  * 
- * @param { Array< number > } inarray
+ * @param { ArrayLike< number > } inarray
  * @returns { Int16Array }
  */
 function pcmutolinear( inarray ) {
@@ -186,7 +186,7 @@ function sendpayload( sendtime, pk, dstport, server ) {
  * 
  * @param { number } sn - should start from 0 which we use to index into the supplied data buffer
  * @param { number } dstport 
- * @param { object } server 
+ * @param { dgram.Socket } server 
  * @param { number } pt - payload type
  * @param { number } ssrc  - a unique payload type
  * @param { Array< number > } payload
@@ -222,7 +222,7 @@ function sendpk( sn, dstport, server, pt = 0, ssrc, payload, snoffset=0, cb ) {
 /**
  * Limitation of not parsing ccrc.
  * @param { Buffer } packet
- * @return { object }
+ * @return { { sn: number, ts: number, pt: number, ssrc: number, payload: Uint8Array } }
  */
 function parsepk( packet ) {
   return {
@@ -242,7 +242,7 @@ function parsepk( packet ) {
 
 /**
  * @callback decodefunction
- * @param { Array< number > } inarray
+ * @param { ArrayLike< number > } inarray
  * @returns { Int16Array }
  */
 

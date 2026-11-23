@@ -33,7 +33,7 @@ const prtp = require( "../../index.js" )
 const args = process.argv.slice( 2 )
 function getarg( name, defaultval ) {
   const idx = args.indexOf( name )
-  if( idx === -1 ) return defaultval
+  if( -1 === idx ) return defaultval
   return args[ idx + 1 ] || defaultval
 }
 
@@ -71,7 +71,7 @@ function generatetesttone( filepath ) {
     /* beep tone: 800Hz for 0.3s, silence, 800Hz for 0.3s, then silence */
     const t = i / samplerate
     let val = 0
-    if( t < 0.3 || ( t > 0.5 && t < 0.8 ) ) {
+    if( 0.3 > t || ( 0.5 < t && 0.8 > t ) ) {
       val = Math.sin( i * Math.PI * 2 * 800 / samplerate ) * 15000
     }
     data.writeInt16LE( Math.round( val ), i * 2 )
@@ -81,6 +81,7 @@ function generatetesttone( filepath ) {
   return filepath
 }
 
+// eslint-disable-next-line complexity -- a manual tool's set-up, one step after another; split up, it would only move the sox handling elsewhere
 async function main() {
   const wavfile = promptfile || generatetesttone( "/tmp/mictest_prompt.wav" )
 
@@ -98,7 +99,7 @@ async function main() {
   await new Promise( r => udp.on( "listening", r ) )
 
   const localport = udp.address().port
-  let channelport
+  let channelport = null
 
   /* start sox for speaker output — RTP payloads are mu-law, sox decodes to speakers */
   let speaker
@@ -111,7 +112,7 @@ async function main() {
       console.error( "Warning: sox not available for speaker output" )
       speaker = null
     } )
-  } catch( e ) {
+  } catch {
     console.error( "Warning: could not start speaker output" )
     speaker = null
   }
@@ -127,7 +128,7 @@ async function main() {
       console.error( "Warning: sox not available for mic capture" )
       mic = null
     } )
-  } catch( e ) {
+  } catch {
     console.error( "Warning: could not start mic capture" )
     mic = null
   }
@@ -151,7 +152,7 @@ async function main() {
 
   /* receive RTP from channel → play through speakers */
   udp.on( "message", ( msg ) => {
-    if( msg.length < 12 ) return
+    if( 12 > msg.length ) return
     const payload = msg.subarray( 12 )
     if( speaker && speaker.stdin.writable ) {
       speaker.stdin.write( payload )
@@ -164,7 +165,7 @@ async function main() {
     mic.stdout.on( "data", ( data ) => {
       micbuffer = Buffer.concat( [ micbuffer, data ] )
       /* send in 160-byte (20ms) chunks */
-      while( micbuffer.length >= 160 ) {
+      while( 160 <= micbuffer.length ) {
         const chunk = micbuffer.subarray( 0, 160 )
         micbuffer = micbuffer.subarray( 160 )
         const pkt = makertppacket( chunk )
@@ -227,7 +228,7 @@ async function main() {
   }
 
   /* send a few packets immediately so the channel learns our address */
-  for( let i = 0; i < 5; i++ ) {
+  for( let i = 0; 5 > i; i++ ) {
     const pkt = makertppacket( silence )
     udp.send( pkt, channelport, "127.0.0.1" )
     await new Promise( r => setTimeout( r, 20 ) )

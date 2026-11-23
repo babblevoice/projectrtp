@@ -1,10 +1,14 @@
 {
   "compilerOptions": {
-    "module": "commonJS",
-    "target": "es6",
-    "moduleResolution": "nodenext",
-    "checkJs": true
+    "target": "es2022",
+    "module": "commonjs",
+    "checkJs": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "maxNodeModuleJsDepth": 0,
+    "strict": false,
+    "types": [ "node", "mocha" ]
   },
-  "include": [ "index.js", "lib/*.js", "test/interface/*.js", "test/mock/*.js", "stress/*.js" ],
+  "include": [ "*.js", "lib/**/*.js", "test/**/*.js", "stress/**/*.js" ],
   "exclude": [ "node_modules" ]
 }

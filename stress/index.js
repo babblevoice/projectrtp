@@ -53,11 +53,11 @@ const run = async () => {
   const intervaletimers = [
     setInterval( () => {
       currentstatsquery++
-      const prtpstats = projectrtp.stats()
+      projectrtp.stats()
       currentstatsquery--
     }, 100 ),
     setInterval( () => {
-      if( currentstatsquery > 3 ) utils.log( "Problem with stats not completing" )
+      if( 3 < currentstatsquery ) utils.log( "Problem with stats not completing" )
     }, 100 )
   ]
 

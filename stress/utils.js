@@ -69,7 +69,7 @@ module.exports.between = ( min, max ) => {
  * @returns { Promise }
  */
 module.exports.waitbetween = async ( min, max ) => {
-  await new Promise( ( resolve ) => { setTimeout( () => resolve(), module.exports.between( min, max ) ) } )
+  await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), module.exports.between( min, max ) ) } ) )
 }
 
 /**
@@ -77,7 +77,7 @@ module.exports.waitbetween = async ( min, max ) => {
  * @param { number } ms 
  */
 module.exports.wait = async ( ms ) => {
-  await new Promise( ( resolve ) => { setTimeout( () => resolve(), ms ) } )
+  await /** @type { Promise< void > } */ ( new Promise( ( resolve ) => { setTimeout( () => resolve(), ms ) } ) )
 }
 
 const possiblecodecs = [ 0, 8, 9, 97 ]

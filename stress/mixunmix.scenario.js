@@ -50,13 +50,13 @@ module.exports = async ( mstimeout ) => {
   expect( await channela.mix( channelb ) ).to.be.true
   expect( clienta.play( { "loop": true, "files": [ { "wav": "/tmp/ukringing.wav" } ] } ) ).to.be.true
 
-  await new Promise( ( r ) => { setTimeout( () => r(), mstimeout / 2 ) } )
+  await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), mstimeout / 2 ) } ) )
 
   clientb.close()
   channela.unmix()
   channela.echo()
 
-  await new Promise( ( r ) => { setTimeout( () => r(), mstimeout / 2 ) } )
+  await /** @type { Promise< void > } */ ( new Promise( ( r ) => { setTimeout( () => r(), mstimeout / 2 ) } ) )
 
   clienta.close()
 
