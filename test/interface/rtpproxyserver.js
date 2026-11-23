@@ -3,19 +3,33 @@ const expect = require( "chai" ).expect
 const prtp = require( "../../index.js" ).projectrtp
 const mocknode = require( "../mock/mocknode.js" )
 const node = require( "../../lib/node.js" ).interface
+const server = require( "../../lib/server.js" ).interface
 
 /*
 The tests in this file are to ensure what we send out over
 our socket is in the correct format.
 */
 
-let listenport = 45000
+/* ports below the kernel's ephemeral range (32768-60999), where a client socket
+   the suite has open can hold the port and make listen() fail: the
+   server then retries every second, past the test's timeout */
+let listenport = 26000
 
 describe( "rtpproxy server", function() {
 
   function getnextport() {
     return listenport++
   }
+
+  /* A test that failed before destroying its listener leaves it as the
+     proxy server, and listen() hands that one, on the old port, to every
+     test after it. */
+  afterEach( async function() {
+    if( "failed" !== this.currentTest.state ) return
+    const leftover = server.get()
+    if( leftover && leftover.server ) await leftover.destroy()
+    prtp.proxy.clearnodes()
+  } )
 
   it( "start and stop and start listener", async function() {
 

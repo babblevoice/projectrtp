@@ -139,12 +139,13 @@ describe( "dtls", function() {
 
     targeta.dtls.fingerprint.hash = channelb.local.dtls.fingerprint
     targeta.port = channelb.local.port
-
-    expect( channela.remote( targeta ) ).to.be.true
-
     targetb.port = channela.local.port
 
+    /* passive side first: the active side sends its ClientHello as soon as
+       it has its remote, and a passive channel that has not yet been given
+       its own drops it, so the handshake waits a second for the resend */
     expect( channelb.remote( targetb ) ).to.be.true
+    expect( channela.remote( targeta ) ).to.be.true
 
     channela.play( { "loop": true, "files": [
       { "wav": "/tmp/ukringing.wav" } ] } )
@@ -317,10 +318,11 @@ describe( "dtls", function() {
 
     channeltargeta.dtls.fingerprint.hash = clienta.local.dtls.fingerprint
     channeltargeta.port = clienta.local.port
-    expect( channela.remote( channeltargeta ) ).to.be.true
     clienttargeta.port = channela.local.port
     clienttargeta.dtls.fingerprint.hash = channela.local.dtls.fingerprint
+    /* passive side first (see "Create 2 channels and negotiate dtls") */
     expect( clienta.remote( clienttargeta ) ).to.be.true
+    expect( channela.remote( channeltargeta ) ).to.be.true
 
     clienta.play( { "loop": true, "files": [
       { "wav": "/tmp/ukringing.wav" } ] } )
@@ -451,11 +453,12 @@ describe( "dtls", function() {
 
     targeta.dtls.fingerprint.hash = channelb.local.dtls.fingerprint
     targeta.port = channelb.local.port
-    expect( channela.remote( targeta ) ).to.be.true
     targetb.port = channela.local.port
     targetb.dtls.fingerprint.hash = channela.local.dtls.fingerprint
     targetb.dtls.mode = "passive"
+    /* passive side first (see "Create 2 channels and negotiate dtls") */
     expect( channelb.remote( targetb ) ).to.be.true
+    expect( channela.remote( targeta ) ).to.be.true
 
     targetc.port = channeld.local.port
     expect( channelc.remote( targetc ) ).to.be.true

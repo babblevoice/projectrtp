@@ -169,7 +169,9 @@ describe( "rtpproxy node", function() {
 
   it( "connect and open channel and look for middle messages", async function() {
 
-    const ourport = 45332
+    /* below the kernel's ephemeral range (32768-60999), where a client socket
+       the suite has open can hold the port and make listen() fail */
+    const ourport = 26900
 
     const ourserver = await prtp.server.listen( ourport, "127.0.0.1" )
 
