@@ -393,6 +393,10 @@ For independent per-speaker streams (e.g. diarised captions), create **two reade
 
 `"l16"` gives linear PCM-16 LE at the chosen sample rate — the universal format that every STT / translation API accepts. The wire formats (`"pcma"`, `"pcmu"`, `"g722"`, `"ilbc"`) deliver raw codec bytes, useful when you want to forward a leg elsewhere without re-encoding.
 
+**Gaps**
+
+When the peer sends nothing for a 20 ms slot (silence suppression, a lost or late packet), the `in` side of an `l16` frame is silence at either sample rate, never a repeat of earlier audio or of what the channel is playing. The wire formats emit no frame for that slot.
+
 **Backpressure and drops**
 
 The pipeline never blocks the 20 ms RTP tick. If the consumer (or the Node event loop, or the napi queue) falls behind, frames are dropped. In practice this only bites if the consumer is genuinely stuck — typical STT / WebSocket consumers keep up with 20 ms frames comfortably.

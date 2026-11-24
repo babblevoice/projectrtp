@@ -366,20 +366,25 @@ async fn feed_recorders_and_readers(
             // inbound (G.722 decode) + the outbound (player/echo/silence)
             // upsampled to 16 kHz so the WAV stays coherent. The recorder's
             // WAV rate is stamped to 16k at open to match.
-            let in_wb = state
-                .codecx
-                .require_wideband_16k()
-                .map(|s| s.to_vec())
-                .unwrap_or_else(|| upsample_2x(in_s));
+            // On a tick with no packet the bundle still holds an earlier
+            // frame, so the caller's side is silence, not its decode.
+            let in_wb = match decoded {
+                Some(nb) => state
+                    .codecx
+                    .require_wideband_16k()
+                    .map(|s| s.to_vec())
+                    .unwrap_or_else(|| upsample_2x(nb)),
+                None => vec![0i16; FRAME_SAMPLES * 2],
+            };
             let out_wb = upsample_2x(out_s);
             write_recorder_frames(state, subs, &in_wb, &out_wb).await;
         } else {
             write_recorder_frames(state, subs, in_s, out_s).await;
         }
     }
-    // Readers manage their own rate (a 16k reader pulls wideband from codecx);
-    // always hand them the 8 kHz narrowband here.
-    feed_readers(state, subs, in_s, out_s);
+    // Readers manage their own rate (a 16k reader pulls wideband from codecx
+    // when a packet arrived this tick); always hand them the 8 kHz narrowband.
+    feed_readers(state, subs, decoded.is_some(), in_s, out_s);
 }
 
 /// Linear 2x upsample (8 kHz -> 16 kHz) used for the recorder's outbound leg
@@ -513,9 +518,22 @@ fn build_recorder_frame(
     }
 }
 
-fn feed_readers(state: &mut ChannelState, subs: &mut Subsystems, in_s: &[i16], out_s: &[i16]) {
+/// `packet` is whether an inbound packet was decoded this tick: only then
+/// does the bundle hold the caller's current frame for a reader to pull.
+fn feed_readers(
+    state: &mut ChannelState,
+    subs: &mut Subsystems,
+    packet: bool,
+    in_s: &[i16],
+    out_s: &[i16],
+) {
     for reader in subs.readers.iter_mut() {
-        reader.feed(&mut state.codecx, Some(in_s), Some(out_s));
+        let inbound = if packet {
+            Some(&mut state.codecx)
+        } else {
+            None
+        };
+        reader.feed(inbound, Some(in_s), Some(out_s));
     }
     subs.readers.retain(|r| !r.is_closed());
 }
@@ -663,13 +681,12 @@ async fn send_dtmf(
 }
 
 async fn send_player_frame(state: &mut ChannelState, samples: &[i16], remote: SocketAddr) {
-    // Feed linear samples into the codec bundle, lazily produce the
-    // wire encoding for this channel's remote PT. The encoder state
-    // (G.722 predictor, iLBC LP, etc.) lives on the bundle and
-    // persists across ticks for a coherent outbound stream.
-    state.codecx.feed_linear_8k(samples);
+    // Encode for this channel's remote PT. The encoder state (G.722
+    // predictor, iLBC LP, etc.) lives on the bundle and persists across
+    // ticks for a coherent outbound stream. `encode_8k` leaves the bundle's
+    // input alone, so the prompt never stands in for the caller's audio.
     let pt = state.remote_pt;
-    let Some(payload) = state.codecx.require_wire_as(pt).map(|b| b.to_vec()) else {
+    let Some(payload) = state.codecx.encode_8k(pt, samples) else {
         return;
     };
     let mut out = RtpPacket::new();
