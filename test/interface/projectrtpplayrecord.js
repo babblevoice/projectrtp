@@ -46,7 +46,7 @@ function sendpk( sn, sendtime, dstport, server, data = undefined ) {
 }
 
 /* create a short wav file for playback */
-function createwavfile( filepath, samples = 4000 ) {
+function createwavfile( filepath, samples = 4000, tonehz = 440 ) {
   const bytespersample = 2
   const samplerate = 8000
   const numchannels = 1
@@ -68,10 +68,79 @@ function createwavfile( filepath, samples = 4000 ) {
 
   const data = Buffer.alloc( samples * bytespersample )
   for( let i = 0; i < samples; i++ ) {
-    data.writeInt16LE( Math.sin( i * Math.PI * 2 * 440 / samplerate ) * 10000, i * 2 )
+    data.writeInt16LE( Math.sin( i * Math.PI * 2 * tonehz / samplerate ) * 10000, i * 2 )
   }
 
   fs.writeFileSync( filepath, Buffer.concat( [ header, data ] ) )
+}
+
+/**
+ * RTP-27: while a playrecord's prompt plays, the caller's audio is held, then
+ * written into the recording when the prompt ends. On G.722 the recording is
+ * 16 kHz, so the held audio must be too: held at 8 kHz, it played at double
+ * speed. Another channel plays a 1 kHz tone to the caller's leg over G.722,
+ * and the tone at the start of the recording, from while the prompt played,
+ * must still be 1 kHz.
+ * @param { string } file - the recording to make
+ * @param { boolean } mixed - mix the caller's leg with another first
+ */
+async function playrecordg722heldtone( file, mixed ) {
+  const server = dgram.createSocket( "udp4" )
+  server.on( "message", function() {} )
+  server.bind()
+  await new Promise( resolve => server.on( "listening", resolve ) )
+
+  const closed = []
+  const open = async ( port, codec ) => {
+    let done
+    closed.push( new Promise( r => done = r ) )
+    return prtp.projectrtp.openchannel(
+      { "remote": { "address": "127.0.0.1", "port": port, "codec": codec } },
+      function( d ) { if( "close" === d.action ) done() }
+    )
+  }
+
+  const caller = await open( server.address().port, 9 )
+  const farend = await open( caller.local.port, 9 )
+  let other
+  if( mixed ) {
+    other = await open( server.address().port, 0 )
+    expect( caller.mix( other ) ).to.be.true
+  }
+
+  expect( farend.play( { "loop": true, "files": [ { "wav": "/tmp/pr_tone1k.wav" } ] } ) ).to.be.true
+  await new Promise( resolve => setTimeout( resolve, 200 ) )
+
+  expect( caller.playrecord( {
+    "soup": { "files": [ { "wav": "/tmp/pr_prompt.wav" } ] },
+    "record": {
+      "file": file,
+      "numchannels": 1,
+      "maxduration": 1000
+    }
+  } ) ).to.be.true
+
+  await new Promise( resolve => setTimeout( resolve, 2000 ) )
+  farend.close()
+  caller.close()
+  if( other ) other.close()
+  await Promise.all( closed )
+  await /** @type { Promise< void > } */ ( new Promise( resolve => server.close( resolve ) ) )
+
+  const wavinfo = prtp.projectrtp.soundfile.info( file )
+  expect( wavinfo.samplerate ).to.equal( 16000 )
+
+  /* The prompt is 500 ms, so the recording's first 500 ms were held while it
+     played. Count the tone's zero crossings from 50 to 400 ms. */
+  const wav = fs.readFileSync( file )
+  const from = 44 + ( 16000 * 0.05 * 2 )
+  const to = 44 + ( 16000 * 0.4 * 2 )
+  let crossings = 0
+  for( let i = from + 2; i < to; i += 2 ) {
+    if( ( 0 > wav.readInt16LE( i - 2 ) ) !== ( 0 > wav.readInt16LE( i ) ) ) crossings++
+  }
+  const tonehz = crossings / 2 / 0.35
+  expect( tonehz ).to.be.within( 900, 1100 )
 }
 
 
@@ -80,6 +149,7 @@ describe( "playrecord", function() {
   before( function() {
     createwavfile( "/tmp/pr_prompt.wav", 4000 ) /* 500ms at 8kHz */
     createwavfile( "/tmp/pr_long_prompt.wav", 24000 ) /* 3s at 8kHz */
+    createwavfile( "/tmp/pr_tone1k.wav", 8000, 1000 ) /* 1s of 1kHz at 8kHz */
   } )
 
   it( "basic playrecord — play then record with zero gap", async function() {
@@ -258,6 +328,18 @@ describe( "playrecord", function() {
 
     const recstart = events.find( e => "record" === e.action && "recording" === e.event )
     expect( recstart ).to.exist
+  } )
+
+  it( "G.722 — the caller's audio from while the prompt played keeps its speed", async function() {
+    this.timeout( 5000 )
+    this.slow( 4000 )
+    await playrecordg722heldtone( "/tmp/pr_g722_held_rec.wav", false )
+  } )
+
+  it( "G.722 mixed — the caller's audio from while the prompt played keeps its speed", async function() {
+    this.timeout( 5000 )
+    this.slow( 4000 )
+    await playrecordg722heldtone( "/tmp/pr_g722_held_mixed_rec.wav", true )
   } )
 
   it( "concurrent — loud audio does NOT interrupt; stopplay ends the prompt", async function() {
