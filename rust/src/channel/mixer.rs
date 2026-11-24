@@ -308,15 +308,13 @@ async fn mix_all_outbound(members: &mut HashMap<ChannelId, Box<Member>>) {
             }
         }
 
-        // Feed dst's (this member's) bundle the computed mix samples,
-        // then pull the wire bytes in its own remote_pt. Encoder state
-        // persists on `m.state.codecx`.
-        m.state.codecx.feed_linear_8k(&out_samples);
+        // Encode the computed mix in this member's own remote_pt. Encoder
+        // state persists on `m.state.codecx`. `encode_8k` leaves the bundle
+        // holding this member's own inbound, which its recorders and readers
+        // read after the mix; feeding the mix in made them record the other
+        // parties instead.
         let pt = m.state.remote_pt;
-        if let Some(wire) = m.state.codecx.require_wire_as(pt) {
-            // Owned copy to release the `&mut m.state.codecx` borrow
-            // before the send call below needs the rest of m.state.
-            let payload: Vec<u8> = wire.to_vec();
+        if let Some(payload) = m.state.codecx.encode_8k(pt, &out_samples) {
             send_encoded(&mut m.state, remote, &payload).await;
         }
     }
@@ -717,15 +715,17 @@ impl Member {
         // AudioReaders share the recorder's L/R convention (L=self inbound,
         // R=peer inbound — in mix mode that's the outbound side). Readers
         // manage their own rate: the in side is fed 8 kHz (16k readers pull
-        // wideband from codecx), and a 16k reader's out side gets the peer's
-        // wideband via feed_with.
+        // wideband from codecx, but only when this leg had a packet this
+        // tick; otherwise codecx holds an earlier frame, or the player audio
+        // `process_inbound` fed in for the peer), and a 16k reader's out side
+        // gets the peer's wideband via feed_with.
         for reader in self.subs.readers.iter_mut() {
-            reader.feed_with(
-                &mut self.state.codecx,
-                Some(&samples),
-                peer_samples,
-                peer_wideband,
-            );
+            let inbound = if self.inbound_this_tick {
+                Some(&mut self.state.codecx)
+            } else {
+                None
+            };
+            reader.feed_with(inbound, Some(&samples), peer_samples, peer_wideband);
         }
         self.subs.readers.retain(|r| !r.is_closed());
     }

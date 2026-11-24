@@ -161,10 +161,8 @@ pub fn linear_to_ulaw(linear: i32) -> u8 {
 
 // ---- Buffer-level transcode helpers ----
 //
-// Used by tick.rs's mix-relay path to transcode between PCMA/PCMU when two
-// mixed channels speak different codecs.
+// The encoders back `CodecBundle::encode_8k`; the decoders aren't called.
 
-#[allow(dead_code)]
 pub fn encode_pcma_buf(samples: &[i16]) -> Vec<u8> {
     samples.iter().map(|&s| linear_to_alaw(s as i32)).collect()
 }
@@ -172,7 +170,6 @@ pub fn encode_pcma_buf(samples: &[i16]) -> Vec<u8> {
 pub fn decode_pcma_buf(payload: &[u8]) -> Vec<i16> {
     payload.iter().map(|&b| alaw_to_linear(b)).collect()
 }
-#[allow(dead_code)]
 pub fn encode_pcmu_buf(samples: &[i16]) -> Vec<u8> {
     samples.iter().map(|&s| linear_to_ulaw(s as i32)).collect()
 }
@@ -203,8 +200,16 @@ pub fn decode_pcmu_buf(payload: &[u8]) -> Vec<i16> {
 ///   power, prebuffer) share one decode.
 /// - **Dst-owned encode.** The encoder lives on the bundle of the
 ///   channel *sending* that codec (matches C++ `dstchan->outcodec`).
-///   Callers funnel linear samples into the destination's bundle via
-///   `feed_linear_8k` / `feed_linear_16k` and then `require_wire_as`.
+///   Audio a channel sends (its player, a conference's mix for it) is
+///   encoded with `encode_8k`, which leaves the bundle's input alone:
+///   the cached decodes belong to the caller's packet, and recorders and
+///   readers read them as the caller's side of the call. One exception:
+///   on a tick with no packet, the mixer feeds a member's player audio in
+///   with `feed_linear_8k`, so its two-party peer can encode it from here.
+/// - **Fresh only on a packet tick.** Nothing invalidates the caches on a
+///   tick with no inbound packet, so they hold an earlier frame then, or
+///   that player audio. Readers of the caller's side check that a packet
+///   arrived this tick before reading them, and use silence otherwise.
 pub struct CodecBundle {
     // ---- Stateful codec objects (persist across ticks) ----
     g722_encoder: Option<crate::g722::Encoder>,
@@ -626,6 +631,40 @@ impl CodecBundle {
             _ => None,
         }
     }
+
+    /// Encode an outbound 8 kHz frame as `pt` with this bundle's stateful
+    /// encoders, without feeding it in. Same bytes as `feed_linear_8k`
+    /// followed by `require_wire_as(pt)`, but the input and every cached
+    /// decode are left alone, so the caller's packet decoded earlier in the
+    /// tick is still what recorders and readers read. Used for audio this
+    /// channel sends (its player, or a conference's mix for it), which must
+    /// never stand in for what the caller sent.
+    pub fn encode_8k(&mut self, pt: u8, samples: &[i16]) -> Option<Vec<u8>> {
+        if self.is_ilbc_pt(pt) {
+            let enc = self
+                .ilbc_encoder
+                .get_or_insert_with(|| crate::ilbc::Encoder::new().expect("ilbc encoder init"));
+            return enc.encode_20ms(samples);
+        }
+        match pt {
+            0 => Some(encode_pcmu_buf(samples)),
+            8 => Some(encode_pcma_buf(samples)),
+            9 => {
+                let mut wb = Vec::with_capacity(samples.len() * 2);
+                g722_up_into(samples, &mut self.g722_up_filter, &mut wb);
+                let enc = self
+                    .g722_encoder
+                    .get_or_insert_with(|| crate::g722::Encoder::new().expect("g722 encoder init"));
+                let wire = enc.encode(&wb);
+                if wire.is_empty() {
+                    None
+                } else {
+                    Some(wire.to_vec())
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 /// 16 kHz → 8 kHz downsample: for each pair of input samples, run both
@@ -805,5 +844,54 @@ mod tests {
         cx.feed_wire(8, &[0u8; 160]);
         assert!(!cx.is_wideband());
         assert_eq!(cx.native_samplerate(), 8000);
+    }
+
+    /// 20 ms of a 1 kHz tone at 8 kHz, starting `frame` frames in.
+    fn tone_8k(frame: usize) -> Vec<i16> {
+        (0..160)
+            .map(|i| {
+                let n = (frame * 160 + i) as f64;
+                ((n * 2.0 * std::f64::consts::PI * 1000.0 / 8000.0).sin() * 10000.0) as i16
+            })
+            .collect()
+    }
+
+    // The stateful encoders (G.722 predictor and up-sample filter, iLBC) must
+    // run exactly as they did through feed_linear_8k + require_wire_as, frame
+    // after frame, or the far end hears a different stream.
+    #[test]
+    fn encode_8k_matches_feed_then_require() {
+        for pt in [0u8, 8, 9, 97] {
+            let mut fed = CodecBundle::new();
+            let mut direct = CodecBundle::new();
+            for frame in 0..10 {
+                let samples = tone_8k(frame);
+                fed.feed_linear_8k(&samples);
+                let want = fed.require_wire_as(pt).map(|b| b.to_vec());
+                assert!(want.is_some(), "pt {pt} encodes");
+                assert_eq!(
+                    direct.encode_8k(pt, &samples),
+                    want,
+                    "pt {pt} frame {frame}"
+                );
+            }
+        }
+    }
+
+    // Encoding outbound audio leaves this tick's inbound decode readable.
+    #[test]
+    fn encode_8k_leaves_the_inbound_decode() {
+        for (in_pt, payload_len) in [(0u8, 160usize), (9, 160)] {
+            let mut cx = CodecBundle::new();
+            cx.feed_wire(in_pt, &vec![0x55u8; payload_len]);
+            let nb = cx.require_narrowband_8k().unwrap().to_vec();
+            let wb = cx.require_wideband_16k().unwrap().to_vec();
+
+            assert!(cx.encode_8k(in_pt, &tone_8k(0)).is_some());
+
+            assert_eq!(cx.require_narrowband_8k().unwrap(), &nb[..]);
+            assert_eq!(cx.require_wideband_16k().unwrap(), &wb[..]);
+            assert_eq!(cx.is_wideband(), in_pt == 9);
+        }
     }
 }

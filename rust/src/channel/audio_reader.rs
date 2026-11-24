@@ -19,10 +19,12 @@
 // Format / sample-rate matrix for v1:
 //   format=L16, samplerate=8000  → narrowband cache (always available)
 //   format=L16, samplerate=16000 → wideband cache (decoded from G.722, or
-//                                  upsampled from narrowband otherwise)
+//                                  upsampled from narrowband otherwise);
+//                                  silence on a tick with no packet
 //   format=PCMA/PCMU/G722/ILBC   → raw wire bytes for that codec pulled
 //                                  through `require_wire_as`. Useful for
-//                                  forwarding without re-encoding.
+//                                  forwarding without re-encoding. Nothing
+//                                  on a tick with no packet.
 
 use std::sync::Arc;
 
@@ -134,19 +136,26 @@ impl AudioReader {
     /// Feed one 20 ms frame. Called from the recorder's feed point in the
     /// tick (same cache state, same timing). Samples are narrowband 8 kHz
     /// linear; wideband (16 kHz) and wire-byte formats are pulled from
-    /// `codecx` for the inbound side. The outbound side has no `codecx`, so a
+    /// `inbound` for the inbound side. The outbound side has no bundle, so a
     /// caller that holds wideband for the out side (the mixer, where out is
     /// the peer's inbound) supplies it via `feed_with`.
+    ///
+    /// `inbound` is the channel's codec bundle on a tick when it decoded a
+    /// packet from the caller, and `None` on a tick with no packet: the
+    /// bundle's caches then still hold an earlier frame (the caller's last,
+    /// or audio the channel sent), so a 16 kHz reader's inbound side is
+    /// silence, matching the 8 kHz silence the caller passes, and a
+    /// wire-byte reader emits nothing, as it does before the first packet.
     ///
     /// Never blocks. On full queue or closed consumer the frame is silently
     /// dropped (bumping `drops`). Returns `true` if the frame was queued.
     pub fn feed(
         &mut self,
-        codecx: &mut CodecBundle,
+        inbound: Option<&mut CodecBundle>,
         in_samples_8k: Option<&[i16]>,
         out_samples_8k: Option<&[i16]>,
     ) -> bool {
-        self.feed_with(codecx, in_samples_8k, out_samples_8k, None)
+        self.feed_with(inbound, in_samples_8k, out_samples_8k, None)
     }
 
     /// As [`feed`](Self::feed), but with the outbound side's wideband (16 kHz)
@@ -155,12 +164,12 @@ impl AudioReader {
     /// Ignored by 8 kHz readers and wire-byte formats.
     pub fn feed_with(
         &mut self,
-        codecx: &mut CodecBundle,
+        inbound: Option<&mut CodecBundle>,
         in_samples_8k: Option<&[i16]>,
         out_samples_8k: Option<&[i16]>,
         out_samples_16k: Option<&[i16]>,
     ) -> bool {
-        let Some(bytes) = self.build_frame(codecx, in_samples_8k, out_samples_8k, out_samples_16k)
+        let Some(bytes) = self.build_frame(inbound, in_samples_8k, out_samples_8k, out_samples_16k)
         else {
             return false;
         };
@@ -175,18 +184,18 @@ impl AudioReader {
 
     fn build_frame(
         &self,
-        codecx: &mut CodecBundle,
+        inbound: Option<&mut CodecBundle>,
         in_samples_8k: Option<&[i16]>,
         out_samples_8k: Option<&[i16]>,
         out_samples_16k: Option<&[i16]>,
     ) -> Option<Vec<u8>> {
         match self.cfg.format {
             ReaderFormat::L16 => {
-                self.build_l16(codecx, in_samples_8k, out_samples_8k, out_samples_16k)
+                self.build_l16(inbound, in_samples_8k, out_samples_8k, out_samples_16k)
             }
-            ReaderFormat::Pcma => codecx.require_wire_as(8).map(|b| b.to_vec()),
-            ReaderFormat::Pcmu => codecx.require_wire_as(0).map(|b| b.to_vec()),
-            ReaderFormat::G722 => codecx.require_wire_as(9).map(|b| b.to_vec()),
+            ReaderFormat::Pcma => inbound?.require_wire_as(8).map(|b| b.to_vec()),
+            ReaderFormat::Pcmu => inbound?.require_wire_as(0).map(|b| b.to_vec()),
+            ReaderFormat::G722 => inbound?.require_wire_as(9).map(|b| b.to_vec()),
             // iLBC PT is channel-dependent; wire-byte iLBC readers aren't
             // exposed to JS yet, so this branch is not reached in v1.
             ReaderFormat::Ilbc => None,
@@ -195,7 +204,7 @@ impl AudioReader {
 
     fn build_l16(
         &self,
-        codecx: &mut CodecBundle,
+        inbound: Option<&mut CodecBundle>,
         in_samples_8k: Option<&[i16]>,
         out_samples_8k: Option<&[i16]>,
         out_samples_16k: Option<&[i16]>,
@@ -204,13 +213,18 @@ impl AudioReader {
         let (in_samples, out_samples): (Option<Vec<i16>>, Option<Vec<i16>>) =
             match self.cfg.samplerate {
                 16000 => {
-                    // Inbound wideband is cached on codecx (decoded from G.722, or
-                    // upsampled from narrowband). The outbound side has no codecx
+                    // Inbound wideband is cached on the bundle (decoded from
+                    // G.722, or upsampled from narrowband) when a packet arrived
+                    // this tick; with no packet it is silence, at twice the
+                    // length of the 8 kHz frame. The outbound side has no bundle
                     // here, so its wideband must be supplied by the caller — the
                     // mixer passes the peer's wideband for a bridged call. When it
                     // isn't supplied (e.g. a non-bridged channel whose out is an
                     // 8 kHz player) the out side is silent at 16k.
-                    let wb_in = codecx.require_wideband_16k().map(|s| s.to_vec());
+                    let wb_in = match inbound {
+                        Some(cx) => cx.require_wideband_16k().map(|s| s.to_vec()),
+                        None => in_samples_8k.map(|s| vec![0i16; s.len() * 2]),
+                    };
                     let wb_out = out_samples_16k.map(|s| s.to_vec());
                     (wb_in, wb_out)
                 }
@@ -331,7 +345,7 @@ mod tests {
         let out_8k = vec![0i16; 160];
 
         let bytes = r
-            .build_frame(&mut cx, Some(&in_8k), Some(&out_8k), Some(&out_wb))
+            .build_frame(Some(&mut cx), Some(&in_8k), Some(&out_8k), Some(&out_wb))
             .expect("frame produced");
 
         assert_eq!(bytes.len(), 320 * 2, "16k mono 20ms = 640 bytes");
@@ -348,10 +362,58 @@ mod tests {
         let out_8k = vec![321i16; 160];
 
         let bytes = r
-            .build_frame(&mut cx, Some(&in_8k), Some(&out_8k), None)
+            .build_frame(Some(&mut cx), Some(&in_8k), Some(&out_8k), None)
             .expect("frame produced");
 
         assert_eq!(bytes.len(), 160 * 2, "8k mono 20ms = 320 bytes");
         assert_eq!(i16::from_le_bytes([bytes[0], bytes[1]]), 321);
+    }
+
+    fn samples(bytes: &[u8]) -> Vec<i16> {
+        let (pairs, _) = bytes.as_chunks::<2>();
+        pairs.iter().map(|&b| i16::from_le_bytes(b)).collect()
+    }
+
+    // A 16 kHz `in` reader emits the caller's wideband decode on a tick with
+    // a packet, and silence on the next tick without one, rather than the
+    // previous frame still cached on the bundle.
+    #[test]
+    fn in_reader_16k_is_silent_on_a_tick_with_no_packet() {
+        let r = reader(ReaderDirection::In, 16000);
+        let mut cx = CodecBundle::new();
+        cx.feed_wire(0, &[0x10u8; 160]); // loud PCMU
+        let nb = cx.require_narrowband_8k().unwrap().to_vec();
+
+        let heard = r
+            .build_frame(Some(&mut cx), Some(&nb), Some(&[0i16; 160]), None)
+            .expect("frame produced");
+        assert_eq!(heard.len(), 320 * 2);
+        assert!(samples(&heard).iter().any(|&s| s.unsigned_abs() > 1000));
+
+        let gap = r
+            .build_frame(None, Some(&[0i16; 160]), Some(&[0i16; 160]), None)
+            .expect("a silence frame keeps the stream steady");
+        assert_eq!(gap.len(), 320 * 2);
+        assert!(samples(&gap).iter().all(|&s| s == 0));
+    }
+
+    // A wire-byte reader has no silence frame to give, so a tick with no
+    // packet emits nothing, as before the first packet.
+    #[test]
+    fn wire_reader_emits_nothing_on_a_tick_with_no_packet() {
+        let (tx, _rx) = make_channel();
+        let cfg = ReaderConfig {
+            format: ReaderFormat::Pcmu,
+            ..Default::default()
+        };
+        let r = AudioReader::new(1, cfg, tx);
+        let mut cx = CodecBundle::new();
+        cx.feed_wire(0, &[0x10u8; 160]);
+
+        assert_eq!(
+            r.build_frame(Some(&mut cx), None, None, None),
+            Some(vec![0x10u8; 160])
+        );
+        assert_eq!(r.build_frame(None, None, None, None), None);
     }
 }
