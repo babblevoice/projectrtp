@@ -125,7 +125,7 @@ async function playrecordg722heldtone( file, mixed ) {
   caller.close()
   if( other ) other.close()
   await Promise.all( closed )
-  await new Promise( resolve => server.close( resolve ) )
+  await /** @type { Promise< void > } */ ( new Promise( resolve => server.close( resolve ) ) )
 
   const wavinfo = prtp.projectrtp.soundfile.info( file )
   expect( wavinfo.samplerate ).to.equal( 16000 )
